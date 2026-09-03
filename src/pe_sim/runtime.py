@@ -13,6 +13,7 @@ from .artifacts import ArtifactWriter, artifact_index
 from .contracts import ActionRequest, ExperimentSpec, PlantObservation
 from .qualification import qualify_samples
 from .provenance import collect_git_provenance
+from .dirty import analyze_git_worktree, require_formal_comparison
 from .safety import check_observation, project_action
 
 
@@ -89,8 +90,13 @@ class FakePIController:
 
 
 class Runner:
-    def run(self, spec: ExperimentSpec, plant: Any, controller: Any) -> RunResult:
+    def run(self, spec: ExperimentSpec, plant: Any, controller: Any, mode: str = "exploratory") -> RunResult:
+        if mode not in {"exploratory", "formal_comparison"}:
+            raise ValueError("mode must be 'exploratory' or 'formal_comparison'")
         # Capture the source baseline before this run creates any artifacts.
+        worktree = analyze_git_worktree()
+        if mode == "formal_comparison":
+            require_formal_comparison(worktree)
         git = collect_git_provenance()
         writer = ArtifactWriter(spec.output_dir, spec.run_id)
         status = "RUNNING"
@@ -147,7 +153,7 @@ class Runner:
         except Exception:
             # JSON remains the canonical artifact when NumPy is unavailable.
             pass
-        manifest = {"schema_version": spec.schema_version, "experiment_id": spec.experiment_id, "run_id": spec.run_id, "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), **git.to_manifest_fields(), "environment": {"runner": "pe_sim", "git": {"source_commit": git.source_commit, "branch": git.branch, "working_tree_status": git.working_tree_status}}, "plant": {"id": spec.plant_id, "hash": "0" * 64}, "controller": {"id": spec.controller_id, "hash": "0" * 64}, "contracts": {k: v["hash"] for k, v in spec.contracts.items()}, "timebase": spec.timebase.to_dict(), "initial_state": spec.initial_state.to_dict(), "random_seed": spec.seed, "artifacts": {}, "status": status, "qualification": qualification, "safety": {"passed": error is None}, "evidence_level": "functional", "error": error}
+        manifest = {"schema_version": spec.schema_version, "experiment_id": spec.experiment_id, "run_id": spec.run_id, "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), **git.to_manifest_fields(), "worktree_analysis": worktree.to_dict(), "run_mode": mode, "environment": {"runner": "pe_sim", "git": {"source_commit": git.source_commit, "branch": git.branch, "working_tree_status": git.working_tree_status}}, "plant": {"id": spec.plant_id, "hash": "0" * 64}, "controller": {"id": spec.controller_id, "hash": "0" * 64}, "contracts": {k: v["hash"] for k, v in spec.contracts.items()}, "timebase": spec.timebase.to_dict(), "initial_state": spec.initial_state.to_dict(), "random_seed": spec.seed, "artifacts": {}, "status": status, "qualification": qualification, "safety": {"passed": error is None}, "evidence_level": "functional", "error": error}
         writer.write_json("manifest.json", manifest)
         run_dir = writer.finalize()
         # Index is written after publication, then manifest is atomically replaced.
