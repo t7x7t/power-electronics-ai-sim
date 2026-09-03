@@ -60,3 +60,15 @@ qualification and human review.
 Future project-owned infrastructure and reviewed examples remain covered by
 the MIT License. New third-party material must be accompanied by source and
 license metadata and must not silently inherit the repository license.
+
+## Responsibility and support boundary
+
+The repository maintainer provides project-owned infrastructure, reference
+implementations, and tools only. A GitHub user or downstream organization is
+solely responsible for evaluating and using the code, dependencies, models,
+parameters, experiments, results, safety, compliance, and engineering
+decisions in its own context. The maintainer does not approve a user's
+experiment, hardware, product, or conclusion, and does not promise technical
+support, response availability, or result correctness. The MIT License's
+standard warranty and liability exclusions apply. This statement does not
+relicense unreviewed `D:\PySpice` or third-party material.

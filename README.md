@@ -6,6 +6,19 @@ from `D:\PySpice` or any other third-party source. The approved v0 baseline
 scope and migration exclusion are documented in
 `docs/09_license_and_git_baseline_scope_v0.md`.
 
+## Responsibility and support boundary
+
+This repository provides project-owned infrastructure, reference examples, and
+development tools. It is provided without a promise that a model, parameter,
+controller, experiment, or result is suitable for a user's purpose. Anyone
+obtaining or using the project from GitHub is responsible for reviewing the
+code, dependencies, models, parameters, results, safety, compliance, and
+engineering decisions for their own use. The maintainers do not provide a
+result guarantee, hardware approval, or an obligation to provide technical
+support or response. The MIT License and its warranty/liability terms apply.
+Unreviewed material from `D:\PySpice` and other third-party sources is not
+relicensed by this repository.
+
 这是一个面向 AI Agent 协作的电力电子仿真工程骨架。根目录的
 `general_simulation_infrastructure_and_closed_loop_phases_20260902.md` 是
 思路性总纲；本目录下的规范文件才是 v0 实现阶段的可执行依据。
