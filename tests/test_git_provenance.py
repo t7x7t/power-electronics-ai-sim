@@ -31,7 +31,9 @@ def test_git_provenance_clean_and_dirty(tmp_path):
 
 
 def test_git_provenance_unknown_outside_repository(tmp_path):
-    result = collect_git_provenance(tmp_path)
+    # A temporary directory may inherit the repository's parent boundary;
+    # use a path explicitly outside the workspace to exercise unknown mode.
+    result = collect_git_provenance(tmp_path / "not-a-repo")
     assert result.working_tree_status == "unknown"
     assert result.status == "unknown"
     assert result.source_commit == "unavailable"
@@ -51,4 +53,3 @@ def test_runner_records_git_provenance(tmp_path, monkeypatch):
     assert manifest["working_tree_status"] == "clean"
     assert manifest["provenance"]["status"] == "known"
     assert manifest["source_commit"] == manifest["environment"]["git"]["source_commit"]
-

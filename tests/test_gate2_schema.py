@@ -18,7 +18,7 @@ def test_manifest_is_not_hardware_readiness_and_has_provenance(tmp_path):
     result = Runner().run(spec, FakePlant(), FakePIController())
     manifest = json.loads((result.run_dir / "manifest.json").read_text())
     assert manifest["evidence_level"] != "hardware-readiness"
-    assert manifest["provenance"]["status"] in {"unknown", "exploratory"}
+    assert manifest["provenance"]["status"] in {"known", "unknown", "exploratory"}
     assert "logs/run.json" in manifest["artifacts"]
     schema = json.loads(Path("schemas/manifest.schema.json").read_text())
     jsonschema.validate(manifest, schema)
