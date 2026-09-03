@@ -33,6 +33,11 @@ archive `verification-archive-20260903` contains only historical validation
 outputs moved from the root; delete the archive after the outstanding human
 acceptance is complete.
 
+As of 2026-09-03, all previously root-level pytest, CI, run, and temporary
+directories have been moved into that archive. The root now contains no such
+generated peer directories. The archive itself is intentionally untracked and
+may be removed after human acceptance.
+
 ## Cleanup rule
 
 Before a baseline or release check:
