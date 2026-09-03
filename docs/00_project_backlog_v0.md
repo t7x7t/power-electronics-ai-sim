@@ -19,7 +19,7 @@ behavior only; it is not a hardware or product approval.
 |---|---|---|---|
 | 1 | Requirements, scope, and responsibility boundaries | Partial | L0/L1 documents define the infrastructure boundary, user responsibility, and Agent limits. A named requirement owner and final approver still need to be recorded. |
 | 2 | Project and environment configuration | Partial | `pyproject.toml`, MIT license, Git baseline, tested-version record, and light CI exist. Environment locking, platform policy, and release evidence are incomplete. |
-| 3 | Public data and interface contracts | Done (v0 slice) | `contracts.py` defines experiment, timebase, observation, action, Plant, and Controller contracts. Multi-rate/event capability negotiation is future work. |
+| 3 | Public data and interface contracts | Done (v1 incremental) | v0 contracts are extended with normalized capability negotiation, explicit event/multi-rate gates, schema compatibility checks, observation visibility/time-window checks, snapshot hash verification, and regression tests. Full event scheduling semantics and richer unit registries remain future work. |
 | 4 | Plant and Controller integration | Partial | Fake Plant, Fake Load Plant, and Fake PI Controller exercise the contract. Real `D:\PySpice` code is intentionally not migrated pending review. |
 | 5 | Generic Runner | Done (minimal) | Reset, observation, controller call, timestamp checks, action projection, schedule, advancement, and artifact publication are implemented. Full lifecycle audit and richer timing are future work. |
 | 6 | Safety and qualification checks | Partial | Non-finite values, action bounds, time rollback, and basic sample qualification fail closed. A broader extensible rule set is still needed. |
@@ -93,3 +93,8 @@ The v0 Fake backend slice has been locally verified with the repository's test
 suite and CLI smoke checks. This snapshot is not a claim that the L0 goal is
 complete. Before declaring completion, update this document with the exact
 test command, commit/tag, environment, reviewer, and remaining limitations.
+
+The Stage 3 incremental contract update is documented in
+`docs/12_public_contracts_stage3_v1.md` and was locally verified with
+`pytest -q --basetemp .tmp/pytest-stage3` (26 passed) plus a successful
+`psfb-step` CLI smoke run. The update does not claim physical model validity.

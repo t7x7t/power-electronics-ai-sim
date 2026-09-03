@@ -10,7 +10,14 @@ import time
 import json
 
 from .artifacts import ArtifactWriter, artifact_index
-from .contracts import ActionRequest, ExperimentSpec, PlantObservation
+from .contracts import (
+    ActionRequest,
+    ExperimentSpec,
+    PlantObservation,
+    negotiate_capabilities,
+    snapshot_file_hash,
+    validate_observation_visibility,
+)
 from .qualification import qualify_samples
 from .provenance import collect_git_provenance
 from .dirty import analyze_git_worktree, require_formal_comparison
@@ -106,17 +113,40 @@ class Runner:
         try:
             if not hasattr(plant, "capabilities"):
                 raise TypeError("plant missing capabilities()")
+            plant_caps = plant.capabilities()
+            controller_caps = controller.capabilities() if hasattr(controller, "capabilities") else None
+            negotiate_capabilities(
+                plant_caps,
+                controller_caps,
+                spec.timebase,
+                spec.required_capabilities,
+                spec.input_schedule,
+            )
             if spec.initial_state.mode == "qualified_snapshot":
-                snapshot = json.loads(Path(spec.initial_state.snapshot_path).read_text(encoding="utf-8"))
+                snapshot_path = Path(spec.initial_state.snapshot_path)
+                if snapshot_file_hash(str(snapshot_path)) != spec.initial_state.snapshot_hash:
+                    raise ValueError("qualified snapshot hash mismatch")
+                snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+                if not isinstance(snapshot, Mapping):
+                    raise ValueError("qualified snapshot must contain an object")
+                if not hasattr(plant, "restore"):
+                    raise TypeError("plant missing restore() for qualified snapshot")
                 plant.restore(snapshot)
             else:
+                if not hasattr(plant, "reset"):
+                    raise TypeError("plant missing reset()")
                 plant.reset(spec.initial_state.to_dict())
+            if not hasattr(controller, "reset"):
+                raise TypeError("controller missing reset()")
             controller_state = controller.reset(None, spec.seed if spec.seed is not None else 0)
             n_steps = int(math.ceil(spec.timebase.duration_s / spec.timebase.control_period_s))
+            previous_observation_time: float | None = None
             for index in range(n_steps):
                 obs = plant.observe()
                 check_observation(obs.measurement)
                 now = float(obs.time_s)
+                validate_observation_visibility(obs, now, previous_observation_time)
+                previous_observation_time = now
                 if not hasattr(controller, "observe"):
                     raise TypeError("controller missing observe()")
                 command = _command_at(spec.input_schedule, now)
@@ -124,12 +154,16 @@ class Runner:
                 if not isinstance(request, ActionRequest):
                     raise TypeError("controller must return ActionRequest")
                 endpoint = now + spec.timebase.control_period_s
-                if request.produced_time_s < now - 1e-12 or request.target_time_s < request.produced_time_s - 1e-12 or request.target_time_s > endpoint + 1e-12:
+                tolerance = spec.timebase.event_tolerance_s
+                if request.produced_time_s < now - tolerance or request.target_time_s < request.produced_time_s - tolerance or request.target_time_s > endpoint + tolerance:
                     raise ValueError("action timestamp violates timebase")
                 action, clamp_reason = project_action(request.value)
                 next_obs = plant.advance(action, spec.timebase.control_period_s, external_input=command)
                 if next_obs.time_s <= now or not math.isfinite(next_obs.time_s):
                     raise ValueError("plant time did not advance")
+                endpoint = now + spec.timebase.control_period_s
+                if next_obs.time_s > endpoint + tolerance:
+                    raise ValueError("plant advanced beyond the requested time window")
                 samples.append({"step_index": index, "time_s": now, "vout": obs.measurement["vout"], "action": action, "action_requested": request.value, "clamp_reason": clamp_reason})
                 events.append({"step_index": index, "sample_time_s": now, "action_time_s": request.target_time_s, "next_time_s": next_obs.time_s})
             ok, reasons = qualify_samples(samples)
