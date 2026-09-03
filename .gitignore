@@ -1,0 +1,28 @@
+# Python bytecode and tool caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.pytest_*/
+.mypy_cache/
+.ruff_cache/
+
+# Local environments and packaging output
+.venv/
+venv/
+env/
+dist/
+build/
+
+# Generated simulation output and temporary files
+runs/
+.ci-runs*/
+.tmp/
+tmp*/
+*.tmp
+
+# Local editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

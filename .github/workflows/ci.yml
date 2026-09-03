@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install package and test dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[test]"
+
+      - name: Validate JSON Schemas and example configuration
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import jsonschema
+
+          root = Path.cwd()
+          experiment_schema = json.loads((root / "schemas/experiment.schema.json").read_text(encoding="utf-8"))
+          manifest_schema = json.loads((root / "schemas/manifest.schema.json").read_text(encoding="utf-8"))
+          example = json.loads((root / "examples/psfb_pi_step/config.json").read_text(encoding="utf-8"))
+          jsonschema.Draft202012Validator.check_schema(experiment_schema)
+          jsonschema.Draft202012Validator.check_schema(manifest_schema)
+          jsonschema.Draft202012Validator(experiment_schema).validate(example)
+          print("validated experiment schema and reference configuration")
+          print(f"manifest schema title: {manifest_schema['title']}")
+          PY
+
+      - name: Run test suite
+        run: python -m pytest --basetemp .pytest_ci
+
+      - name: Run CLI smoke test
+        run: |
+          python -m pe_sim.cli --help
+          python -m pe_sim.cli psfb-step --output-dir .ci-runs --run-id ci-smoke
+          test -f .ci-runs/ci-smoke/manifest.json

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/power-electronics-ai-sim/manifest.schema.json",
+  "title": "Power Electronics AI Simulation Manifest",
+  "type": "object",
+  "additionalProperties": true,
+  "$defs": {"hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"}, "artifact": {"type": "object", "additionalProperties": false, "required": ["path", "sha256"], "properties": {"path": {"type": "string", "minLength": 1}, "sha256": {"$ref": "#/$defs/hash"}}}},
+  "required": ["schema_version", "experiment_id", "run_id", "created_at", "source_commit", "branch", "working_tree_status", "environment", "provenance", "plant", "controller", "contracts", "timebase", "initial_state", "random_seed", "artifacts", "status", "qualification", "safety", "evidence_level"],
+  "properties": {
+    "schema_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+$"}, "experiment_id": {"type": "string", "minLength": 1}, "run_id": {"type": "string", "minLength": 1}, "created_at": {"type": "string", "minLength": 1}, "source_commit": {"type": "string", "minLength": 1}, "branch": {"type": "string", "minLength": 1}, "working_tree_status": {"enum": ["clean", "dirty", "unknown"]},
+    "environment": {"type": "object"}, "provenance": {"type": "object", "additionalProperties": false, "required": ["status", "producer", "limitations"], "properties": {"status": {"enum": ["known", "unknown", "exploratory"]}, "producer": {"type": "string"}, "limitations": {"type": "array", "items": {"type": "string"}}}}, "plant": {"type": "object", "additionalProperties": true, "required": ["id", "hash"], "properties": {"id": {"type": "string", "minLength": 1}, "hash": {"$ref": "#/$defs/hash"}}}, "controller": {"type": "object", "additionalProperties": true, "required": ["id", "hash"], "properties": {"id": {"type": "string", "minLength": 1}, "hash": {"$ref": "#/$defs/hash"}}},
+    "contracts": {"type": "object", "additionalProperties": {"$ref": "#/$defs/hash"}}, "timebase": {"type": "object", "additionalProperties": true, "required": ["unit", "control_period_s", "duration_s"], "properties": {"unit": {"const": "s"}, "control_period_s": {"type": "number", "exclusiveMinimum": 0}, "duration_s": {"type": "number", "exclusiveMinimum": 0}, "plant_step_s": {"type": "number", "exclusiveMinimum": 0}, "sample_offset_s": {"type": "number", "minimum": 0}}},
+    "initial_state": {"type": "object"}, "random_seed": {"type": ["integer", "null"], "minimum": 0}, "artifacts": {"type": "object", "additionalProperties": {"$ref": "#/$defs/artifact"}}, "status": {"enum": ["CREATED", "RUNNING", "RUN_OK", "RUN_FAILED", "INCOMPLETE", "QUALIFIED", "DISQUALIFIED", "COMPARABLE", "LEARNING_ELIGIBLE", "LEARNING_UPDATED", "LEARNING_REJECTED"]}, "qualification": {"type": "object"}, "safety": {"type": "object"}, "evidence_level": {"enum": ["mechanism", "functional", "physical-performance", "research-safety"]}
+  }
+}

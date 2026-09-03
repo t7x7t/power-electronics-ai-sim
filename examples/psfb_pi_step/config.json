@@ -1,0 +1,21 @@
+{
+  "schema_version": "0.1",
+  "experiment_id": "psfb_pi_step",
+  "run_id": "psfb-configured",
+  "plant_id": "psfb-ideal",
+  "controller_id": "pi",
+  "timebase": {
+    "unit": "s",
+    "control_period_s": 0.001,
+    "duration_s": 0.02,
+    "sample_offset_s": 0.0
+  },
+  "initial_state": {"mode": "cold_start", "snapshot_path": null, "snapshot_hash": null},
+  "input_schedule": [{"time_s": 0.01, "vref": 0.8}],
+  "seed": 0,
+  "contracts": {
+    "safety": {"id": "default-safety", "hash": "0000000000000000000000000000000000000000000000000000000000000000"},
+    "qualification": {"id": "default-qualification", "hash": "0000000000000000000000000000000000000000000000000000000000000000"}
+  },
+  "output": {"directory": "runs", "retention": "keep"}
+}

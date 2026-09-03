@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/power-electronics-ai-sim/experiment.schema.json",
+  "title": "Power Electronics AI Simulation Experiment",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "experiment_id", "run_id", "plant_id", "controller_id", "timebase", "initial_state", "input_schedule", "seed", "contracts", "output"],
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "contract_ref": {"type": "object", "additionalProperties": false, "required": ["id", "hash"], "properties": {"id": {"type": "string", "minLength": 1}, "hash": {"$ref": "#/$defs/hash"}}}
+  },
+  "properties": {
+    "schema_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+$"}, "experiment_id": {"type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9_.-]+$"}, "run_id": {"type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9_.-]+$"}, "plant_id": {"type": "string", "minLength": 1}, "controller_id": {"type": "string", "minLength": 1},
+    "plant_config": {"type": "object"}, "controller_config": {"type": "object"},
+    "timebase": {"type": "object", "additionalProperties": false, "required": ["unit", "control_period_s", "duration_s"], "properties": {"unit": {"const": "s"}, "plant_step_s": {"type": "number", "exclusiveMinimum": 0}, "control_period_s": {"type": "number", "exclusiveMinimum": 0}, "sample_offset_s": {"type": "number", "minimum": 0}, "duration_s": {"type": "number", "exclusiveMinimum": 0}}},
+    "initial_state": {"type": "object", "additionalProperties": true, "required": ["mode"], "properties": {"mode": {"enum": ["cold_start", "warm_start", "qualified_snapshot"]}, "snapshot_path": {"type": ["string", "null"]}, "snapshot_hash": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"}}, "allOf": [{"if": {"properties": {"mode": {"const": "qualified_snapshot"}}}, "then": {"required": ["snapshot_path", "snapshot_hash"]}}]},
+    "input_schedule": {"type": "array", "items": {"type": "object", "additionalProperties": true, "required": ["time_s"], "properties": {"time_s": {"type": "number", "minimum": 0}}}}, "seed": {"type": ["integer", "null"], "minimum": 0},
+    "contracts": {"type": "object", "additionalProperties": false, "required": ["safety", "qualification"], "properties": {"safety": {"$ref": "#/$defs/contract_ref"}, "qualification": {"$ref": "#/$defs/contract_ref"}}}, "output": {"type": "object", "additionalProperties": false, "required": ["directory", "retention"], "properties": {"directory": {"type": "string", "minLength": 1}, "retention": {"enum": ["keep", "on_failure", "temporary"]}}}
+  }
+}
