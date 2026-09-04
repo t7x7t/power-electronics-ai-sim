@@ -156,6 +156,16 @@ formal result exchange.
   product models, or building a product-grade thermal/electrical model without
   calibration and an independent provenance record.
 
+## Runner modular facade increment
+
+Stage 5 now exposes `run_experiment(spec, plant, controller, options=None)` for
+simple use and `RunOptions` with timing, recovery, and audit policies for
+advanced use. The legacy `Runner().run(...)` signature remains supported.
+Audit and lifecycle implementations are isolated in `pe_sim.runner`; timing,
+checkpoint/recovery, and publication internals remain compatibility code in
+`runtime.py` until their behavior is extracted with dedicated regression
+tests. See `docs/15_runner_modular_api_v1.md`.
+
 ## Later backlog
 
 ### Stage 5 follow-up backlog

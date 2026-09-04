@@ -15,6 +15,9 @@ from .qualification import qualify_samples
 from .provenance import collect_git_provenance
 from .dirty import analyze_git_worktree, require_formal_comparison
 from .safety import check_observation, project_action
+from .runner.audit import AuditRecorder
+from .runner.lifecycle import LifecycleStateMachine
+from .runner.policies import RunOptions
 
 
 @dataclass(frozen=True)
@@ -24,44 +27,9 @@ class RunResult:
     qualification: Mapping[str, Any]
 
 
-class _Audit:
-    def __init__(self) -> None:
-        self.calls: list[dict[str, Any]] = []
-        self._call_id = 0
-
-    def call(self, component: str, method: str, fn: Callable[[], Any], *, step_index: int | None = None, time_s: float | None = None) -> Any:
-        self._call_id += 1
-        record: dict[str, Any] = {"call_id": self._call_id, "component": component, "method": method, "step_index": step_index, "time_s": time_s}
-        try:
-            result = fn()
-        except BaseException as exc:
-            record.update({"ok": False, "exception_type": type(exc).__name__, "error": str(exc)})
-            self.calls.append(record)
-            raise
-        record["ok"] = True
-        self.calls.append(record)
-        return result
-
-    def to_dict(self) -> dict[str, Any]:
-        counts: dict[str, int] = {}
-        for row in self.calls:
-            key = f"{row['component']}.{row['method']}"
-            counts[key] = counts.get(key, 0) + 1
-        return {"calls": self.calls, "call_counts": counts, "call_order": [f"{r['component']}.{r['method']}" for r in self.calls]}
-
-
-class _StateMachine:
-    _ALLOWED = {"CREATED": {"RUNNING", "RUN_FAILED", "INCOMPLETE"}, "RUNNING": {"RUN_OK", "RUN_FAILED", "INCOMPLETE"}}
-
-    def __init__(self) -> None:
-        self.status = "CREATED"
-        self.transitions: list[dict[str, Any]] = []
-
-    def transition(self, target: str, reason: str, *, step_index: int | None = None, time_s: float | None = None) -> None:
-        if target not in self._ALLOWED.get(self.status, set()):
-            raise ValueError(f"invalid run state transition {self.status} -> {target}")
-        self.transitions.append({"from": self.status, "to": target, "reason": reason, "step_index": step_index, "time_s": time_s, "rule_version": "runner-state-v1"})
-        self.status = target
+# Private aliases preserve the old implementation names for downstream code.
+_Audit = AuditRecorder
+_StateMachine = LifecycleStateMachine
 
 
 class FakePlant:
@@ -132,7 +100,50 @@ class FakePIController:
 
 class Runner:
     """Run a Plant/Controller pair with explicit timing and evidence."""
-    def run(self, spec: ExperimentSpec, plant: Any, controller: Any, mode: str = "exploratory", *, checkpoint_interval_steps: int | None = None, resume_from: str | Path | None = None, interrupt_after_steps: int | None = None, measurement_key: str | None = None, safety_checker: Callable[[Mapping[str, float]], Any] | None = None, qualification_checker: Callable[[list[Mapping[str, Any]]], tuple[bool, list[str]]] | None = None) -> RunResult:
+    def run(self, spec: ExperimentSpec, plant: Any, controller: Any, mode: str = "exploratory", *, checkpoint_interval_steps: int | None = None, resume_from: str | Path | None = None, interrupt_after_steps: int | None = None, measurement_key: str | None = None, safety_checker: Callable[[Mapping[str, float]], Any] | None = None, qualification_checker: Callable[[list[Mapping[str, Any]]], tuple[bool, list[str]]] | None = None, options: RunOptions | None = None) -> RunResult:
+        if options is not None:
+            if not isinstance(options, RunOptions):
+                raise TypeError("options must be a RunOptions instance")
+            options.validate(spec)
+            if mode == "exploratory":
+                mode = options.mode
+            elif mode != options.mode:
+                raise ValueError("mode conflicts with RunOptions.mode")
+            values = {
+                "checkpoint_interval_steps": checkpoint_interval_steps,
+                "resume_from": resume_from,
+                "interrupt_after_steps": interrupt_after_steps,
+                "measurement_key": measurement_key,
+                "safety_checker": safety_checker,
+                "qualification_checker": qualification_checker,
+            }
+            policy_values = {
+                "checkpoint_interval_steps": options.recovery.checkpoint_interval_steps,
+                "resume_from": options.recovery.resume_from,
+                "interrupt_after_steps": options.recovery.interrupt_after_steps,
+                "measurement_key": options.measurement_key,
+                "safety_checker": options.safety_checker,
+                "qualification_checker": options.qualification_checker,
+            }
+            for name, explicit in values.items():
+                selected = policy_values[name]
+                if explicit is not None and selected is not None and explicit != selected:
+                    raise ValueError(f"{name} conflicts with RunOptions")
+                if explicit is None:
+                    values[name] = selected
+            checkpoint_interval_steps = values["checkpoint_interval_steps"]
+            resume_from = values["resume_from"]
+            interrupt_after_steps = values["interrupt_after_steps"]
+            measurement_key = values["measurement_key"]
+            safety_checker = values["safety_checker"]
+            qualification_checker = values["qualification_checker"]
+            if not options.timing.allow_target_time:
+                # Enforced when each ActionRequest is validated below.
+                target_time_allowed = False
+            else:
+                target_time_allowed = True
+        else:
+            target_time_allowed = True
         if mode not in {"exploratory", "formal_comparison"}:
             raise ValueError("mode must be 'exploratory' or 'formal_comparison'")
         if checkpoint_interval_steps is not None and checkpoint_interval_steps <= 0:
@@ -144,7 +155,7 @@ class Runner:
             require_formal_comparison(worktree)
         git = collect_git_provenance()
         writer = ArtifactWriter(spec.output_dir, spec.run_id)
-        audit, machine = _Audit(), _StateMachine()
+        audit, machine = _Audit(enabled=options.audit.enabled if options is not None else True), _StateMachine()
         machine.transition("RUNNING", "run_started")
         samples: list[dict[str, Any]] = []
         events: list[dict[str, Any]] = []
@@ -233,6 +244,8 @@ class Runner:
                 endpoint, tolerance = cycle_start + spec.timebase.control_period_s, spec.timebase.event_tolerance_s
                 if request.produced_time_s < current_time - tolerance or request.produced_time_s > endpoint + tolerance or request.target_time_s < current_time - tolerance or request.target_time_s > endpoint + tolerance:
                     raise ValueError("action timestamp violates timebase")
+                if not target_time_allowed and abs(float(request.target_time_s) - current_time) > tolerance:
+                    raise ValueError("timing policy disallows delayed target-time actions")
                 action, clamp_reason = audit.call("safety", "project_action", lambda: project_action(request.value), step_index=index, time_s=current_time)
                 target = min(max(float(request.target_time_s), current_time), endpoint)
                 hold = max(0.0, target - current_time)

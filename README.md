@@ -19,6 +19,21 @@ support or response. The MIT License and its warranty/liability terms apply.
 Unreviewed material from `D:\PySpice` and other third-party sources is not
 relicensed by this repository.
 
+## Generic Runner entry point
+
+The low-friction Python entry point uses the standard audited runner defaults:
+
+```python
+from pe_sim import run_experiment
+
+result = run_experiment(spec, plant, controller)
+```
+
+Advanced callers can compose `RunOptions` policies for timing, recovery, or
+custom checks. The legacy `Runner().run(...)` API remains compatible. The
+Runner orchestrates ordering, audit, recovery, and publication; circuit models
+and control algorithms remain in Plant/Controller adapters.
+
 这是一个面向 AI Agent 协作的电力电子仿真工程骨架。根目录的
 `general_simulation_infrastructure_and_closed_loop_phases_20260902.md` 是
 思路性总纲；本目录下的规范文件才是 v0 实现阶段的可执行依据。
@@ -56,6 +71,41 @@ pe-sim psfb-step --output-dir runs --run-id demo
 `psfb-step` 使用内置 fake backend 作为契约验收 fixture，不代表真实
 PySpice/Ngspice 物理结果。运行目录包含配置快照、事件、样本、资格/安全记录和
 带 SHA-256 的 `manifest.json`。真实 PSFB 适配器只有在 Gate 1/2 通过后才迁移。
+
+## Runner entry points
+
+For Python users, the low-friction entry point is:
+
+```python
+from pe_sim import run_experiment
+
+result = run_experiment(spec, plant, controller)
+```
+
+For configuration-driven use, select a supported backend through the CLI:
+
+```powershell
+pe-sim run examples/buck_pi_step/config.json --backend buck
+pe-sim run examples/boost_pi_step/config.json --backend boost
+```
+
+Both paths use the standard deterministic timing, audit, safety, qualification,
+and artifact behavior. Advanced users can pass `RunOptions` with narrowly
+scoped `TimingPolicy`, `RecoveryPolicy`, or `AuditPolicy` settings. Policy
+objects are optional and are not required for ordinary experiments.
+
+Existing code can migrate incrementally. The legacy form remains supported:
+
+```python
+from pe_sim import Runner
+
+result = Runner().run(spec, plant, controller)
+```
+
+Move to `run_experiment` when a simpler default is preferred; keep the legacy
+form when existing code relies on its keyword arguments. Do not add circuit
+equations, controller algorithms, plotting, or engineering conclusions to the
+Runner; those belong in adapters or later analysis layers.
 
 ## 基本约定
 
