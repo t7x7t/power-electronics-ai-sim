@@ -9,7 +9,7 @@ import math
 import time
 import json
 
-from .artifacts import ArtifactWriter, artifact_index
+from .artifacts import ArtifactWriter, artifact_index, canonical_json, sha256_bytes
 from .contracts import (
     ActionRequest,
     ExperimentSpec,
@@ -82,6 +82,15 @@ class FakePIController:
     def __init__(self, kp: float = 1.0):
         self.kp = float(kp)
         self.state: dict[str, Any] = {}
+
+    def manifest_identity(self) -> dict[str, Any]:
+        return {
+            "kind": "fixture_controller",
+            "module": type(self).__module__,
+            "class": type(self).__qualname__,
+            "parameters": {"kp": self.kp},
+            "capabilities": [],
+        }
 
     def reset(self, controller_state: Mapping[str, Any] | None, seed: int) -> Mapping[str, Any]:
         del seed
@@ -187,13 +196,35 @@ class Runner:
         except Exception:
             # JSON remains the canonical artifact when NumPy is unavailable.
             pass
-        manifest = {"schema_version": spec.schema_version, "experiment_id": spec.experiment_id, "run_id": spec.run_id, "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), **git.to_manifest_fields(), "worktree_analysis": worktree.to_dict(), "run_mode": mode, "environment": {"runner": "pe_sim", "git": {"source_commit": git.source_commit, "branch": git.branch, "working_tree_status": git.working_tree_status}}, "plant": {"id": spec.plant_id, "hash": "0" * 64}, "controller": {"id": spec.controller_id, "hash": "0" * 64}, "contracts": {k: v["hash"] for k, v in spec.contracts.items()}, "timebase": spec.timebase.to_dict(), "initial_state": spec.initial_state.to_dict(), "random_seed": spec.seed, "artifacts": {}, "status": status, "qualification": qualification, "safety": {"passed": error is None}, "evidence_level": "functional", "error": error}
+        worktree_manifest = worktree.to_dict()
+        # A run Manifest is portable evidence; local checkout roots belong only
+        # in the read-only ``pe-sim git-status`` output, never in run records.
+        worktree_manifest.pop("repo_root", None)
+        manifest = {"schema_version": spec.schema_version, "experiment_id": spec.experiment_id, "run_id": spec.run_id, "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), **git.to_manifest_fields(), "worktree_analysis": worktree_manifest, "run_mode": mode, "environment": {"runner": "pe_sim", "git": {"source_commit": git.source_commit, "branch": git.branch, "working_tree_status": git.working_tree_status}}, "plant": _component_manifest(spec.plant_id, plant), "controller": _component_manifest(spec.controller_id, controller), "contracts": {k: v["hash"] for k, v in spec.contracts.items()}, "timebase": spec.timebase.to_dict(), "initial_state": spec.initial_state.to_dict(), "random_seed": spec.seed, "artifacts": {}, "status": status, "qualification": qualification, "safety": {"passed": error is None}, "evidence_level": "functional", "error": error}
         writer.write_json("manifest.json", manifest)
         run_dir = writer.finalize()
         # Index is written after publication, then manifest is atomically replaced.
         manifest["artifacts"] = artifact_index(run_dir)
-        (run_dir / "manifest.json").write_bytes(__import__("pe_sim.artifacts", fromlist=["canonical_json"]).canonical_json(manifest))
+        (run_dir / "manifest.json").write_bytes(canonical_json(manifest))
         return RunResult(run_dir, status, qualification)
+
+
+def _component_manifest(component_id: str, component: Any) -> dict[str, Any]:
+    """Build a portable component identity without leaking checkout paths."""
+    identity_fn = getattr(component, "manifest_identity", None)
+    if callable(identity_fn):
+        identity = dict(identity_fn())
+    else:
+        identity = {
+            "kind": "runtime_component",
+            "module": type(component).__module__,
+            "class": type(component).__qualname__,
+        }
+        capabilities = getattr(component, "capabilities", None)
+        if callable(capabilities):
+            identity["capabilities"] = sorted(str(item) for item in capabilities())
+    payload = canonical_json(identity)
+    return {"id": component_id, "hash": sha256_bytes(payload), "identity": identity}
 
 
 def _command_at(schedule: tuple[Mapping[str, Any], ...], time_s: float) -> dict[str, Any]:

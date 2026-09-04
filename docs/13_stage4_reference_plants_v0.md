@@ -58,3 +58,25 @@ out-of-range actions when an adapter-specific `action_bounds` argument is
 explicitly supplied.  The harness does not assume normalized actions for
 arbitrary PlantAdapters.  They are contract checks only; they do not replace
 topology-specific physics validation.
+
+## CLI/configuration entry
+
+The references can be selected through the supported `pe-sim run` command;
+the JSON configuration carries model parameters in `plant_config` and the
+controller gain in `controller_config`:
+
+```powershell
+pe-sim run examples/buck_pi_step/config.json --backend buck
+pe-sim run examples/boost_pi_step/config.json --backend boost
+```
+
+The backend accepts only the five documented electrical/integration fields.
+Unknown fields fail closed.  A run Manifest records the topology, L1 model
+parameters, capabilities, implementation module/class, and deterministic
+SHA-256 identity.  It intentionally omits local checkout paths.  These
+identities bind repeatability and comparison to the reference implementation;
+they do not establish physical or product validity.
+
+Analytical equilibrium checks and integration-step sensitivity checks are
+regression evidence for the equations and numerical implementation.  They do
+not replace switching, parasitic, thermal, device, or experimental validation.

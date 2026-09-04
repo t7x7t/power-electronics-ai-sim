@@ -123,16 +123,15 @@ formal result exchange.
 
 ### Immediate before calling the L1 integration slice accepted
 
-- Add a supported CLI/configuration entry for the Buck and Boost references,
-  so users and agents can exercise the adapters without importing internal
-  Python classes directly.
-- Add analytical sanity checks and integration-step sensitivity checks for the
-  ideal averaged equations. The current tests prove contract behavior, but do
-  not yet prove that the numerical implementation follows its stated equations
-  over a representative operating point.
-- Record reference-model parameters, topology identity, declared capabilities,
-  and a deterministic model/source identity in the run Manifest. Placeholder
-  hashes are not sufficient for formal comparison of two reference runs.
+- **Completed in the current slice**: add a supported CLI/configuration entry
+  for the Buck and Boost references, so users and agents can exercise the
+  adapters without importing internal Python classes directly.
+- **Completed in the current slice**: add analytical equilibrium sanity checks
+  and integration-step sensitivity checks for the ideal averaged equations.
+- **Completed in the current slice**: record reference-model parameters,
+  topology identity, declared capabilities, and a deterministic model/source
+  identity in the run Manifest. Placeholder hashes are no longer used for
+  reference adapters, and local checkout roots are omitted from run evidence.
 - Keep the acceptance statement explicitly limited to L1 adapter and timing
   behavior. Do not accept PSFB/LLC migration, switching behavior, thermal
   behavior, or hardware conclusions as part of this slice.
@@ -192,3 +191,9 @@ The Stage 4 L1 reference increment is documented in
 `python -m compileall -q src tests`. Buck/Boost integration remains a
 reference-adapter result only; it does not establish switching, thermal,
 hardware, or product validity.
+
+The Stage 4 immediate-gap increment adds the Buck/Boost CLI/configuration
+examples, analytical equilibrium and integration-step regression checks, and
+portable reference component identities in Manifest records. Remaining Stage 4
+items stay listed above under the later backlog and are intentionally not part
+of this L1 acceptance.

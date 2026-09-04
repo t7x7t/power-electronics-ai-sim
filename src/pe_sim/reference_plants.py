@@ -7,6 +7,10 @@ public PlantAdapter contract; they are not device, thermal, or product models.
 from __future__ import annotations
 
 from typing import Any, Mapping
+import hashlib
+import inspect
+import sys
+import json
 import math
 
 from .contracts import PlantObservation
@@ -45,6 +49,41 @@ class _AveragedConverter:
     def capabilities(self) -> set[str]:
         return {"continuous_time", "external_input", "snapshot"}
 
+    def manifest_identity(self) -> dict[str, Any]:
+        """Return a portable, deterministic identity for a reference run.
+
+        The source digest identifies the project-owned implementation without
+        recording a local checkout path.  The component digest covers both the
+        implementation and the exact electrical parameters used for this run.
+        """
+        implementation = type(self)
+        module = sys.modules[implementation.__module__]
+        source = inspect.getsource(module).encode("utf-8")
+        parameters = {
+            "input_voltage_v": self.input_voltage_v,
+            "inductance_h": self.inductance_h,
+            "capacitance_f": self.capacitance_f,
+            "load_resistance_ohm": self.load_resistance_ohm,
+            "integration_step_s": self.integration_step_s,
+        }
+        source_sha256 = hashlib.sha256(source).hexdigest()
+        identity = {
+            "level": "L1",
+            "kind": "ideal_averaged_reference",
+            "topology": self.topology,
+            "parameters": parameters,
+            "capabilities": sorted(self.capabilities()),
+            "implementation": {
+                "module": implementation.__module__,
+                "class": implementation.__qualname__,
+                "source_sha256": source_sha256,
+            },
+        }
+        identity["sha256"] = hashlib.sha256(
+            json.dumps(identity, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+        ).hexdigest()
+        return identity
+
     def reset(self, initial_state: Mapping[str, Any]) -> Mapping[str, Any]:
         state = dict(initial_state or {})
         self.time_s = 0.0
@@ -71,6 +110,14 @@ class _AveragedConverter:
             age_steps=0,
             measurement_units={"vout": "V", "inductor_current": "A"},
         )
+
+    def analytical_steady_state(self, duty: float) -> dict[str, float]:
+        """Return the ideal CCM equilibrium for a constant duty ratio."""
+        duty = float(duty)
+        if not math.isfinite(duty) or not 0.0 <= duty <= 1.0:
+            raise ValueError("duty must be finite and in [0, 1]")
+        voltage, current = self._steady_state(duty)
+        return {"output_voltage_v": voltage, "inductor_current_a": current}
 
     def advance(
         self,
@@ -147,6 +194,9 @@ class _AveragedConverter:
     def _derivatives(self, duty: float, current: float, voltage: float) -> tuple[float, float]:
         raise NotImplementedError
 
+    def _steady_state(self, duty: float) -> tuple[float, float]:
+        raise NotImplementedError
+
     def _rk4_step(self, duty: float, step: float) -> None:
         i0, v0 = self.inductor_current_a, self.output_voltage_v
         k1i, k1v = self._derivatives(duty, i0, v0)
@@ -168,6 +218,10 @@ class BuckPlant(_AveragedConverter):
             (current - voltage / self.load_resistance_ohm) / self.capacitance_f,
         )
 
+    def _steady_state(self, duty: float) -> tuple[float, float]:
+        voltage = duty * self.input_voltage_v
+        return voltage, voltage / self.load_resistance_ohm
+
 
 class BoostPlant(_AveragedConverter):
     """Ideal averaged boost converter in continuous-conduction approximation."""
@@ -180,3 +234,10 @@ class BoostPlant(_AveragedConverter):
             (self.input_voltage_v - conduction * voltage) / self.inductance_h,
             (conduction * current - voltage / self.load_resistance_ohm) / self.capacitance_f,
         )
+
+    def _steady_state(self, duty: float) -> tuple[float, float]:
+        if duty >= 1.0:
+            raise ValueError("boost analytical steady state is undefined at duty=1")
+        conduction = 1.0 - duty
+        voltage = self.input_voltage_v / conduction
+        return voltage, voltage / (conduction * self.load_resistance_ohm)

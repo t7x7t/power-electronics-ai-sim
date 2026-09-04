@@ -268,6 +268,8 @@ class ExperimentSpec:
     result_retention: str = "keep"
     schema_version: str = "0.1"
     required_capabilities: tuple[str, ...] = ()
+    plant_config: Mapping[str, Any] = field(default_factory=dict)
+    controller_config: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.experiment_id or not self.run_id or not self.plant_id or not self.controller_id:
@@ -289,7 +291,7 @@ class ExperimentSpec:
                 raise ValueError("invalid input schedule time")
 
     def to_dict(self) -> dict[str, Any]:
-        return {"schema_version": self.schema_version, "experiment_id": self.experiment_id, "run_id": self.run_id, "plant_id": self.plant_id, "controller_id": self.controller_id, "timebase": self.timebase.to_dict(), "initial_state": self.initial_state.to_dict(), "input_schedule": [dict(item) for item in self.input_schedule], "seed": self.seed, "contracts": {k: dict(v) for k, v in self.contracts.items()}, "output": {"directory": self.output_dir, "retention": self.result_retention}, "required_capabilities": list(self.required_capabilities)}
+        return {"schema_version": self.schema_version, "experiment_id": self.experiment_id, "run_id": self.run_id, "plant_id": self.plant_id, "controller_id": self.controller_id, "plant_config": dict(self.plant_config), "controller_config": dict(self.controller_config), "timebase": self.timebase.to_dict(), "initial_state": self.initial_state.to_dict(), "input_schedule": [dict(item) for item in self.input_schedule], "seed": self.seed, "contracts": {k: dict(v) for k, v in self.contracts.items()}, "output": {"directory": self.output_dir, "retention": self.result_retention}, "required_capabilities": list(self.required_capabilities)}
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "ExperimentSpec":
@@ -308,6 +310,8 @@ class ExperimentSpec:
             plant_id=str(value["plant_id"]),
             controller_id=str(value["controller_id"]),
             timebase=Timebase(**dict(tb)),
+            plant_config=dict(value.get("plant_config", {})),
+            controller_config=dict(value.get("controller_config", {})),
             initial_state=InitialState(**dict(initial)),
             input_schedule=tuple(value.get("input_schedule", ())),
             seed=value.get("seed", 0),

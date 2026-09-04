@@ -5,6 +5,7 @@ from pathlib import Path
 
 from .contracts import ExperimentSpec, Timebase
 from .runtime import FakeLoadPlant, FakePIController, FakePlant, Runner
+from .reference_plants import BuckPlant, BoostPlant
 from .dirty import FormalComparisonError, analyze_git_worktree
 
 
@@ -14,7 +15,7 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command")
     run = sub.add_parser("run", help="run an experiment from JSON config")
     run.add_argument("config", type=Path)
-    run.add_argument("--backend", choices=("fake", "fake-load"), default="fake")
+    run.add_argument("--backend", choices=("fake", "fake-load", "buck", "boost"), default="fake")
     run.add_argument("--mode", choices=("exploratory", "formal_comparison"), default="exploratory")
     demo = sub.add_parser("psfb-step", help="run the PSFB reference idealized load-step")
     demo.add_argument("--output-dir", type=Path, default=Path("runs"))
@@ -26,8 +27,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "run":
             spec = ExperimentSpec.from_dict(json.loads(args.config.read_text(encoding="utf-8")))
-            plant = FakeLoadPlant() if args.backend == "fake-load" else FakePlant()
-            result = Runner().run(spec, plant, FakePIController(), mode=args.mode)
+            plant = _build_plant(args.backend, spec.plant_config)
+            controller = FakePIController(kp=float(spec.controller_config.get("kp", 1.0)))
+            result = Runner().run(spec, plant, controller, mode=args.mode)
         elif args.command == "psfb-step":
             spec = ExperimentSpec("psfb_pi_step", args.run_id, "psfb-ideal", "pi", Timebase(duration_s=0.02, control_period_s=0.001), input_schedule=({"time_s": 0.01, "vref": 0.8},), output_dir=str(args.output_dir))
             result = Runner().run(spec, FakePlant(gain=1.0, tau_s=0.004), FakePIController(kp=1.8), mode=args.mode)
@@ -42,6 +44,28 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     print(json.dumps({"status": result.status, "run_dir": str(result.run_dir), "qualification": result.qualification}, sort_keys=True))
     return 0 if result.status == "RUN_OK" else 1
+
+
+def _build_plant(backend: str, config: dict[str, object]):
+    """Instantiate a named backend from JSON-safe configuration values."""
+    if backend == "fake":
+        return FakePlant()
+    if backend == "fake-load":
+        return FakeLoadPlant()
+    defaults = {
+        "input_voltage_v": 12.0,
+        "inductance_h": 100e-6,
+        "capacitance_f": 470e-6,
+        "load_resistance_ohm": 10.0,
+        "integration_step_s": 1e-6,
+    }
+    values = dict(defaults)
+    unknown = set(config) - set(values)
+    if unknown:
+        raise ValueError(f"unsupported {backend} plant_config fields: {sorted(unknown)}")
+    values.update(config)
+    plant_type = BuckPlant if backend == "buck" else BoostPlant
+    return plant_type(**values)
 
 
 if __name__ == "__main__":
