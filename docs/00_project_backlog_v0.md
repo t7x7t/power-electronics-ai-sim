@@ -19,8 +19,8 @@ behavior only; it is not a hardware or product approval.
 |---|---|---|---|
 | 1 | Requirements, scope, and responsibility boundaries | Partial | L0/L1 documents define the infrastructure boundary, user responsibility, and Agent limits. A named requirement owner and final approver still need to be recorded. |
 | 2 | Project and environment configuration | Partial | `pyproject.toml`, MIT license, Git baseline, tested-version record, and light CI exist. Environment locking, platform policy, and release evidence are incomplete. |
-| 3 | Public data and interface contracts | Done (v1 incremental) | v0 contracts are extended with normalized capability negotiation, explicit event/multi-rate gates, schema compatibility checks, observation visibility/time-window checks, snapshot hash verification, and regression tests. Full event scheduling semantics and richer unit registries remain future work. |
-| 4 | Plant and Controller integration | Partial | Fake Plant, Fake Load Plant, and Fake PI Controller exercise the contract. Real `D:\PySpice` code is intentionally not migrated pending review. |
+| 3 | Public data and interface contracts | Done (v1 incremental) | v0 contracts are extended with normalized capability negotiation, explicit event/multi-rate gates, schema compatibility checks, observation visibility/time-window checks, snapshot hash verification, and regression tests. A reusable Plant/Controller conformance harness is now available. Full event scheduling semantics and richer unit registries remain future work. |
+| 4 | Plant and Controller integration | Partial (L1 references) | Self-owned ideal averaged Buck and Boost Plants now implement the public lifecycle, units, external-input updates, snapshots, and fail-closed bounds. Fake Plant, Fake Load Plant, and Fake PI Controller remain compatibility fixtures. Real `D:\PySpice` code and PSFB/LLC migration are intentionally deferred pending review. |
 | 5 | Generic Runner | Done (minimal) | Reset, observation, controller call, timestamp checks, action projection, schedule, advancement, and artifact publication are implemented. Full lifecycle audit and richer timing are future work. |
 | 6 | Safety and qualification checks | Partial | Non-finite values, action bounds, time rollback, and basic sample qualification fail closed. A broader extensible rule set is still needed. |
 | 7 | Run artifacts and Manifest | Partial | Atomic artifacts, JSON/NPZ samples, events, metrics, logs, hashes, and Manifest exist. Complete environment/model provenance and final package hashes are incomplete. |
@@ -89,9 +89,10 @@ formal result exchange.
 - **Stage 2 CI layering**: keep fast per-change checks in ordinary push/PR
   jobs and move expensive or real-physics checks to explicit manual or
   scheduled workflows.
-- **Stage 3 conformance fixture**: provide a reusable Plant/Controller
-  conformance test harness so every new adapter is checked against the public
-  contracts before integration.
+- **Stage 3 conformance fixture**: implemented as
+  `pe_sim.conformance.check_plant_adapter()` and
+  `check_controller_adapter()`; run it for every new adapter before
+  integration and extend it when the public contract gains new rules.
 - **Stage 3 event and multi-rate execution**: define the actual event schedule
   semantics, supported event types, and execution rules; capability declaration
   alone is not sufficient for a real event-driven backend.
@@ -146,3 +147,10 @@ The Stage 3 incremental contract update is documented in
 `docs/12_public_contracts_stage3_v1.md` and was locally verified with
 `pytest -q --basetemp .tmp/pytest-stage3` (27 passed) plus a successful
 `psfb-step` CLI smoke run. The update does not claim physical model validity.
+
+The Stage 4 L1 reference increment is documented in
+`docs/13_stage4_reference_plants_v0.md` and was locally verified with
+`pytest -q --basetemp .tmp/pytest-stage4-final` (37 passed) and
+`python -m compileall -q src tests`. Buck/Boost integration remains a
+reference-adapter result only; it does not establish switching, thermal,
+hardware, or product validity.
