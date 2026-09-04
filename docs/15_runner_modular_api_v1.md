@@ -15,11 +15,12 @@ checks, and qualification. Ordinary users do not need policy configuration.
 Advanced callers can compose narrowly scoped policies:
 
 ```python
-from pe_sim import RecoveryPolicy, RunOptions, TimingPolicy, run_experiment
+from pe_sim import BoundedActionPolicy, RecoveryPolicy, RunOptions, TimingPolicy, run_experiment
 
 options = RunOptions(
     timing=TimingPolicy(engine="fixed_window", allow_sample_offset=True),
     recovery=RecoveryPolicy(checkpoint_interval_steps=10),
+    action_policy=BoundedActionPolicy(0.0, 1.0),
 )
 result = run_experiment(spec, plant, controller, options)
 ```
@@ -31,6 +32,18 @@ recovery intervals, and conflicting legacy arguments fail before execution.
 The facade forwards to
 the compatibility Runner, so existing `Runner().run` code can migrate
 incrementally.
+
+### Action semantics
+
+The default action policy is finite-only: it rejects NaN and infinity and
+otherwise preserves the controller value. The Runner does not assume that
+every actuator is a normalized duty ratio. A Plant may explicitly declare an
+`action_policy()` (the Buck and Boost reference plants declare duty in
+`[0, 1]`), or an advanced caller may pass `RunOptions(action_policy=...)`.
+`BoundedActionPolicy` clamps to declared limits and records `lower`/`upper` in
+the sample when projection occurs. Custom policies implement
+`project(value) -> (value, reason)`. Non-finite values and invalid bounds
+always fail closed.
 
 ## Responsibility boundaries
 

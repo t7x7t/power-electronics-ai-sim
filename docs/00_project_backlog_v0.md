@@ -166,10 +166,20 @@ checkpoint/recovery, and publication internals remain compatibility code in
 `runtime.py` until their behavior is extracted with dedicated regression
 tests. See `docs/15_runner_modular_api_v1.md`.
 
+The immediate genericity gap for Stage 5 is now closed: action handling is
+finite-only by default and no longer assumes a universal `[0, 1]` actuator
+range. A Plant declaration or explicit `RunOptions(action_policy=...)` selects
+bounded projection when required. The current acceptance evidence is the full
+local suite (57 tests); this remains an infrastructure behavior result, not a
+physical-model or hardware result.
+
 ## Later backlog
 
 ### Stage 5 follow-up backlog
 
+- Extract timing, recovery, and publication into independently testable modules
+  behind the existing facade; keep `Runner().run(...)` compatibility while the
+  internal coordinator evolves.
 - Define a complete event queue and deterministic same-time event priority
   policy; the current runner supports fixed control windows, sample offsets,
   action target times, and segmented `plant_step_s` advancement only.
@@ -180,8 +190,10 @@ tests. See `docs/15_runner_modular_api_v1.md`.
   `INCOMPLETE` path and is not hardware or operating-system recovery.
 - Replace ad-hoc measurement names with a versioned measurement/unit registry
   and explicit result mappings for qualification and visualization.
-- Add configurable action bounds and richer safety/qualification hooks without
-  changing the fail-closed default.
+- Add richer safety/qualification hooks and a versioned action/unit registry.
+  Action bounds are now explicit: generic Runner execution is finite-only by
+  default, while a Plant declaration or `RunOptions(action_policy=...)` may
+  opt into bounds (see `docs/15_runner_modular_api_v1.md`).
 
 - Lock dependencies and external executables, including Ngspice, per platform.
 - Add Windows and other required CI jobs after the runtime is portable.

@@ -14,7 +14,7 @@ from .contracts import ActionRequest, ExperimentSpec, PlantObservation, negotiat
 from .qualification import qualify_samples
 from .provenance import collect_git_provenance
 from .dirty import analyze_git_worktree, require_formal_comparison
-from .safety import check_observation, project_action
+from .safety import ActionPolicy, FiniteActionPolicy, check_observation, project_action
 from .runner.audit import AuditRecorder
 from .runner.lifecycle import LifecycleStateMachine
 from .runner.policies import RunOptions
@@ -100,7 +100,7 @@ class FakePIController:
 
 class Runner:
     """Run a Plant/Controller pair with explicit timing and evidence."""
-    def run(self, spec: ExperimentSpec, plant: Any, controller: Any, mode: str = "exploratory", *, checkpoint_interval_steps: int | None = None, resume_from: str | Path | None = None, interrupt_after_steps: int | None = None, measurement_key: str | None = None, safety_checker: Callable[[Mapping[str, float]], Any] | None = None, qualification_checker: Callable[[list[Mapping[str, Any]]], tuple[bool, list[str]]] | None = None, options: RunOptions | None = None) -> RunResult:
+    def run(self, spec: ExperimentSpec, plant: Any, controller: Any, mode: str = "exploratory", *, checkpoint_interval_steps: int | None = None, resume_from: str | Path | None = None, interrupt_after_steps: int | None = None, measurement_key: str | None = None, safety_checker: Callable[[Mapping[str, float]], Any] | None = None, qualification_checker: Callable[[list[Mapping[str, Any]]], tuple[bool, list[str]]] | None = None, action_policy: ActionPolicy | None = None, options: RunOptions | None = None) -> RunResult:
         if options is not None:
             if not isinstance(options, RunOptions):
                 raise TypeError("options must be a RunOptions instance")
@@ -116,6 +116,7 @@ class Runner:
                 "measurement_key": measurement_key,
                 "safety_checker": safety_checker,
                 "qualification_checker": qualification_checker,
+                "action_policy": action_policy,
             }
             policy_values = {
                 "checkpoint_interval_steps": options.recovery.checkpoint_interval_steps,
@@ -124,6 +125,7 @@ class Runner:
                 "measurement_key": options.measurement_key,
                 "safety_checker": options.safety_checker,
                 "qualification_checker": options.qualification_checker,
+                "action_policy": options.action_policy,
             }
             for name, explicit in values.items():
                 selected = policy_values[name]
@@ -137,6 +139,7 @@ class Runner:
             measurement_key = values["measurement_key"]
             safety_checker = values["safety_checker"]
             qualification_checker = values["qualification_checker"]
+            action_policy = values["action_policy"]
             if not options.timing.allow_target_time:
                 # Enforced when each ActionRequest is validated below.
                 target_time_allowed = False
@@ -150,6 +153,19 @@ class Runner:
             raise ValueError("checkpoint_interval_steps must be positive")
         if interrupt_after_steps is not None and interrupt_after_steps <= 0:
             raise ValueError("interrupt_after_steps must be positive")
+        if action_policy is not None and not callable(getattr(action_policy, "project", None)):
+            raise TypeError("action_policy must provide project(value)")
+        selected_action_policy = action_policy
+        if selected_action_policy is None:
+            factory = getattr(plant, "action_policy", None)
+            if callable(getattr(factory, "project", None)):
+                selected_action_policy = factory
+            elif callable(factory):
+                selected_action_policy = factory()
+            else:
+                selected_action_policy = FiniteActionPolicy()
+        if not callable(getattr(selected_action_policy, "project", None)):
+            raise TypeError("selected action policy must provide project(value)")
         worktree = analyze_git_worktree()
         if mode == "formal_comparison":
             require_formal_comparison(worktree)
@@ -246,7 +262,7 @@ class Runner:
                     raise ValueError("action timestamp violates timebase")
                 if not target_time_allowed and abs(float(request.target_time_s) - current_time) > tolerance:
                     raise ValueError("timing policy disallows delayed target-time actions")
-                action, clamp_reason = audit.call("safety", "project_action", lambda: project_action(request.value), step_index=index, time_s=current_time)
+                action, clamp_reason = audit.call("safety", "project_action", lambda: selected_action_policy.project(request.value), step_index=index, time_s=current_time)
                 target = min(max(float(request.target_time_s), current_time), endpoint)
                 hold = max(0.0, target - current_time)
                 if hold > tolerance:
@@ -299,7 +315,7 @@ class Runner:
             pass
         worktree_manifest = worktree.to_dict()
         worktree_manifest.pop("repo_root", None)
-        manifest = {"schema_version": spec.schema_version, "experiment_id": spec.experiment_id, "run_id": spec.run_id, "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), **git.to_manifest_fields(), "worktree_analysis": worktree_manifest, "run_mode": mode, "environment": {"runner": "pe_sim", "git": {"source_commit": git.source_commit, "branch": git.branch, "working_tree_status": git.working_tree_status}}, "plant": _component_manifest(spec.plant_id, plant, capabilities[0] if capabilities else None), "controller": _component_manifest(spec.controller_id, controller, capabilities[1] if capabilities else None), "contracts": {k: v["hash"] for k, v in spec.contracts.items()}, "timebase": spec.timebase.to_dict(), "initial_state": spec.initial_state.to_dict(), "random_seed": spec.seed, "artifacts": {}, "status": status, "qualification": qualification, "safety": {"passed": error is None}, "evidence_level": "functional", "error": error, "failure": failure, "capabilities": {"plant": capabilities[0].to_dict(), "controller": capabilities[1].to_dict()} if capabilities else {}, "audit": {"call_count": len(audit.calls)}, "state_transitions": machine.transitions}
+        manifest = {"schema_version": spec.schema_version, "experiment_id": spec.experiment_id, "run_id": spec.run_id, "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), **git.to_manifest_fields(), "worktree_analysis": worktree_manifest, "run_mode": mode, "environment": {"runner": "pe_sim", "git": {"source_commit": git.source_commit, "branch": git.branch, "working_tree_status": git.working_tree_status}}, "plant": _component_manifest(spec.plant_id, plant, capabilities[0] if capabilities else None), "controller": _component_manifest(spec.controller_id, controller, capabilities[1] if capabilities else None), "action_policy": _action_policy_manifest(selected_action_policy), "contracts": {k: v["hash"] for k, v in spec.contracts.items()}, "timebase": spec.timebase.to_dict(), "initial_state": spec.initial_state.to_dict(), "random_seed": spec.seed, "artifacts": {}, "status": status, "qualification": qualification, "safety": {"passed": error is None}, "evidence_level": "functional", "error": error, "failure": failure, "capabilities": {"plant": capabilities[0].to_dict(), "controller": capabilities[1].to_dict()} if capabilities else {}, "audit": {"call_count": len(audit.calls)}, "state_transitions": machine.transitions}
         writer.write_json("logs/run.json", {"status": status, "error": error, "sample_count": len(samples)})
         writer.write_json("manifest.json", manifest)
         run_dir = writer.finalize()
@@ -359,6 +375,20 @@ def _component_manifest(component_id: str, component: Any, declared_capabilities
             normalized = declared_capabilities.to_dict() if hasattr(declared_capabilities, "to_dict") else declared_capabilities
             identity["capabilities"] = normalized
     return {"id": component_id, "hash": sha256_bytes(canonical_json(identity)), "identity": identity}
+
+
+def _action_policy_manifest(policy: ActionPolicy) -> dict[str, Any]:
+    """Serialize policy identity without requiring custom policies to be JSONable."""
+    identity: dict[str, Any] = {
+        "module": type(policy).__module__,
+        "class": type(policy).__qualname__,
+    }
+    for name in ("name", "minimum", "maximum"):
+        if hasattr(policy, name):
+            value = getattr(policy, name)
+            if isinstance(value, (str, int, float, bool)) or value is None:
+                identity[name] = value
+    return {"hash": sha256_bytes(canonical_json(identity)), "identity": identity}
 
 
 def _command_at(schedule: tuple[Mapping[str, Any], ...], time_s: float) -> dict[str, Any]:

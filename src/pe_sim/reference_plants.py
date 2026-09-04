@@ -14,6 +14,7 @@ import json
 import math
 
 from .contracts import PlantObservation
+from .safety import BoundedActionPolicy
 
 
 def _positive(name: str, value: float) -> float:
@@ -48,6 +49,10 @@ class _AveragedConverter:
 
     def capabilities(self) -> set[str]:
         return {"continuous_time", "external_input", "snapshot"}
+
+    def action_policy(self) -> BoundedActionPolicy:
+        """Declare the duty-ratio actuator range for converter references."""
+        return BoundedActionPolicy(0.0, 1.0, name="duty")
 
     def manifest_identity(self) -> dict[str, Any]:
         """Return a portable, deterministic identity for a reference run.

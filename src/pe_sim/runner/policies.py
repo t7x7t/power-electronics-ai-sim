@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from ..safety import ActionPolicy
+
 
 @dataclass(frozen=True)
 class TimingPolicy:
@@ -72,12 +74,15 @@ class RunOptions:
     measurement_key: str | None = None
     safety_checker: Callable[[Mapping[str, float]], Any] | None = None
     qualification_checker: Callable[[list[Mapping[str, Any]]], tuple[bool, list[str]]] | None = None
+    action_policy: ActionPolicy | None = None
 
     def validate(self, spec: Any) -> None:
         if self.mode not in {"exploratory", "formal_comparison"}:
             raise ValueError("mode must be 'exploratory' or 'formal_comparison'")
         if self.measurement_key is not None and not str(self.measurement_key).strip():
             raise ValueError("measurement_key must be non-empty when provided")
+        if self.action_policy is not None and not callable(getattr(self.action_policy, "project", None)):
+            raise TypeError("action_policy must provide project(value)")
         self.timing.validate(spec)
         self.recovery.validate()
         self.audit.validate(self.mode)
