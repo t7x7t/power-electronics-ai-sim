@@ -70,6 +70,54 @@ behavior only; it is not a hardware or product approval.
 5. Record the named project maintainer and the user's local experiment reviewer
    without implying that the maintainer approves downstream engineering use.
 
+## Stage 2 and Stage 3 follow-up backlog
+
+The following items are deliberately retained after the current baseline. They
+are not evidence that the completed slices are invalid; they identify work
+needed before the repository can support broader real-model integration and
+formal result exchange.
+
+### Necessary before broader real-model integration
+
+- **Stage 2 environment/release evidence**: add a reproducible environment
+  check command, distinguish verified versions from supported ranges, and
+  publish a baseline report containing commit, CI result, tested environment,
+  and human review record.
+- **Stage 2 source and license intake**: add a source/third-party inventory
+  template and require a recorded provenance/license decision before external
+  code, models, documents, or results enter the repository.
+- **Stage 2 CI layering**: keep fast per-change checks in ordinary push/PR
+  jobs and move expensive or real-physics checks to explicit manual or
+  scheduled workflows.
+- **Stage 3 conformance fixture**: provide a reusable Plant/Controller
+  conformance test harness so every new adapter is checked against the public
+  contracts before integration.
+- **Stage 3 event and multi-rate execution**: define the actual event schedule
+  semantics, supported event types, and execution rules; capability declaration
+  alone is not sufficient for a real event-driven backend.
+- **Stage 3 unit and timing registry**: define approved measurement/action
+  units and conversion rules, including how sampling age, offsets, and
+  tolerance are represented in artifacts.
+- **Stage 3 contract evidence**: record negotiated capabilities, contract
+  versions, and compatibility decisions in the run Manifest and add explicit
+  migration tests for future schema changes.
+
+### Can follow after the first real adapter
+
+- Lock all Python dependencies and external executables per platform.
+- Add richer lifecycle, interruption/recovery, and cross-machine
+  reproducibility checks.
+- Expand provenance with operating system, dependency, Plant/Controller,
+  contract, and CI identifiers.
+- Add migration scanners for absolute paths, secrets, generated output, and
+  license/source metadata.
+
+### Optional when usage justifies the cost
+
+- Signed releases, SBOM/license automation, package/container distribution,
+  cloud real-physics jobs, advanced CI caching, and automatic impact-based
+  test selection.
+
 ## Later backlog
 
 - Lock dependencies and external executables, including Ngspice, per platform.
@@ -96,5 +144,5 @@ test command, commit/tag, environment, reviewer, and remaining limitations.
 
 The Stage 3 incremental contract update is documented in
 `docs/12_public_contracts_stage3_v1.md` and was locally verified with
-`pytest -q --basetemp .tmp/pytest-stage3` (26 passed) plus a successful
+`pytest -q --basetemp .tmp/pytest-stage3` (27 passed) plus a successful
 `psfb-step` CLI smoke run. The update does not claim physical model validity.
