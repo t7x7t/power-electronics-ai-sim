@@ -119,6 +119,44 @@ formal result exchange.
   cloud real-physics jobs, advanced CI caching, and automatic impact-based
   test selection.
 
+## Stage 4 gap triage
+
+### Immediate before calling the L1 integration slice accepted
+
+- Add a supported CLI/configuration entry for the Buck and Boost references,
+  so users and agents can exercise the adapters without importing internal
+  Python classes directly.
+- Add analytical sanity checks and integration-step sensitivity checks for the
+  ideal averaged equations. The current tests prove contract behavior, but do
+  not yet prove that the numerical implementation follows its stated equations
+  over a representative operating point.
+- Record reference-model parameters, topology identity, declared capabilities,
+  and a deterministic model/source identity in the run Manifest. Placeholder
+  hashes are not sufficient for formal comparison of two reference runs.
+- Keep the acceptance statement explicitly limited to L1 adapter and timing
+  behavior. Do not accept PSFB/LLC migration, switching behavior, thermal
+  behavior, or hardware conclusions as part of this slice.
+
+### Put in the backlog for later stages
+
+- Generalize Runner result extraction so it does not require a hard-coded
+  `vout` measurement name.
+- Add topology-level sweeps for duty, input voltage, load, long-run stability,
+  and CCM/DCM applicability limits.
+- Add one independently reviewed complex topology, choosing PSFB or LLC after
+  the L1 acceptance evidence is complete.
+- Add real PySpice/Ngspice execution, external executable locking, convergence
+  diagnostics, and cross-platform reproducibility only after source/license
+  review and environment work are complete.
+- Add L2 engineering approximations, including parasitics, losses, magnetics,
+  and simplified thermal state, with a separate validation record.
+
+### Optional and not required for the current infrastructure goal
+
+- Implementing both PSFB and LLC immediately, importing network-sourced
+  product models, or building a product-grade thermal/electrical model without
+  calibration and an independent provenance record.
+
 ## Later backlog
 
 - Lock dependencies and external executables, including Ngspice, per platform.
