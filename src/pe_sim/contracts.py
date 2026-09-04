@@ -13,6 +13,34 @@ _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 CURRENT_SCHEMA_VERSION = "0.1"
 
 
+class CapabilityNegotiationError(ValueError):
+    """Structured fail-closed error for component capability mismatch."""
+
+    category = "capability_mismatch"
+
+    def __init__(self, missing: list[str] | tuple[str, ...], *, category: str | None = None):
+        self.missing = tuple(sorted(set(str(item) for item in missing)))
+        if category is not None:
+            self.category = category
+        super().__init__("missing capabilities: " + ", ".join(self.missing))
+
+
+class MissingCapabilityError(CapabilityNegotiationError):
+    category = "missing_capability"
+
+
+class UnsupportedCapabilityError(CapabilityNegotiationError):
+    category = "unsupported_capability"
+
+
+class CapabilityConfigurationMismatchError(CapabilityNegotiationError):
+    category = "capability_configuration_mismatch"
+
+
+class CapabilityRuntimeUnavailableError(CapabilityNegotiationError):
+    category = "capability_runtime_unavailable"
+
+
 def _version_parts(version: str) -> tuple[int, int]:
     if not re.fullmatch(r"^[0-9]+\.[0-9]+$", str(version)):
         raise ValueError("schema_version must be MAJOR.MINOR")
@@ -124,7 +152,10 @@ def negotiate_capabilities(
         if not (plant.supports("continuous_time") or plant.supports("multirate_control")):
             missing.append("plant:multirate_control")
     if missing:
-        raise ValueError("missing capabilities: " + ", ".join(sorted(set(missing))))
+        # These are configuration/component declarations, not transient
+        # numerical failures. Keep ValueError compatibility while exposing a
+        # machine-readable category to manifests and agents.
+        raise MissingCapabilityError(missing)
     return plant, controller
 
 

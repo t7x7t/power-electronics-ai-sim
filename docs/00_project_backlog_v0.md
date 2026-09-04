@@ -21,7 +21,7 @@ behavior only; it is not a hardware or product approval.
 | 2 | Project and environment configuration | Partial | `pyproject.toml`, MIT license, Git baseline, tested-version record, and light CI exist. Environment locking, platform policy, and release evidence are incomplete. |
 | 3 | Public data and interface contracts | Done (v1 incremental) | v0 contracts are extended with normalized capability negotiation, explicit event/multi-rate gates, schema compatibility checks, observation visibility/time-window checks, snapshot hash verification, and regression tests. A reusable Plant/Controller conformance harness is now available. Full event scheduling semantics and richer unit registries remain future work. |
 | 4 | Plant and Controller integration | Partial (L1 references) | Self-owned ideal averaged Buck and Boost Plants now implement the public lifecycle, units, external-input updates, snapshots, and fail-closed bounds. Fake Plant, Fake Load Plant, and Fake PI Controller remain compatibility fixtures. Real `D:\PySpice` code and PSFB/LLC migration are intentionally deferred pending review. |
-| 5 | Generic Runner | Done (minimal) | Reset, observation, controller call, timestamp checks, action projection, schedule, advancement, and artifact publication are implemented. Full lifecycle audit and richer timing are future work. |
+| 5 | Generic Runner | Partial (audited lifecycle v1) | Explicit CREATED/RUNNING/terminal state transitions, call-order audit, checkpoint/resume, interruption as INCOMPLETE, structured capability failures, configured primary measurements, and segmented plant timing are implemented and tested. Process-level recovery, full event scheduling, controller state persistence conventions, and richer timing semantics remain future work. |
 | 6 | Safety and qualification checks | Partial | Non-finite values, action bounds, time rollback, and basic sample qualification fail closed. A broader extensible rule set is still needed. |
 | 7 | Run artifacts and Manifest | Partial | Atomic artifacts, JSON/NPZ samples, events, metrics, logs, hashes, and Manifest exist. Complete environment/model provenance and final package hashes are incomplete. |
 | 8 | Failure and recovery behavior | Partial | Failed runs retain artifacts and key failure paths are tested. Full state-transition matrix, interrupted-run recovery, and retention policy need implementation. |
@@ -157,6 +157,21 @@ formal result exchange.
   calibration and an independent provenance record.
 
 ## Later backlog
+
+### Stage 5 follow-up backlog
+
+- Define a complete event queue and deterministic same-time event priority
+  policy; the current runner supports fixed control windows, sample offsets,
+  action target times, and segmented `plant_step_s` advancement only.
+- Standardize Controller snapshot/restore state serialization and validate
+  checkpoint hashes and component/contract identities across processes.
+- Add process-level checkpoint retention, crash recovery, and explicit resume
+  provenance; current interruption handling is a testable Python-level
+  `INCOMPLETE` path and is not hardware or operating-system recovery.
+- Replace ad-hoc measurement names with a versioned measurement/unit registry
+  and explicit result mappings for qualification and visualization.
+- Add configurable action bounds and richer safety/qualification hooks without
+  changing the fail-closed default.
 
 - Lock dependencies and external executables, including Ngspice, per platform.
 - Add Windows and other required CI jobs after the runtime is portable.
