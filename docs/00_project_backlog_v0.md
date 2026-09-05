@@ -22,10 +22,10 @@ behavior only; it is not a hardware or product approval.
 | 3 | Public data and interface contracts | Done (v1 incremental) | v0 contracts are extended with normalized capability negotiation, explicit event/multi-rate gates, schema compatibility checks, observation visibility/time-window checks, snapshot hash verification, and regression tests. A reusable Plant/Controller conformance harness is now available. Full event scheduling semantics and richer unit registries remain future work. |
 | 4 | Plant and Controller integration | Partial (L1 references) | Self-owned ideal averaged Buck and Boost Plants now implement the public lifecycle, units, external-input updates, snapshots, and fail-closed bounds. Fake Plant, Fake Load Plant, and Fake PI Controller remain compatibility fixtures. Real `D:\PySpice` code and PSFB/LLC migration are intentionally deferred pending review. |
 | 5 | Generic Runner | Partial (modular audited lifecycle v1) | Low-friction `run_experiment` facade, composable policies, explicit CREATED/RUNNING/terminal state transitions, call-order audit, checkpoint/resume, interruption as INCOMPLETE, structured capability failures, policy-driven action handling, configured primary measurements, and segmented plant timing are implemented and tested. Process-level recovery, full event scheduling, controller state persistence conventions, and richer timing semantics remain future work. |
-| 6 | Safety and qualification checks | Partial | Non-finite values, action bounds, time rollback, and basic sample qualification fail closed. A broader extensible rule set is still needed. |
-| 7 | Run artifacts and Manifest | Partial | Atomic artifacts, JSON/NPZ samples, events, metrics, logs, hashes, and Manifest exist. Complete environment/model provenance and final package hashes are incomplete. |
-| 8 | Failure and recovery behavior | Partial | Failed runs retain artifacts and key failure paths are tested. Full state-transition matrix, interrupted-run recovery, and retention policy need implementation. |
-| 9 | Reproducibility | Partial | Deterministic Fake runs and a tested environment record exist. Cross-machine and real Ngspice reproducibility is not verified. |
+| 6 | Safety and qualification checks | Done (v1 extensible runtime checks) | `SafetyPlugin`, `ValidityPlugin`, and `QualificationPlugin` are composable through `RunOptions`; structured findings cover observation integrity (finite values, timestamps, age, required fields, units, ranges), qualification, and fail-closed execution error categories. Sensor fault injection and real-hardware sensor handling remain intentionally out of scope. |
+| 7 | Run artifacts and Manifest | Done (v1 provenance and package identity) | Atomic artifacts, JSON/NPZ samples, events, metrics, logs, complete runtime/environment/backend provenance, stable component hashes, non-self-referential Manifest digest, deterministic package digest, and dirty-worktree evidence linkage are implemented and tested. Dependency locking, real backend discovery, and release-level baseline reports remain later work. |
+| 8 | Failure and recovery behavior | Done (v1 Python/file transaction boundary) | Public lifecycle matrix rejects illegal transitions; interrupted/cancelled runs are `INCOMPLETE`, backend failures remain `RUN_FAILED`, checkpoints are validated, resume provenance is recorded, and abandoned temporary directories are scanned without publication. Automatic retention/deletion policy remains an operator-approved follow-up; OS-level crash recovery and physical-model recovery remain out of scope. |
+| 9 | Reproducibility | Partial (preparatory v1) | Recommended-environment checks, deterministic Fake/Buck/Boost comparison, and explicit exact/tolerance/unknown outcomes are implemented. Cross-machine and real Ngspice reproducibility is not verified. |
 | 10 | Metrics and data export | Partial | Basic samples, events, and sample-count metrics are exported. A metric registry, versioning, comparison, and report generation are planned. |
 | 11 | Data visualization | Planned | No supported plotting or report CLI exists yet. Visualizations must retain a link to the source run and Manifest. |
 | 12 | Evidence and conclusion levels | Partial | Manifest evidence levels and restrictions are present. Complete qualification/comparability/learning gates and conclusion templates are planned. |
@@ -190,10 +190,13 @@ physical-model or hardware result.
   `INCOMPLETE` path and is not hardware or operating-system recovery.
 - Replace ad-hoc measurement names with a versioned measurement/unit registry
   and explicit result mappings for qualification and visualization.
-- Add richer safety/qualification hooks and a versioned action/unit registry.
-  Action bounds are now explicit: generic Runner execution is finite-only by
+- Add domain-specific safety/qualification rule packs and a versioned
+  action/unit registry. The generic plugin interfaces and observation
+  integrity checks are implemented; domain packs remain adapter-specific.
+  Action bounds are explicit: generic Runner execution is finite-only by
   default, while a Plant declaration or `RunOptions(action_policy=...)` may
-  opt into bounds (see `docs/15_runner_modular_api_v1.md`).
+  opt into bounds (see `docs/15_runner_modular_api_v1.md` and
+  `docs/16_stage6_safety_validity_qualification_v1.md`).
 
 - Lock dependencies and external executables, including Ngspice, per platform.
 - Add Windows and other required CI jobs after the runtime is portable.
@@ -234,3 +237,217 @@ examples, analytical equilibrium and integration-step regression checks, and
 portable reference component identities in Manifest records. Remaining Stage 4
 items stay listed above under the later backlog and are intentionally not part
 of this L1 acceptance.
+
+The Stage 6 increment adds composable Safety/Validity/Qualification plugins,
+structured observation findings, and stable execution-failure categories. It
+was locally verified with `pytest -q --basetemp .tmp/pytest-stage6`,
+`python -m compileall -q src tests`, and `git diff --check`.
+These checks protect runtime evidence only; they do not validate a physical
+model, hardware sensor, convergence configuration, or engineering conclusion.
+Sensor-fault injection and real-sensor handling remain outside the common
+infrastructure scope.
+
+### Future compact diagnostic mechanism
+
+The current Stage 6 checks are intentionally a runtime integrity gate. A later
+increment should add a small, backend-neutral diagnostic contract so users can
+understand and repair common failures without turning the infrastructure into a
+product-grade solver UI. The target problem and approach are:
+
+- Normalize `error`, `warning`, and informational diagnostics with a stable
+  code, category, phase, severity, and blocking policy. The current finding
+  fields provide the starting point, but non-blocking warning semantics still
+  need a dedicated rule and CLI design.
+- Preserve a structured location when an adapter can provide one: parameter
+  path/value/unit/range, element and pin, net name, timestep, solver phase, or
+  Plant/Controller method. Do not invent a location when the backend cannot
+  prove it.
+- Capture a reference to backend stdout/stderr and solver settings, then add
+  small parsers for convergence, process, parameter, and topology failures.
+- Add adapter-level preflight hooks for required parameters, units/ranges,
+  pin/net connectivity, reference-ground rules, and backend configuration.
+  These checks are model/backend-specific and are not part of the generic
+  Stage 6 default.
+- Emit concise CLI summaries plus links to `manifest.json`, `audit.json`,
+  `events.json`, and raw logs. Include likely causes and suggested next checks
+  only when they are evidence-based.
+
+This mechanism is for diagnosis and evidence triage. It does not certify model
+physics, convergence quality, hardware safety, or product compliance. Sensor
+fault injection and real-sensor damage modeling remain outside the common
+infrastructure boundary.
+
+### Stage 7-9 implementation direction
+
+The following order is the recommended prerequisite path before real-physics
+formal comparison:
+
+1. **Stage 7, provenance and package identity**: record a known `source_commit`
+   (or explicitly mark the run non-formal), complete Python/platform/backend
+   versions and solver settings, and derive stable Plant/Controller hashes from
+   canonical identity/configuration. Define a non-self-referential Manifest
+   digest (for example, hash the canonical Manifest with its digest and
+   artifact index excluded), then compute a deterministic package/archive hash
+   with sorted paths and normalized metadata. Keep the existing dirty-worktree
+   report as a formal gate and link its result to the release/baseline report.
+   Acceptance evidence is a Manifest whose provenance is complete, whose
+   component hashes change when inputs change, and whose digest/package hash
+   can be independently recomputed.
+2. **Stage 8, failure transaction and recovery semantics**: define and test a
+   complete state-transition matrix, including illegal transitions and the
+   distinction between `RUN_FAILED`, `INCOMPLETE`, and `DISQUALIFIED`. Make
+   artifact writes transactional (temporary directory, flush/close, atomic
+   rename, and startup scan for abandoned directories). A crash or partial
+   write must never become `RUN_OK`; recovery may validate the last checkpoint
+   and mark the old run `INCOMPLETE`, then resume into a new auditable run.
+   Add checkpoint retention, recovery provenance, and explicit handling for
+   interruption, timeout, cancellation, and backend process loss.
+3. **Stage 9, reproducibility evidence**: lock Python dependencies and the
+   Ngspice/external executable per platform, record OS/architecture and
+   numerical/thread settings, and require source/config/seed/component hashes.
+   Run repeated same-machine trials first, then a cross-machine matrix using
+   exact hashes where feasible and declared numerical tolerances otherwise.
+   A reproducibility report must compare inputs, environment differences,
+   sample/metric outputs, and tolerance decisions; unknown backend versions or
+   uncontrolled randomness must be reported as non-reproducible rather than
+   silently accepted.
+
+These stages solve different practical problems: Stage 7 answers *which exact
+code, model, configuration, and environment produced this result*; Stage 8
+prevents interrupted or partially written simulations from being mistaken for
+valid data and makes long runs recoverable; Stage 9 answers *whether another
+run, machine, or later agent can reproduce and meaningfully compare the result*.
+
+### Stage 7 completion record
+
+Stage 7 v1 is implemented in `docs/17_stage7_provenance_and_package_identity_v1.md`.
+The runner now records Python/platform/dependency information and adapter-declared
+backend/solver metadata in both `environment.json` and `manifest.json`. Missing
+backend declarations are explicit limitations. Plant/Controller fallback
+identities include stable public configuration, and component digests are bound
+into provenance. `manifest_sha256` excludes itself and other derived hash
+fields; `package_sha256` covers the canonical Manifest view plus sorted,
+relative-path hashes for every non-Manifest file. The dirty report is stored
+without the local repository root and linked by `worktree_analysis_sha256`.
+
+Acceptance evidence:
+
+```text
+pytest -q --basetemp .tmp/pytest-stage7
+python -m compileall -q src tests
+git diff --check
+```
+
+The acceptance result establishes portable identity and audit behavior only.
+It does not lock external executables, validate real Ngspice provenance, or
+claim cross-machine numerical reproducibility; those remain Stage 9 work.
+
+### Stage 8 completion record
+
+Stage 8 v1 is implemented in `docs/18_stage8_failure_recovery_v1.md`.
+`LifecycleStateMachine.allowed_transitions()` exposes the complete state matrix
+and raises `LifecycleTransitionError` for illegal transitions. Artifact files
+are flushed and atomically replaced inside a temporary run directory before
+directory publication. Startup scans report abandoned writer directories as
+`INCOMPLETE` with missing-artifact evidence. Interruption and cooperative
+cancellation retain recoverable checkpoints when possible; timeout, backend
+process loss, convergence, and validation failures remain `RUN_FAILED`.
+Resume validates checkpoint and component/contract identities, rejects a
+completed source run, and records portable recovery provenance in the new
+Manifest and event stream.
+
+Acceptance evidence:
+
+```text
+pytest -q --basetemp .tmp/pytest-stage8
+python -m compileall -q src tests
+git diff --check
+```
+
+This establishes Python/file-transaction semantics only. It does not monitor
+or restart an external process, recover machine power loss, or validate a
+physical simulator's internal solver state. `result_retention` remains an
+explicit configuration field; automatic deletion or archival is deferred
+until an operator-approved retention policy is defined.
+
+### Stage 8 deferred recovery and retention work
+
+The following mechanisms are useful for long-running real simulations, but
+were intentionally kept outside the Stage 8 v1 acceptance boundary. They must
+be added with explicit evidence and operator policy rather than inferred from
+the current Python-level checkpoint behavior:
+
+- **External Ngspice/backend supervision (necessary before real batch runs):**
+  launch the backend through a managed adapter, capture stdout/stderr, enforce
+  timeout and resource limits, detect abnormal exit, and classify the exit
+  reason. Restart/resume should be opt-in, bounded, and tied to a validated
+  checkpoint; a restarted process must never silently become a successful run.
+- **Operating-system interruption recovery (necessary for unattended jobs):**
+  use durable run markers and a startup/recovery command to identify runs left
+  by process termination, reboot, or power loss. Mark them `INCOMPLETE`, retain
+  the last verified checkpoint, and require explicit operator or scheduler
+  approval before resuming. This is recovery orchestration, not proof that a
+  solver's internal state survived the interruption.
+- **Retention and archival policy (necessary when storage is constrained):**
+  define the meaning of `keep`, `on_failure`, and `temporary`, including a
+  minimum evidence set, grace period, archival destination, deletion audit,
+  and protection for `RUN_FAILED`/`INCOMPLETE` evidence. No automatic deletion
+  should be enabled until this policy is reviewed and tested.
+- **Physical-model recovery (adapter-specific and lower priority):**
+  diagnose or repair invalid parameters, topology errors, and non-convergent
+  model states only through a reviewed backend/Plant adapter. The generic
+  Runner may report and preserve the failure, but must not invent component
+  values or automatically alter a user's circuit.
+
+These items address process resilience and operations. They do not replace
+Stage 6 data-validity checks or establish physical, thermal, hardware, or
+product safety.
+
+### Stage 9 readiness and Stage 7 residual triage
+
+Stage 9 can begin now as a **preparatory reproducibility slice**, while the
+real-backend and cross-machine claims remain gated:
+
+- **Can be implemented now:** a recommended-environment check command,
+  verified-version versus supported-range reporting, dependency lock metadata
+  for the current Python runtime, same-machine repeated-run comparison for the
+  deterministic Fake/Buck/Boost references, and a reproducibility report
+  format with explicit exact/tolerance/unknown outcomes.
+- **Requires a reviewed real adapter:** Ngspice executable discovery and
+  locking, solver/thread/locale capture, real-model repeated runs, and
+  cross-machine numerical comparison. These depend on Stage 14 source/license
+  review and a concrete backend contract.
+- **Still a Stage 7 follow-up:** release/baseline report linking commit, CI,
+  environment and human review; optional dirty-worktree diff/snapshot evidence
+  for exploratory runs; and a policy for publishing runs whose backend status
+  is `not_declared` or whose environment is only `partial`.
+
+The recommended order is to complete the low-risk Stage 7 environment/release
+evidence and Stage 9 preparatory checks first, then add real-backend locking and
+cross-machine trials after source and license review. It is not appropriate to
+claim Stage 9 complete using only the current Fake backend evidence.
+
+### Stage 9 preparatory slice completion record
+
+`docs/19_stage9_preparatory_reproducibility_v1.md` documents the implemented
+low-risk slice. `pe-sim environment-check` compares the verified pins in
+`requirements-tested.txt` with the supported ranges in `pyproject.toml` and
+reports `pass`, `fail`, or `unknown` without assessing Ngspice. The
+`pe_sim.compare_runs()` API and `pe-sim compare-runs` CLI compare clean,
+known-provenance Fake/Buck/Boost runs and distinguish exact, tolerance,
+mismatch, and unknown outcomes. Dirty or unknown environment evidence is never
+accepted as reproducible. `build_baseline_report()` and
+`pe-sim baseline-report` provide a release/baseline evidence template whose
+CI and human-review fields remain `not_recorded` until an operator supplies
+them.
+
+Acceptance evidence:
+
+```text
+pytest -q tests/test_stage9_preparation.py --basetemp .tmp/pytest-stage9-prep
+python -m compileall -q src tests
+git diff --check
+```
+
+This does not lock or discover Ngspice, validate a physical model, or prove
+cross-machine numerical reproducibility.

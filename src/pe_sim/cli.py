@@ -7,6 +7,9 @@ from .contracts import ExperimentSpec, Timebase
 from .runtime import FakeLoadPlant, FakePIController, FakePlant, Runner
 from .reference_plants import BuckPlant, BoostPlant
 from .dirty import FormalComparisonError, analyze_git_worktree
+from .environment import check_recommended_environment
+from .reproducibility import compare_runs
+from .baseline import build_baseline_report
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -23,6 +26,16 @@ def main(argv: list[str] | None = None) -> int:
     demo.add_argument("--mode", choices=("exploratory", "formal_comparison"), default="exploratory")
     status = sub.add_parser("git-status", help="inspect Git worktree readiness without modifying it")
     status.add_argument("path", nargs="?", type=Path, default=Path.cwd())
+    environment = sub.add_parser("environment-check", help="check the verified and supported Python environment")
+    environment.add_argument("--requirements", type=Path, default=None)
+    environment.add_argument("--pyproject", type=Path, default=None)
+    compare = sub.add_parser("compare-runs", help="compare two published run directories")
+    compare.add_argument("left", type=Path)
+    compare.add_argument("right", type=Path)
+    compare.add_argument("--tolerance", type=float, default=1e-9)
+    baseline = sub.add_parser("baseline-report", help="build a release/baseline evidence template")
+    baseline.add_argument("manifest", type=Path)
+    baseline.add_argument("--output", type=Path, default=None)
     args = parser.parse_args(argv)
     try:
         if args.command == "run":
@@ -35,6 +48,24 @@ def main(argv: list[str] | None = None) -> int:
             result = Runner().run(spec, FakePlant(gain=1.0, tau_s=0.004), FakePIController(kp=1.8), mode=args.mode)
         elif args.command == "git-status":
             print(json.dumps(analyze_git_worktree(args.path).to_dict(), sort_keys=True))
+            return 0
+        elif args.command == "environment-check":
+            result = check_recommended_environment(args.requirements, args.pyproject)
+            print(json.dumps(result.to_dict(), sort_keys=True))
+            return 0 if result.status == "pass" else 1
+        elif args.command == "compare-runs":
+            result = compare_runs(args.left, args.right, tolerance=args.tolerance)
+            print(json.dumps(result.to_dict(), sort_keys=True))
+            return 0 if result.outcome in {"exact_match", "tolerance_match"} else 1
+        elif args.command == "baseline-report":
+            report = build_baseline_report(args.manifest)
+            payload = json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+            if args.output is None:
+                print(payload, end="")
+            else:
+                args.output.parent.mkdir(parents=True, exist_ok=True)
+                args.output.write_text(payload, encoding="utf-8")
+                print(json.dumps({"status": "written", "path": str(args.output)}, sort_keys=True))
             return 0
         else:
             parser.print_help()

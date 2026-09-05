@@ -13,6 +13,54 @@ _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 CURRENT_SCHEMA_VERSION = "0.1"
 
 
+class SimulationExecutionError(RuntimeError):
+    """Base class for backend/model execution failures.
+
+    Adapters may raise these classes to preserve a precise category in the
+    run Manifest. The Runner also classifies common third-party exceptions
+    and messages when an adapter cannot use these optional types.
+    """
+
+    category = "simulation_execution_error"
+
+
+class NumericalNonconvergenceError(SimulationExecutionError):
+    category = "numerical_nonconvergence"
+
+
+class BackendTimeoutError(SimulationExecutionError):
+    category = "backend_timeout"
+
+
+class BackendProcessError(SimulationExecutionError):
+    category = "backend_process_failure"
+
+
+class SimulationCancelledError(SimulationExecutionError):
+    """Cooperative cancellation requested by a caller.
+
+    Cancellation is distinct from a backend failure but remains recoverable
+    when a checkpoint exists, so the runner publishes it as ``INCOMPLETE``.
+    """
+
+    category = "cancelled"
+
+
+class PlantAdvanceError(SimulationExecutionError):
+    category = "plant_advance_failure"
+
+
+class ModelNumericalError(SimulationExecutionError):
+    category = "model_numerical_error"
+
+
+# Friendly aliases for adapters that use shorter failure names.
+ConvergenceError = NumericalNonconvergenceError
+BackendTimeout = BackendTimeoutError
+BackendProcessFailure = BackendProcessError
+PlantExecutionError = PlantAdvanceError
+
+
 class CapabilityNegotiationError(ValueError):
     """Structured fail-closed error for component capability mismatch."""
 

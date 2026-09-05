@@ -5,6 +5,17 @@ import math
 from dataclasses import dataclass
 from typing import Mapping, Protocol
 
+from .checks import (
+    CheckContext,
+    CheckFinding,
+    CheckReport,
+    CheckResult,
+    SafetyCheckError,
+    SafetyPlugin,
+    ValidityPlugin,
+    ObservationValidityPlugin,
+)
+
 
 class ActionPolicy(Protocol):
     """Policy used to validate or project a controller action.
@@ -65,5 +76,34 @@ def project_action(value: float, *, minimum: float | None = None, maximum: float
 
 
 def check_observation(measurement: Mapping[str, float]) -> None:
-    if any(not math.isfinite(float(v)) for v in measurement.values()):
-        raise ValueError("non-finite measurement")
+    """Legacy finite-only observation guard.
+
+    The Runner still calls this compatibility function by default. New code
+    should use :class:`ObservationValidityPlugin` for structured findings.
+    """
+    if not isinstance(measurement, Mapping):
+        raise ValueError("measurement must be a mapping")
+    for key, value in measurement.items():
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"invalid measurement: {key}") from exc
+        if not math.isfinite(numeric):
+            raise ValueError(f"non-finite measurement: {key}")
+
+
+__all__ = [
+    "ActionPolicy",
+    "FiniteActionPolicy",
+    "BoundedActionPolicy",
+    "project_action",
+    "check_observation",
+    "CheckContext",
+    "CheckFinding",
+    "CheckReport",
+    "CheckResult",
+    "SafetyCheckError",
+    "SafetyPlugin",
+    "ValidityPlugin",
+    "ObservationValidityPlugin",
+]

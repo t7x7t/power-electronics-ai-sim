@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
 
 from ..safety import ActionPolicy
 
@@ -38,11 +38,13 @@ class RecoveryPolicy:
     checkpoint_interval_steps: int | None = None
     resume_from: str | Path | None = None
     interrupt_after_steps: int | None = None
+    cancel_after_steps: int | None = None
 
     def validate(self) -> None:
         for name, value in (
             ("checkpoint_interval_steps", self.checkpoint_interval_steps),
             ("interrupt_after_steps", self.interrupt_after_steps),
+            ("cancel_after_steps", self.cancel_after_steps),
         ):
             if value is not None and (isinstance(value, bool) or int(value) <= 0):
                 raise ValueError(f"{name} must be a positive integer")
@@ -75,6 +77,11 @@ class RunOptions:
     safety_checker: Callable[[Mapping[str, float]], Any] | None = None
     qualification_checker: Callable[[list[Mapping[str, Any]]], tuple[bool, list[str]]] | None = None
     action_policy: ActionPolicy | None = None
+    # Optional phase-specific plugins.  Empty tuples preserve the low-friction
+    # defaults and allow callers to opt into only the rules they need.
+    safety_plugins: tuple[Any, ...] = ()
+    validity_plugins: tuple[Any, ...] = ()
+    qualification_plugins: tuple[Any, ...] = ()
 
     def validate(self, spec: Any) -> None:
         if self.mode not in {"exploratory", "formal_comparison"}:
@@ -83,6 +90,14 @@ class RunOptions:
             raise ValueError("measurement_key must be non-empty when provided")
         if self.action_policy is not None and not callable(getattr(self.action_policy, "project", None)):
             raise TypeError("action_policy must provide project(value)")
+        for name in ("safety_plugins", "validity_plugins", "qualification_plugins"):
+            value = getattr(self, name)
+            if isinstance(value, (str, bytes)):
+                raise TypeError(f"{name} must be an iterable of plugin objects")
+            try:
+                iter(value)
+            except TypeError as exc:
+                raise TypeError(f"{name} must be an iterable of plugin objects") from exc
         self.timing.validate(spec)
         self.recovery.validate()
         self.audit.validate(self.mode)
