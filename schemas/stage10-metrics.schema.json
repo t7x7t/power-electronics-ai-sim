@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/power-electronics-ai-sim/stage10-metrics.schema.json",
+  "title": "Stage 10 Metrics Summary",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema", "provenance", "status", "sample_count", "audit_count", "time", "metrics", "series", "data", "metric_registry"],
+  "properties": {
+    "schema": {"const": "stage10-metrics-v1"},
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "manifest_sha256", "package_sha256", "working_tree_status", "source_provenance_status", "environment_status"],
+      "properties": {
+        "run_id": {"type": "string", "minLength": 1},
+        "manifest_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "package_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "working_tree_status": {"const": "clean"},
+        "source_provenance_status": {"const": "known"},
+        "environment_status": {"enum": ["known", "partial"]}
+      }
+    },
+    "status": {"const": "QUALIFIED"},
+    "sample_count": {"type": "integer", "minimum": 1},
+    "audit_count": {"type": "integer", "minimum": 0},
+    "time": {"type": "object"},
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "sample_schema_version", "metrics_schema_version", "sample_fields", "sample_count", "schema_fingerprint", "dataset_fingerprint", "fingerprint"],
+      "properties": {
+        "schema": {"const": "stage10-data-descriptor-v1"},
+        "sample_schema_version": {"type": "string", "minLength": 1},
+        "metrics_schema_version": {"type": "string", "minLength": 1},
+        "sample_fields": {"type": "array", "items": {"type": "string"}},
+        "sample_count": {"type": "integer", "minimum": 1},
+        "schema_fingerprint": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "dataset_fingerprint": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "fingerprint": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+      }
+    },
+    "metric_registry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "registry_id", "version", "fingerprint", "metric_ids"],
+      "properties": {
+        "schema": {"const": "stage10-metric-registry-v1"},
+        "registry_id": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1},
+        "fingerprint": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "metric_ids": {"type": "array", "items": {"type": "string"}, "minItems": 1}
+      }
+    },
+    "plant": {"type": "object"},
+    "metrics": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"$ref": "#/$defs/metric"}
+    },
+    "series": {"type": "object"}
+  },
+  "$defs": {
+    "metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["metric_id", "version", "unit", "input_fields", "value"],
+      "properties": {
+        "metric_id": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1},
+        "unit": {"type": "string", "minLength": 1},
+        "input_fields": {"type": "array", "items": {"type": "string"}},
+        "value": {"type": "number"}
+      }
+    }
+  }
+}

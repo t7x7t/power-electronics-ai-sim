@@ -16,8 +16,10 @@ integrity boundary, not a claim of hardware safety or physical model validity.
   it is never silently converted into a usable sample.
 * **QualificationPlugin** runs after sample collection. It determines whether
   the captured data is structurally usable for later metrics or comparison.
-  A failed qualification retains artifacts and changes the terminal state to
-  `DISQUALIFIED`; it does not make a physical or engineering approval.
+  A passed qualification promotes the normal lifecycle from `RUN_OK` to
+  `QUALIFIED`; a failed qualification retains artifacts and changes the
+  terminal state to `DISQUALIFIED`. Neither state is a physical or engineering
+  approval.
 
 Plugins are ordinary Python objects. They may provide only the relevant
 method. Methods receive `(subject, CheckContext)` and return `CheckReport`, a

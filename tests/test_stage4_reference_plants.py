@@ -64,7 +64,7 @@ def test_runner_accepts_reference_plants(factory, tmp_path):
         output_dir=str(tmp_path),
     )
     result = Runner().run(spec, factory(), FakePIController(kp=0.2))
-    assert result.status == "RUN_OK"
+    assert result.status == "QUALIFIED"
     assert (result.run_dir / "manifest.json").exists()
 
 
@@ -158,7 +158,7 @@ def test_reference_cli_config_and_manifest_identity(tmp_path, capsys):
     assert cli_main(["run", str(config_path), "--backend", "buck"]) == 0
     output = json.loads(capsys.readouterr().out)
     manifest = json.loads((tmp_path / "buck_cli_run" / "manifest.json").read_text(encoding="utf-8"))
-    assert output["status"] == "RUN_OK"
+    assert output["status"] == "QUALIFIED"
     assert manifest["plant"]["identity"]["topology"] == "buck"
     assert manifest["plant"]["identity"]["level"] == "L1"
     assert manifest["plant"]["hash"] != "0" * 64

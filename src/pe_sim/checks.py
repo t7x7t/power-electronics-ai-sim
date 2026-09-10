@@ -36,7 +36,10 @@ class CheckFinding:
     severity: str = "error"
     passed: bool = False
     evidence: Mapping[str, Any] = field(default_factory=dict)
-    stop_requested: bool = True
+    # Warnings and informational findings are diagnostic by default.  Errors
+    # and fatals remain fail-closed even when a poorly behaved plugin tries to
+    # set this to false.
+    stop_requested: bool = False
     plugin_id: str | None = None
 
     def __post_init__(self) -> None:
@@ -56,6 +59,10 @@ class CheckFinding:
             "stop_requested": self.stop_requested,
             "plugin_id": self.plugin_id,
         }
+
+    @property
+    def blocking(self) -> bool:
+        return not self.passed and (self.stop_requested or self.severity in {"error", "fatal"})
 
 
 @dataclass(frozen=True)
@@ -81,7 +88,7 @@ class CheckReport:
         evidence: Mapping[str, Any] | None = None,
         plugin_id: str | None = None,
         severity: str = "error",
-        stop_requested: bool = True,
+        stop_requested: bool = False,
     ) -> "CheckReport":
         finding = CheckFinding(
             rule_id=rule_id or category,
@@ -92,11 +99,13 @@ class CheckReport:
             stop_requested=stop_requested,
             plugin_id=plugin_id,
         )
-        return cls(False, (finding,), plugin_id)
+        return cls(not finding.blocking, (finding,), plugin_id)
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "passed": bool(self.passed),
+            # ``passed`` means no finding requires runtime/qualification
+            # rejection. Diagnostics remain in ``findings`` for warnings.
+            "passed": not self.blocking,
             "rule_version": self.rule_version,
             "plugin_id": self.plugin_id,
             "findings": [finding.to_dict() for finding in self.findings],
@@ -107,9 +116,13 @@ class CheckReport:
         reasons = [finding.category for finding in self.findings if not finding.passed]
         return reasons or (["check_failed"] if not self.passed else [])
 
+    @property
+    def blocking(self) -> bool:
+        return any(finding.blocking for finding in self.findings)
+
     def merge(self, other: "CheckReport") -> "CheckReport":
         return CheckReport(
-            self.passed and other.passed,
+            not (self.blocking or other.blocking),
             self.findings + other.findings,
             self.plugin_id,
             self.rule_version,
@@ -182,23 +195,30 @@ def normalise_check_result(result: Any, *, plugin_id: str | None = None) -> Chec
     if result is None:
         return CheckReport.ok(plugin_id=plugin_id)
     if isinstance(result, CheckReport):
-        if plugin_id is not None:
-            findings = tuple(
-                CheckFinding(
-                    rule_id=finding.rule_id,
-                    category=finding.category,
-                    message=finding.message,
-                    severity=finding.severity,
-                    passed=finding.passed,
-                    evidence=finding.evidence,
-                    stop_requested=finding.stop_requested,
-                    plugin_id=finding.plugin_id or plugin_id,
-                )
-                for finding in result.findings
+        findings = tuple(
+            CheckFinding(
+                rule_id=finding.rule_id,
+                category=finding.category,
+                message=finding.message,
+                severity=finding.severity,
+                passed=finding.passed,
+                evidence=finding.evidence,
+                stop_requested=finding.stop_requested,
+                plugin_id=finding.plugin_id or plugin_id,
             )
-            if result.plugin_id is None or findings != result.findings:
-                return CheckReport(result.passed, findings, result.plugin_id or plugin_id, result.rule_version)
-        return result
+            for finding in result.findings
+        )
+        if not result.passed and not findings:
+            raise ValueError("check report with passed=false must include at least one finding")
+        normalized = CheckReport(
+            not any(finding.blocking for finding in findings),
+            findings,
+            result.plugin_id or plugin_id,
+            result.rule_version,
+        )
+        if bool(result.passed) != normalized.passed:
+            raise ValueError("check report passed flag is inconsistent with its findings")
+        return normalized
     if isinstance(result, CheckFinding):
         finding = result
         if finding.plugin_id is None and plugin_id is not None:
@@ -212,7 +232,7 @@ def normalise_check_result(result: Any, *, plugin_id: str | None = None) -> Chec
                 stop_requested=finding.stop_requested,
                 plugin_id=plugin_id,
             )
-        return CheckReport(finding.passed, (finding,), plugin_id or finding.plugin_id)
+        return CheckReport(not finding.blocking, (finding,), plugin_id or finding.plugin_id)
     if isinstance(result, bool):
         return CheckReport.ok(plugin_id=plugin_id) if result else CheckReport.failure(
             "check_failed", "plugin returned false", plugin_id=plugin_id

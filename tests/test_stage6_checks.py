@@ -39,7 +39,7 @@ def test_default_validity_rejects_stale_observation_and_records_finding(tmp_path
 def test_validity_plugin_can_explicitly_allow_declared_latency(tmp_path):
     plugin = ObservationValidityPlugin(required_measurements=("vout",), max_age_steps=2)
     result = run_experiment(_spec(tmp_path, "latency"), StalePlant(), FakePIController(), RunOptions(validity_plugins=(plugin,)))
-    assert result.status == "RUN_OK"
+    assert result.status == "QUALIFIED"
 
 
 def test_adapter_rejection_of_nonfinite_observation_is_recorded_as_validity_failure(tmp_path):
@@ -122,7 +122,7 @@ def test_plugin_generator_survives_options_validation(tmp_path):
         RunOptions(validity_plugins=(item for item in (NoopValidity(),))),
     )
     manifest = json.loads((result.run_dir / "manifest.json").read_text())
-    assert result.status == "RUN_OK"
+    assert result.status == "QUALIFIED"
     assert manifest["checks"]["plugins"]["validity"][1]["id"] == "generator-validity"
 
 

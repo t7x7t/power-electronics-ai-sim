@@ -1,4 +1,5 @@
 import json
+import pytest
 
 from pe_sim.contracts import ExperimentSpec, PlantObservation, Timebase
 from pe_sim.runtime import FakePIController, FakePlant, Runner
@@ -10,11 +11,11 @@ def _spec(tmp_path, run_id="runner"):
 
 def test_runner_records_state_transitions_and_call_audit(tmp_path):
     result = Runner().run(_spec(tmp_path), FakePlant(), FakePIController(), checkpoint_interval_steps=2)
-    assert result.status == "RUN_OK"
+    assert result.status == "QUALIFIED"
     manifest = json.loads((result.run_dir / "manifest.json").read_text())
     transitions = json.loads((result.run_dir / "state_transitions.json").read_text())
     audit = json.loads((result.run_dir / "audit.json").read_text())
-    assert [(item["from"], item["to"]) for item in transitions] == [("CREATED", "RUNNING"), ("RUNNING", "RUN_OK")]
+    assert [(item["from"], item["to"]) for item in transitions] == [("CREATED", "RUNNING"), ("RUNNING", "RUN_OK"), ("RUN_OK", "QUALIFIED")]
     assert audit["call_counts"]["controller.observe"] == 4
     assert audit["call_counts"]["plant.advance"] == 4
     assert manifest["audit"]["call_count"] == len(audit["calls"])
@@ -27,7 +28,7 @@ def test_interrupted_run_is_incomplete_and_can_resume(tmp_path):
     assert json.loads((interrupted.run_dir / "manifest.json").read_text())["failure"]["category"] == "interrupted"
     resumed = Runner().run(_spec(tmp_path, "resumed"), FakePlant(), FakePIController(), resume_from=interrupted.run_dir, checkpoint_interval_steps=1)
     full = Runner().run(_spec(tmp_path, "full"), FakePlant(), FakePIController())
-    assert resumed.status == "RUN_OK"
+    assert resumed.status == "QUALIFIED"
     resumed_samples = json.loads((resumed.run_dir / "samples.json").read_text())
     full_samples = json.loads((full.run_dir / "samples.json").read_text())
     assert resumed_samples == full_samples
@@ -70,7 +71,51 @@ class AlternateMeasurementController(FakePIController):
 def test_runner_supports_configured_primary_measurement(tmp_path):
     spec = ExperimentSpec("stage5-alt", "alt", "alt-plant", "alt-controller", Timebase(duration_s=0.002, control_period_s=0.001), output_dir=str(tmp_path), plant_config={"primary_measurement": "output_voltage"})
     result = Runner().run(spec, AlternateMeasurementPlant(), AlternateMeasurementController(), measurement_key="output_voltage")
-    assert result.status == "RUN_OK"
+    assert result.status == "QUALIFIED"
     rows = json.loads((result.run_dir / "samples.json").read_text())
     assert "output_voltage" in rows[0]
     assert "vout" not in rows[0]
+
+
+def test_non_integral_duration_uses_short_final_window(tmp_path):
+    spec = ExperimentSpec("stage5-timing", "fractional", "fake", "pi", Timebase(duration_s=0.0015, control_period_s=0.001), output_dir=str(tmp_path))
+    result = Runner().run(spec, FakePlant(), FakePIController())
+    assert result.status == "QUALIFIED"
+    rows = json.loads((result.run_dir / "events.json").read_text())
+    assert len(rows) == 2
+    assert rows[-1]["next_time_s"] == pytest.approx(0.0015)
+
+
+def test_sample_offset_that_exceeds_final_window_fails_closed(tmp_path):
+    spec = ExperimentSpec(
+        "stage5-timing",
+        "offset-too-large",
+        "fake",
+        "pi",
+        Timebase(duration_s=0.0011, control_period_s=0.001, sample_offset_s=0.0002),
+        output_dir=str(tmp_path),
+    )
+    result = Runner().run(spec, FakePlant(), FakePIController())
+    assert result.status == "RUN_FAILED"
+    manifest = json.loads((result.run_dir / "manifest.json").read_text())
+    assert manifest["failure"]["category"] == "runtime_error"
+    assert "remaining control window" in manifest["error"]
+
+
+def test_fractional_duration_resume_keeps_original_deadline(tmp_path):
+    interrupted = Runner().run(
+        ExperimentSpec("stage5-timing", "fractional-source", "fake", "pi", Timebase(duration_s=0.0015, control_period_s=0.001), output_dir=str(tmp_path)),
+        FakePlant(),
+        FakePIController(),
+        checkpoint_interval_steps=1,
+        interrupt_after_steps=1,
+    )
+    resumed = Runner().run(
+        ExperimentSpec("stage5-timing", "fractional-resume", "fake", "pi", Timebase(duration_s=0.0015, control_period_s=0.001), output_dir=str(tmp_path)),
+        FakePlant(),
+        FakePIController(),
+        resume_from=interrupted.run_dir,
+    )
+    events = json.loads((resumed.run_dir / "events.json").read_text())
+    assert resumed.status == "QUALIFIED"
+    assert events[-1]["next_time_s"] == pytest.approx(0.0015)

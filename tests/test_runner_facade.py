@@ -26,13 +26,13 @@ def _spec(tmp_path, run_id="facade"):
 
 def test_simple_default_entry_point_requires_no_policy_configuration(tmp_path):
     result = run_experiment(_spec(tmp_path), FakePlant(), FakePIController())
-    assert result.status == "RUN_OK"
+    assert result.status == "QUALIFIED"
 
 
 def test_advanced_recovery_policy_composes_with_facade(tmp_path):
     options = RunOptions(recovery=RecoveryPolicy(checkpoint_interval_steps=1))
     result = run_experiment(_spec(tmp_path), FakePlant(), FakePIController(), options)
-    assert result.status == "RUN_OK"
+    assert result.status == "QUALIFIED"
     assert (result.run_dir / "checkpoint.json").exists()
 
 
@@ -54,4 +54,4 @@ def test_legacy_runner_options_remain_compatible(tmp_path):
 
     options = RunOptions(recovery=RecoveryPolicy(checkpoint_interval_steps=1))
     result = Runner().run(_spec(tmp_path), FakePlant(), FakePIController(), options=options)
-    assert result.status == "RUN_OK"
+    assert result.status == "QUALIFIED"

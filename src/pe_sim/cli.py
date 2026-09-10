@@ -3,12 +3,13 @@ import argparse
 import json
 from pathlib import Path
 
-from .contracts import ExperimentSpec, Timebase
+from .contracts import ExperimentSpec, Timebase, validate_experiment_document
 from .runtime import FakeLoadPlant, FakePIController, FakePlant, Runner
 from .reference_plants import BuckPlant, BoostPlant
 from .dirty import FormalComparisonError, analyze_git_worktree
 from .environment import check_recommended_environment
-from .reproducibility import compare_runs
+from .provenance import ExecutableBackendAdapter
+from .reproducibility import audit_repeated_runs, compare_runs, cross_machine_evidence
 from .baseline import build_baseline_report
 
 
@@ -29,17 +30,33 @@ def main(argv: list[str] | None = None) -> int:
     environment = sub.add_parser("environment-check", help="check the verified and supported Python environment")
     environment.add_argument("--requirements", type=Path, default=None)
     environment.add_argument("--pyproject", type=Path, default=None)
+    environment.add_argument("--backend-executable", type=Path, default=None, help="optional external backend executable to query")
+    environment.add_argument("--backend-name", default="external-backend")
     compare = sub.add_parser("compare-runs", help="compare two published run directories")
     compare.add_argument("left", type=Path)
     compare.add_argument("right", type=Path)
     compare.add_argument("--tolerance", type=float, default=1e-9)
+    audit = sub.add_parser(
+        "audit-reproducibility",
+        aliases=("reproducibility-audit", "audit-runs"),
+        help="audit repeated runs pairwise on one machine",
+    )
+    audit.add_argument("runs", type=Path, nargs="+")
+    audit.add_argument("--tolerance", type=float, default=1e-9)
+    cross = sub.add_parser("cross-machine-evidence", help="build cross-machine reproducibility evidence matrix")
+    cross.add_argument("runs", type=Path, nargs="+")
     baseline = sub.add_parser("baseline-report", help="build a release/baseline evidence template")
     baseline.add_argument("manifest", type=Path)
     baseline.add_argument("--output", type=Path, default=None)
     args = parser.parse_args(argv)
     try:
         if args.command == "run":
-            spec = ExperimentSpec.from_dict(json.loads(args.config.read_text(encoding="utf-8")))
+            document = json.loads(args.config.read_text(encoding="utf-8"))
+            # Validate the serialized contract before the compatibility reader
+            # constructs an ExperimentSpec.  This prevents unknown or misspelled
+            # fields from being silently ignored at the CLI boundary.
+            validate_experiment_document(document)
+            spec = ExperimentSpec.from_dict(document)
             plant = _build_plant(args.backend, spec.plant_config)
             controller = FakePIController(kp=float(spec.controller_config.get("kp", 1.0)))
             result = Runner().run(spec, plant, controller, mode=args.mode)
@@ -50,13 +67,22 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(analyze_git_worktree(args.path).to_dict(), sort_keys=True))
             return 0
         elif args.command == "environment-check":
-            result = check_recommended_environment(args.requirements, args.pyproject)
+            adapters = () if args.backend_executable is None else (ExecutableBackendAdapter(args.backend_executable, name=args.backend_name),)
+            result = check_recommended_environment(args.requirements, args.pyproject, backend_adapters=adapters)
             print(json.dumps(result.to_dict(), sort_keys=True))
             return 0 if result.status == "pass" else 1
         elif args.command == "compare-runs":
             result = compare_runs(args.left, args.right, tolerance=args.tolerance)
             print(json.dumps(result.to_dict(), sort_keys=True))
             return 0 if result.outcome in {"exact_match", "tolerance_match"} else 1
+        elif args.command in {"audit-reproducibility", "reproducibility-audit", "audit-runs"}:
+            result = audit_repeated_runs(args.runs, tolerance=args.tolerance)
+            print(json.dumps(result.to_dict(), sort_keys=True))
+            return 0 if result.reproducible else 1
+        elif args.command == "cross-machine-evidence":
+            result = cross_machine_evidence(args.runs)
+            print(json.dumps(result, sort_keys=True))
+            return 0 if result["status"] == "ready_for_trial" else 1
         elif args.command == "baseline-report":
             report = build_baseline_report(args.manifest)
             payload = json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
@@ -73,8 +99,17 @@ def main(argv: list[str] | None = None) -> int:
     except FormalComparisonError as exc:
         print(json.dumps({"status": "FORMAL_COMPARISON_REJECTED", "error": str(exc), "worktree_analysis": exc.analysis.to_dict()}, sort_keys=True))
         return 2
+    except (OSError, RuntimeError, ValueError) as exc:
+        # Configuration and preflight errors are machine-readable and must not
+        # start a partial run. JSONDecodeError is a ValueError subclass and is
+        # therefore covered here as well.
+        print(json.dumps({"status": "CONFIG_REJECTED", "error": str(exc)}, sort_keys=True))
+        return 2
     print(json.dumps({"status": result.status, "run_dir": str(result.run_dir), "qualification": result.qualification}, sort_keys=True))
-    return 0 if result.status == "RUN_OK" else 1
+    # A completed and qualified run is the normal successful CLI outcome.
+    # Keep RUN_OK accepted for compatibility with callers that disable or
+    # defer post-run qualification in a custom integration.
+    return 0 if result.status in {"RUN_OK", "QUALIFIED"} else 1
 
 
 def _build_plant(backend: str, config: dict[str, object]):

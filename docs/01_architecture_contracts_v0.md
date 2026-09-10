@@ -98,7 +98,7 @@ Plant 异常或安全触发后，默认停止后续动作并进入失败/隔离�
 - 每次正式运行必须显式选择 cold start、warm start 或 qualified snapshot。
 - Snapshot 必须带来源 Plant/合同 Hash 和生成时间，不能跨不兼容合同恢复。
 - 所有随机过程使用显式 seed；未提供 seed 的运行只能标记为 exploratory。
-- Controller 状态、Plant 状态和学习候选状态必须分别保存。
+- Controller 状态、Plant 状态和（仅在启用可选学习/适配扩展时产生的）学习候选状态必须分别保存；核心 Runner 不要求生成或更新学习状态。
 
 ## 4. 能力扩展
 

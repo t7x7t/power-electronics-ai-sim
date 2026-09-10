@@ -28,6 +28,20 @@ def _spec(tmp_path, run_id="stage8"):
     )
 
 
+def _write_complete_runtime_summary(writer):
+    manifest = {
+        "status": "QUALIFIED",
+        "artifacts": artifacts.artifact_index(writer.tmp),
+    }
+    manifest["manifest_sha256"] = artifacts.manifest_digest(manifest)
+    manifest["package_sha256"] = artifacts.package_digest(writer.tmp, manifest)
+    manifest["hashes"] = {
+        "manifest_sha256": manifest["manifest_sha256"],
+        "package_sha256": manifest["package_sha256"],
+    }
+    writer.write_json("manifest.json", manifest)
+
+
 def test_lifecycle_exposes_complete_matrix_and_rejects_illegal_transition():
     matrix = LifecycleStateMachine.allowed_transitions()
     assert set(matrix) >= {"CREATED", "RUNNING", "RUN_OK", "INCOMPLETE", "RUN_FAILED"}
@@ -75,6 +89,7 @@ def test_failed_directory_publish_remains_an_incomplete_candidate(tmp_path, monk
     for name in artifacts.ArtifactWriter.REQUIRED:
         if name != "logs/.keep":
             writer.write_json(name, {})
+    _write_complete_runtime_summary(writer)
     original_replace = artifacts.os.replace
 
     def fail_directory_publish(source, target):
@@ -89,6 +104,24 @@ def test_failed_directory_publish_remains_an_incomplete_candidate(tmp_path, monk
     assert reports and reports[0]["status"] == "INCOMPLETE"
     assert reports[0]["marker"]["status"] == "READY_TO_PUBLISH"
     assert not (tmp_path / "publish-failure").exists()
+
+
+def test_missing_final_manifest_summary_cannot_be_published(tmp_path):
+    writer = artifacts.ArtifactWriter(tmp_path, "missing-summary")
+    for name in artifacts.ArtifactWriter.REQUIRED:
+        if name != "logs/.keep":
+            writer.write_json(name, {})
+    # A runtime-shaped manifest without the final artifact and digest summary
+    # must fail while still hidden in the temporary directory.
+    writer.write_json("manifest.json", {"status": "QUALIFIED", "artifacts": {}})
+
+    with pytest.raises(ValueError, match="artifact index"):
+        writer.finalize()
+
+    assert not (tmp_path / "missing-summary").exists()
+    reports = scan_abandoned_runs(tmp_path)
+    assert reports and reports[0]["status"] == "INCOMPLETE"
+    assert reports[0]["marker"]["status"] != "PUBLISHED"
 
 
 def test_cancelled_run_is_incomplete_and_records_recovery_evidence(tmp_path):
@@ -122,7 +155,7 @@ def test_resume_manifest_records_source_run_and_checkpoint(tmp_path):
         resume_from=interrupted.run_dir,
     )
     manifest = json.loads((resumed.run_dir / "manifest.json").read_text(encoding="utf-8"))
-    assert resumed.status == "RUN_OK"
+    assert resumed.status == "QUALIFIED"
     assert manifest["recovery"]["requested"] is True
     assert manifest["recovery"]["resumed"] is True
     assert manifest["recovery"]["source"]["run_id"] == "source"

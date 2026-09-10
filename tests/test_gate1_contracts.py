@@ -17,5 +17,5 @@ def test_fake_closed_loop_separates_truth_and_measurement(tmp_path):
 def test_runner_produces_successful_closed_loop(tmp_path):
     spec = ExperimentSpec("fake", "run-1", "fake-plant", "fake-controller", Timebase(duration_s=0.003, control_period_s=0.001), output_dir=str(tmp_path))
     result = Runner().run(spec, FakePlant(), FakePIController())
-    assert result.status == "RUN_OK"
+    assert result.status == "QUALIFIED"
     assert (result.run_dir / "manifest.json").exists()

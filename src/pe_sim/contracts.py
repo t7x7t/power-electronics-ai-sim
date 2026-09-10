@@ -8,8 +8,10 @@ import math
 import re
 import hashlib
 import json
+from pathlib import Path
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 CURRENT_SCHEMA_VERSION = "0.1"
 
 
@@ -107,6 +109,54 @@ def ensure_schema_compatible(version: str, supported: str = CURRENT_SCHEMA_VERSI
     supported_major, supported_minor = _version_parts(supported)
     if major != supported_major or minor > supported_minor:
         raise ValueError(f"unsupported schema_version {version}; supported through {supported}")
+
+
+def validate_experiment_document(value: Mapping[str, Any], schema_path: str | Path | None = None) -> None:
+    """Validate a JSON experiment document before constructing an ``ExperimentSpec``.
+
+    ``ExperimentSpec.from_dict`` intentionally remains a small compatibility
+    reader for Python callers.  File/CLI entry points must validate the
+    machine-readable contract first so unknown fields cannot be silently
+    ignored.  The optional ``jsonschema`` dependency is loaded lazily because
+    the runtime package itself has no mandatory third-party dependencies.
+    """
+
+    if not isinstance(value, Mapping):
+        raise ValueError("experiment config must be a JSON object")
+    try:
+        import jsonschema
+    except ImportError as exc:  # pragma: no cover - exercised in minimal installs
+        raise RuntimeError("experiment schema validation requires the 'jsonschema' package") from exc
+    path = Path(schema_path) if schema_path is not None else Path(__file__).resolve().parents[2] / "schemas" / "experiment.schema.json"
+    try:
+        schema = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"experiment schema could not be loaded: {path}") from exc
+    validator = jsonschema.Draft202012Validator(schema)
+    errors = sorted(validator.iter_errors(value), key=lambda item: list(item.absolute_path))
+    if errors:
+        details = "; ".join(
+            f"{'.'.join(str(part) for part in error.absolute_path) or '<root>'}: {error.message}"
+            for error in errors[:5]
+        )
+        suffix = " (additional errors omitted)" if len(errors) > 5 else ""
+        raise ValueError(f"experiment config failed schema validation: {details}{suffix}")
+
+
+def validate_safe_identifier(value: str, *, field: str) -> None:
+    """Reject identifiers that could be interpreted as filesystem paths.
+
+    Experiment identifiers become part of evidence and run identifiers also
+    select a run-directory name.  Keeping both to one conservative token
+    grammar makes Python and JSON entry points agree and prevents a later
+    path join from changing their meaning.
+    """
+
+    if not isinstance(value, str) or not _SAFE_IDENTIFIER_RE.fullmatch(value) or value in {".", ".."} or ".." in value:
+        raise ValueError(
+            f"{field} must contain only letters, numbers, '.', '_' or '-', "
+            "and must not contain '..'"
+        )
 
 
 @dataclass(frozen=True)
@@ -244,8 +294,11 @@ class Timebase:
                 raise ValueError(f"{name} must be finite and positive")
         if self.plant_step_s is not None and (not math.isfinite(self.plant_step_s) or self.plant_step_s <= 0):
             raise ValueError("plant_step_s must be finite and positive")
-        if not math.isfinite(self.sample_offset_s) or self.sample_offset_s < 0 or self.sample_offset_s > self.control_period_s:
-            raise ValueError("sample_offset_s must lie in [0, control_period_s]")
+        # The sample offset is a pre-sample hold inside each control window.
+        # An offset equal to the full period leaves no time for the action to
+        # advance the plant and therefore cannot produce a valid cycle.
+        if not math.isfinite(self.sample_offset_s) or self.sample_offset_s < 0 or self.sample_offset_s >= self.control_period_s:
+            raise ValueError("sample_offset_s must lie in [0, control_period_s)")
         if not math.isfinite(self.event_tolerance_s) or self.event_tolerance_s < 0:
             raise ValueError("event_tolerance_s must be finite and non-negative")
 
@@ -306,6 +359,7 @@ class ActionRequest:
     produced_time_s: float = 0.0
     target_time_s: float = 0.0
     diagnostics: Mapping[str, float] = field(default_factory=dict)
+    state_update: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if not math.isfinite(float(self.value)):
@@ -314,6 +368,8 @@ class ActionRequest:
             raise ValueError("unsupported action unit")
         if not math.isfinite(float(self.produced_time_s)) or not math.isfinite(float(self.target_time_s)):
             raise ValueError("action timestamps must be finite")
+        if self.state_update is not None and not isinstance(self.state_update, Mapping):
+            raise ValueError("action state_update must be a mapping or null")
         if self.target_time_s < self.produced_time_s:
             raise ValueError("target_time_s cannot precede produced_time_s")
 
@@ -353,6 +409,8 @@ class ExperimentSpec:
     def __post_init__(self) -> None:
         if not self.experiment_id or not self.run_id or not self.plant_id or not self.controller_id:
             raise ValueError("experiment and component identifiers are required")
+        validate_safe_identifier(self.experiment_id, field="experiment_id")
+        validate_safe_identifier(self.run_id, field="run_id")
         if self.seed is not None and (not isinstance(self.seed, int) or self.seed < 0):
             raise ValueError("seed must be a non-negative integer or null")
         ensure_schema_compatible(self.schema_version)
@@ -360,7 +418,12 @@ class ExperimentSpec:
             raise ValueError("unsupported result retention policy")
         for name in ("safety", "qualification"):
             ref = self.contracts.get(name)
-            if not isinstance(ref, Mapping) or not _SHA256_RE.fullmatch(str(ref.get("hash", ""))):
+            if (
+                not isinstance(ref, Mapping)
+                or not isinstance(ref.get("id"), str)
+                or not str(ref["id"]).strip()
+                or not _SHA256_RE.fullmatch(str(ref.get("hash", "")))
+            ):
                 raise ValueError(f"contracts.{name} requires a SHA-256 hash")
         if any(not isinstance(item, str) or not item for item in self.required_capabilities):
             raise ValueError("required_capabilities must contain non-empty strings")

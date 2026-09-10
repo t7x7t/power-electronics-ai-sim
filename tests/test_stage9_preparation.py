@@ -50,6 +50,16 @@ def test_environment_pin_mismatch_fails_without_claiming_supported_range(tmp_pat
     assert result.packages["pytest"]["supported_status"] == "supported"
 
 
+def test_explicit_unavailable_backend_fails_environment_preflight(tmp_path):
+    class MissingBackend:
+        def backend_provenance(self):
+            return {"name": "ngspice", "status": "unavailable", "version": None}
+
+    result = check_recommended_environment(backend_adapters=(MissingBackend(),))
+    assert result.status == "fail"
+    assert result.backend["status"] == "unknown"
+
+
 def test_reproducibility_exact_and_tolerance_outcomes(tmp_path):
     samples = [{"step_index": 0, "time_s": 0.0, "vout": 1.0}]
     left_manifest = _manifest()

@@ -21,17 +21,17 @@ behavior only; it is not a hardware or product approval.
 | 2 | Project and environment configuration | Partial | `pyproject.toml`, MIT license, Git baseline, tested-version record, and light CI exist. Environment locking, platform policy, and release evidence are incomplete. |
 | 3 | Public data and interface contracts | Done (v1 incremental) | v0 contracts are extended with normalized capability negotiation, explicit event/multi-rate gates, schema compatibility checks, observation visibility/time-window checks, snapshot hash verification, and regression tests. A reusable Plant/Controller conformance harness is now available. Full event scheduling semantics and richer unit registries remain future work. |
 | 4 | Plant and Controller integration | Partial (L1 references) | Self-owned ideal averaged Buck and Boost Plants now implement the public lifecycle, units, external-input updates, snapshots, and fail-closed bounds. Fake Plant, Fake Load Plant, and Fake PI Controller remain compatibility fixtures. Real `D:\PySpice` code and PSFB/LLC migration are intentionally deferred pending review. |
-| 5 | Generic Runner | Partial (modular audited lifecycle v1) | Low-friction `run_experiment` facade, composable policies, explicit CREATED/RUNNING/terminal state transitions, call-order audit, checkpoint/resume, interruption as INCOMPLETE, structured capability failures, policy-driven action handling, configured primary measurements, and segmented plant timing are implemented and tested. Process-level recovery, full event scheduling, controller state persistence conventions, and richer timing semantics remain future work. |
+| 5 | Generic Runner | Partial (modular audited lifecycle v1) | Low-friction `run_experiment` facade, pre-reset run-directory/identifier gates, formal-evidence admission, explicit CREATED/RUNNING/terminal state transitions, call-order audit, checkpoint/resume with full execution-spec identity, explicit Controller state protocols, interruption as INCOMPLETE, structured capability failures, policy-driven action handling, configured primary measurements, and endpoint-checked segmented plant timing are implemented and tested. Process-level recovery, full event scheduling, and richer timing semantics remain future work. |
 | 6 | Safety and qualification checks | Done (v1 extensible runtime checks) | `SafetyPlugin`, `ValidityPlugin`, and `QualificationPlugin` are composable through `RunOptions`; structured findings cover observation integrity (finite values, timestamps, age, required fields, units, ranges), qualification, and fail-closed execution error categories. Sensor fault injection and real-hardware sensor handling remain intentionally out of scope. |
 | 7 | Run artifacts and Manifest | Done (v1 provenance and package identity) | Atomic artifacts, JSON/NPZ samples, events, metrics, logs, complete runtime/environment/backend provenance, stable component hashes, non-self-referential Manifest digest, deterministic package digest, and dirty-worktree evidence linkage are implemented and tested. Dependency locking, real backend discovery, and release-level baseline reports remain later work. |
 | 8 | Failure and recovery behavior | Done (v1 Python/file transaction boundary) | Public lifecycle matrix rejects illegal transitions; interrupted/cancelled runs are `INCOMPLETE`, backend failures remain `RUN_FAILED`, checkpoints are validated, resume provenance is recorded, and abandoned temporary directories are scanned without publication. Automatic retention/deletion policy remains an operator-approved follow-up; OS-level crash recovery and physical-model recovery remain out of scope. |
 | 9 | Reproducibility | Partial (preparatory v1) | Recommended-environment checks, deterministic Fake/Buck/Boost comparison, and explicit exact/tolerance/unknown outcomes are implemented. Cross-machine and real Ngspice reproducibility is not verified. |
-| 10 | Metrics and data export | Partial | Basic samples, events, and sample-count metrics are exported. A metric registry, versioning, comparison, and report generation are planned. |
+| 10 | Metrics and data export | Partial (restricted v1 slice) | Published qualified Fake/FakeLoad/Buck/Boost packages now support a versioned metric registry, explicit input-data version/fingerprint records, machine-checkable output schemas, numeric multi-run comparison, and source-linked JSON evidence reports. Domain metric registries, richer units/statistics, visualization, and physical conclusions remain later work. |
 | 11 | Data visualization | Planned | No supported plotting or report CLI exists yet. Visualizations must retain a link to the source run and Manifest. |
-| 12 | Evidence and conclusion levels | Partial | Manifest evidence levels and restrictions are present. Complete qualification/comparability/learning gates and conclusion templates are planned. |
-| 13 | Learning and adaptation | Planned | The policy says only eligible evidence may enter learning. No learning, adaptation, checkpoint, or rejection workflow exists. |
+| 12 | Evidence and conclusion levels | Partial (restricted v1 classification) | Stage 10 summaries/comparison reports can be classified as mechanism, functional, comparable, limited, or diagnostic_only with explicit limitations, blocked conclusions, and review records. Physical, research-safety, and hardware-readiness upgrades remain prohibited and domain conclusion templates remain later work. |
+| 13 | Optional learning/adaptation integration boundary | Optional (boundary only) | Learning and adaptation are not required for the core simulation infrastructure. The project defines an opt-in boundary for reviewed adapters: only eligible, qualified, provenance-complete evidence may be handed to an external learner. No built-in trainer, online-learning loop, model update, or automatic adaptation workflow is planned for the core. |
 | 14 | PySpice/Ngspice migration | Blocked by review | The source tree has not been migrated. PI/PID and model implementations require independent technical, provenance, and license review first. |
-| 15 | Testing and acceptance | Partial | Local tests cover the v0 contracts, Runner, artifacts, Schema, provenance, and dirty modes. Real PSFB acceptance, full CI tiers, visualization, and migration gates are future work. |
+| 15 | Testing and acceptance | Partial (L1 Buck/Boost slice) | The project-owned ideal averaged Buck/Boost adapters now have a dedicated acceptance matrix covering equations, boundaries, numerical step sensitivity, small sweeps/long runs, conformance, Runner lifecycle/recovery, deterministic repetition, CLI smoke, and the Stage 10/12 evidence chain. This is infrastructure acceptance only; real Ngspice/PSFB, switching, thermal, hardware, product, visualization, migration, and final full-project gates remain future work. |
 | 16 | Agent collaboration governance | Partial | Agent policy and independent acceptance are documented. Task records, approval evidence, and automated hand-off gates are not yet standardized. |
 
 ## Completed governance additions
@@ -173,6 +173,14 @@ bounded projection when required. The current acceptance evidence is the full
 local suite (57 tests); this remains an infrastructure behavior result, not a
 physical-model or hardware result.
 
+`docs/21_stage5_preflight_and_state_protocol_v1.md` records the next focused
+Stage 5 increment: safe identifiers and output conflicts are rejected before
+adapter reset, formal comparison has explicit evidence admission, Plant timing
+must reach each requested window endpoint, checkpoint resume binds the complete
+execution specification, and Controller state persistence uses an explicit
+snapshot/restore or reset-serialized-state protocol. Non-blocking warnings are
+now retained as diagnostics rather than being treated as execution failures.
+
 ## Later backlog
 
 ### Stage 5 follow-up backlog
@@ -183,8 +191,9 @@ physical-model or hardware result.
 - Define a complete event queue and deterministic same-time event priority
   policy; the current runner supports fixed control windows, sample offsets,
   action target times, and segmented `plant_step_s` advancement only.
-- Standardize Controller snapshot/restore state serialization and validate
-  checkpoint hashes and component/contract identities across processes.
+- Extract timing, recovery, and publication into independently testable
+  modules; keep the current Controller state protocols and checkpoint identity
+  gates stable while the internal coordinator evolves.
 - Add process-level checkpoint retention, crash recovery, and explicit resume
   provenance; current interruption handling is a testable Python-level
   `INCOMPLETE` path and is not hardware or operating-system recovery.
@@ -213,6 +222,36 @@ Cloud real-physics jobs, SBOM/license automation, signed releases, PyPI/Conda/
 Docker packaging, advanced CI caching/parallelism, and automatic impact-based
 test selection can be added when project usage justifies their cost.
 
+### Stage 13 optional learning/adaptation boundary
+
+The detailed boundary contract is documented in
+`docs/20_stage13_optional_learning_boundary_v0.md`.
+
+Stage 13 is deliberately an integration boundary rather than a mandatory
+feature stage. Most users only need deterministic simulation, checks, artifacts,
+comparison, and visualization; they do not need a trainer or an online adaptive
+controller in this repository. Therefore the core project will not ship an
+opinionated training framework, replay store, optimizer, policy updater, or
+automatic parameter-tuning loop.
+
+An advanced user may attach a project- or domain-specific learner through a
+separate adapter. Such an adapter must consume an explicit, versioned contract
+and remain subject to the existing gates:
+
+- only evidence that is qualified and explicitly marked `LEARNING_ELIGIBLE` may
+  be supplied to a learner;
+- failed, incomplete, dirty, unknown-provenance, non-comparable, or
+  human-unreviewed runs remain diagnostic-only;
+- source/model/configuration/contract hashes and the learner or adapter version
+  must be recorded in an auditable hand-off record;
+- an update must be reviewable and reversible; the core Runner must not silently
+  replace a controller, alter a model, or promote a learned result.
+
+This boundary preserves extensibility without turning the common infrastructure
+into a machine-learning product. Concrete learning semantics, datasets,
+algorithm choice, update cadence, and acceptance criteria belong to the
+downstream user or a separately reviewed adapter.
+
 ## Current acceptance snapshot
 
 The v0 Fake backend slice has been locally verified with the repository's test
@@ -237,6 +276,71 @@ examples, analytical equilibrium and integration-step regression checks, and
 portable reference component identities in Manifest records. Remaining Stage 4
 items stay listed above under the later backlog and are intentionally not part
 of this L1 acceptance.
+
+### Stage 5 preflight and state-protocol increment (current)
+
+`docs/21_stage5_preflight_and_state_protocol_v1.md` records the implemented
+preflight and recovery-contract slice. Run identifiers and output conflicts are
+rejected before adapter reset, formal comparison has explicit seed/contract/
+source/component/environment admission checks, Plant windows must reach their
+requested endpoints, checkpoints bind the execution-semantic experiment hash,
+and Controller persistence uses an explicit state protocol. Non-blocking
+warning findings remain recorded without stopping a run.
+
+Acceptance evidence:
+
+```text
+pytest -q --basetemp .tmp/pytest-stage5-preflight
+python -m compileall -q src tests
+git diff --check
+```
+
+This remains a Python-level runtime contract. It does not provide operating
+system crash recovery, external Ngspice supervision, or physical validation.
+
+### Stage 10 restricted post-processing increment (current)
+
+`docs/21_stage10_restricted_metrics_export_v1.md` records the first post-run
+slice. `load_run_evidence()` and `summarize_run()` consume only published,
+qualified, clean, hash-complete reference packages; `export_metrics()` writes
+linked JSON/CSV outside the immutable run directory. The slice is limited to
+Fake/FakeLoad/Buck/Boost. A versioned metric registry, explicit data-contract
+fingerprints, multi-run comparison, and source-linked evidence report are now
+available; plots, physical validation, and engineering conclusions remain
+outside this stage.
+
+Acceptance evidence:
+
+```text
+pytest -q tests/test_stage10_restricted_postprocess.py --basetemp .tmp/pytest-stage10
+pytest -q tests/test_stage10_metric_registry.py --basetemp .tmp/pytest-stage10-metrics
+```
+
+The increment is deliberately limited to numeric post-processing. Unknown
+metric IDs are rejected, custom metrics require an explicit versioned
+definition, and comparison/report outputs repeat every source run's `run_id`,
+Manifest hash, and package hash. No plotting, controller-quality judgment,
+physical validation, or engineering approval is produced.
+
+### Stage 12 restricted evidence classification (current)
+
+`docs/22_stage12_evidence_levels_v1.md` and
+`schemas/stage12-evidence-classification.schema.json` define the current
+machine-checkable boundary. Valid Stage 10 summaries may be classified as
+`mechanism` or `functional`; a complete matching Stage 10 comparison may be
+classified as `comparable`; mismatches and incomplete comparisons are
+`limited`, while structurally valid failed or explicitly diagnostic evidence is
+`diagnostic_only`. Dirty, unknown, malformed, or hash-incomplete provenance is
+rejected at the classifier boundary and cannot receive any level.
+Every output carries limitations, blocked conclusions, a required review flag,
+and a review record. Physical-performance, research-safety, and
+hardware-readiness are never emitted automatically.
+
+Acceptance evidence:
+
+```text
+pytest -q tests/test_stage12_evidence.py --basetemp .tmp/pytest-stage12
+```
 
 The Stage 6 increment adds composable Safety/Validity/Qualification plugins,
 structured observation findings, and stable execution-failure categories. It
@@ -451,3 +555,85 @@ git diff --check
 
 This does not lock or discover Ngspice, validate a physical model, or prove
 cross-machine numerical reproducibility.
+
+### Stage 9 reproducibility evidence increment (current)
+
+The preparatory slice now exposes an explicit `BackendProvenanceAdapter`
+protocol and `ExecutableBackendAdapter`.  External backend version queries are
+opt-in; absent adapters are `not_assessed`, failed queries are retained as
+`unavailable`/`partial`, and solver settings are never inferred.  Environment
+records include locale, floating-point characteristics, and common
+thread-environment hints in addition to platform and dependency evidence.
+
+`pe-sim audit-reproducibility` (aliases `reproducibility-audit` and
+`audit-runs`) compares every pair in a repeated-run set and aggregates exact,
+tolerance, mismatch, and unknown outcomes.  `pe-sim cross-machine-evidence`
+builds a portable platform/environment matrix and returns `ready_for_trial`
+only when distinct platform identities and valid provenance are present; it
+does not claim cross-machine numerical equivalence.
+
+`ReproducibilityReport` now includes identity hashes, environment equality, and
+numeric/structural difference attribution.  A tolerance match is explicitly
+distinct from an exact hash match.
+
+Published-package comparisons now run an integrity gate before reading sample
+values. The gate recomputes the Manifest and package SHA-256 digests, checks
+the complete artifact index and required files, requires a `PUBLISHED` state
+marker and a publishable terminal status, and validates a full hexadecimal
+Git object id in `source_commit`. `RUN_FAILED`, `INCOMPLETE`, `DISQUALIFIED`,
+missing-summary, or tampered packages are reported as `unknown`. Hand-written
+manifests used by the preparatory fixtures remain explicitly non-release-grade
+compatibility inputs.
+
+Comparison is fail-closed for explicitly attempted external backends: an
+`unknown`, `unavailable`, or `partial` backend record produces
+`outcome=unknown`.  Only the built-in preparatory fixtures may proceed with
+`not_declared`/`not_assessed` backend evidence, and their limitations remain
+visible in the report.  Cross-machine evidence also requires aligned source
+commits before it can be marked `ready_for_trial`.
+
+Remaining Stage 9 work still requires a reviewed real backend adapter and is
+not silently closed by these tools:
+
+- lock and attest the Ngspice executable, solver tolerances, thread count,
+  locale, and platform-specific numerical settings;
+- repeat a real physical model on one machine and record backend logs;
+- execute a cross-machine trial with independently captured evidence and a
+  declared tolerance/attribution policy;
+- investigate exact-hash versus numeric-tolerance drift (BLAS, compiler,
+  architecture, and solver causes) without upgrading a functional fixture
+  result into a physical or product claim.
+
+Acceptance evidence for this increment:
+
+```text
+pytest -q tests/test_stage9_preparation.py tests/test_stage9_reproducibility.py --basetemp .tmp/pytest-stage9-repro
+python -m compileall -q src tests
+git diff --check
+```
+
+### Stage 15 L1 Buck/Boost acceptance increment (current)
+
+`docs/23_stage15_l1_buck_boost_acceptance_v1.md` defines the restricted
+acceptance matrix for the project-owned ideal averaged `BuckPlant` and
+`BoostPlant`. The matrix covers public Plant/Controller conformance, declared
+equilibrium equations, fixed-step sensitivity, parameter and duty boundaries,
+small duty sweeps and finite long runs, Runner lifecycle/checkpoints and
+Manifest/package hashes, interruption/resume, deterministic repeated samples,
+CLI smoke runs, and the Stage 10 to Stage 12 provenance hand-off.
+
+Acceptance evidence for this increment:
+
+```text
+pytest -q tests/test_stage15_buck_boost_acceptance.py --basetemp .tmp/pytest-stage15-l1
+pytest -q --basetemp .tmp/pytest-stage15-full
+python -m compileall -q src tests
+git diff --check
+```
+
+The L1 result is infrastructure and reference-model evidence only. It does
+not validate Ngspice, switching waveforms, convergence, thermal/loss models,
+hardware or product behavior, cross-machine equivalence, Stage 11
+visualization, Stage 13 learning, or Stage 14 migration. Stage 15 remains
+`Partial` until the explicitly excluded real-model and final project gates
+are separately reviewed.

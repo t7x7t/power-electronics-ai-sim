@@ -43,7 +43,7 @@ def _spec(tmp_path, run_id="action-policy"):
 
 def test_default_policy_preserves_finite_actions_for_generic_plants(tmp_path):
     result = run_experiment(_spec(tmp_path), FakePlant(), FixedActionController(5.0))
-    assert result.status == "RUN_OK"
+    assert result.status == "QUALIFIED"
     samples = (result.run_dir / "samples.json").read_text(encoding="utf-8")
     assert '"action":5.0' in samples
 
@@ -51,7 +51,7 @@ def test_default_policy_preserves_finite_actions_for_generic_plants(tmp_path):
 def test_explicit_policy_can_bound_generic_plant_actions(tmp_path):
     options = RunOptions(action_policy=BoundedActionPolicy(-1.0, 1.0))
     result = run_experiment(_spec(tmp_path), FakePlant(), FixedActionController(5.0), options)
-    assert result.status == "RUN_OK"
+    assert result.status == "QUALIFIED"
     samples = (result.run_dir / "samples.json").read_text(encoding="utf-8")
     assert '"action":1.0' in samples
     assert '"clamp_reason":"upper"' in samples
@@ -68,7 +68,7 @@ def test_nonfinite_action_policy_input_is_rejected():
 
 def test_plant_declared_policy_is_used_without_runner_range_defaults(tmp_path):
     result = run_experiment(_spec(tmp_path, "declared-policy"), DeclaredPolicyPlant(), FixedActionController(2.0))
-    assert result.status == "RUN_OK"
+    assert result.status == "QUALIFIED"
     samples = (result.run_dir / "samples.json").read_text(encoding="utf-8")
     assert '"action":1.0' in samples
 

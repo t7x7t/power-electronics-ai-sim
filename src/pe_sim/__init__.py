@@ -23,6 +23,8 @@ from .contracts import (
     PlantObservation,
     Timebase,
     ensure_schema_compatible,
+    validate_experiment_document,
+    validate_safe_identifier,
     negotiate_capabilities,
     snapshot_digest,
     snapshot_file_hash,
@@ -33,8 +35,16 @@ from .runner import ActionPolicy, AuditPolicy, BoundedActionPolicy, FiniteAction
 from .reference_plants import BuckPlant, BoostPlant
 from .qualification import BasicQualificationPlugin, qualify_samples
 from .conformance import ConformanceReport, check_controller_adapter, check_plant_adapter
-from .provenance import GitProvenance, collect_environment_provenance, collect_git_provenance
-from .artifacts import artifact_index, canonical_json, manifest_digest, package_digest, recover_abandoned_runs, scan_abandoned_runs, sha256_bytes
+from .provenance import (
+    BackendProvenanceAdapter,
+    ExecutableBackendAdapter,
+    GitProvenance,
+    collect_backend_provenance,
+    collect_environment_provenance,
+    collect_git_provenance,
+    not_assessed_backend,
+)
+from .artifacts import artifact_index, canonical_json, manifest_digest, package_digest, recover_abandoned_runs, scan_abandoned_runs, sha256_bytes, validate_run_location
 from .dirty import DirtyAnalysis, FormalComparisonError, analyze_git_worktree, require_formal_comparison
 from .checks import (
     CheckContext,
@@ -51,7 +61,22 @@ from .checks import (
     ObservationValidityPlugin,
 )
 from .environment import EnvironmentCheck, check_recommended_environment, environment_check_to_dict
-from .reproducibility import ReproducibilityReport, compare_runs
+from .reproducibility import ReproducibilityReport, RepetitionAudit, audit_repeated_runs, audit_same_machine_runs, build_cross_machine_evidence, compare_runs, cross_machine_evidence
 from .baseline import build_baseline_report, write_baseline_report
+from .postprocess import (
+    MetricDefinition,
+    MetricRegistry,
+    PostprocessEligibilityError,
+    RunEvidence,
+    UnknownMetricError,
+    build_evidence_report,
+    compare_metric_runs,
+    default_metric_registry,
+    export_metrics,
+    load_run_evidence,
+    summarize_run,
+    write_evidence_report,
+)
+from .evidence import EvidenceClassificationError, classify_report, classify_stage10, classify_summary
 
-__all__ = ["ActionRequest", "CapabilitySet", "CapabilityNegotiationError", "MissingCapabilityError", "UnsupportedCapabilityError", "CapabilityConfigurationMismatchError", "CapabilityRuntimeUnavailableError", "SimulationExecutionError", "NumericalNonconvergenceError", "BackendTimeoutError", "BackendProcessError", "SimulationCancelledError", "PlantAdvanceError", "ModelNumericalError", "ConvergenceError", "BackendTimeout", "BackendProcessFailure", "PlantExecutionError", "ExperimentSpec", "PlantObservation", "Runner", "RunResult", "RunOptions", "TimingPolicy", "RecoveryPolicy", "AuditPolicy", "ActionPolicy", "BoundedActionPolicy", "FiniteActionPolicy", "LifecycleTransitionError", "run_experiment", "Timebase", "FakePlant", "FakeLoadPlant", "FakePIController", "BuckPlant", "BoostPlant", "BasicQualificationPlugin", "qualify_samples", "ConformanceReport", "check_controller_adapter", "check_plant_adapter", "GitProvenance", "collect_git_provenance", "collect_environment_provenance", "artifact_index", "canonical_json", "manifest_digest", "package_digest", "scan_abandoned_runs", "recover_abandoned_runs", "sha256_bytes", "DirtyAnalysis", "FormalComparisonError", "analyze_git_worktree", "require_formal_comparison", "ensure_schema_compatible", "negotiate_capabilities", "snapshot_digest", "snapshot_file_hash", "validate_observation_visibility", "CheckContext", "CheckFailureError", "CheckFinding", "CheckReport", "CheckResult", "DataValidityError", "QualificationCheckError", "SafetyCheckError", "SafetyPlugin", "ValidityPlugin", "QualificationPlugin", "ObservationValidityPlugin", "EnvironmentCheck", "check_recommended_environment", "environment_check_to_dict", "ReproducibilityReport", "compare_runs", "build_baseline_report", "write_baseline_report"]
+__all__ = ["ActionRequest", "CapabilitySet", "CapabilityNegotiationError", "MissingCapabilityError", "UnsupportedCapabilityError", "CapabilityConfigurationMismatchError", "CapabilityRuntimeUnavailableError", "SimulationExecutionError", "NumericalNonconvergenceError", "BackendTimeoutError", "BackendProcessError", "SimulationCancelledError", "PlantAdvanceError", "ModelNumericalError", "ConvergenceError", "BackendTimeout", "BackendProcessFailure", "PlantExecutionError", "ExperimentSpec", "PlantObservation", "Runner", "RunResult", "RunOptions", "TimingPolicy", "RecoveryPolicy", "AuditPolicy", "ActionPolicy", "BoundedActionPolicy", "FiniteActionPolicy", "LifecycleTransitionError", "run_experiment", "Timebase", "FakePlant", "FakeLoadPlant", "FakePIController", "BuckPlant", "BoostPlant", "BasicQualificationPlugin", "qualify_samples", "ConformanceReport", "check_controller_adapter", "check_plant_adapter", "BackendProvenanceAdapter", "ExecutableBackendAdapter", "GitProvenance", "collect_backend_provenance", "collect_git_provenance", "collect_environment_provenance", "not_assessed_backend", "artifact_index", "canonical_json", "manifest_digest", "package_digest", "scan_abandoned_runs", "recover_abandoned_runs", "sha256_bytes", "validate_run_location", "DirtyAnalysis", "FormalComparisonError", "analyze_git_worktree", "require_formal_comparison", "ensure_schema_compatible", "validate_experiment_document", "validate_safe_identifier", "negotiate_capabilities", "snapshot_digest", "snapshot_file_hash", "validate_observation_visibility", "CheckContext", "CheckFailureError", "CheckFinding", "CheckReport", "CheckResult", "DataValidityError", "QualificationCheckError", "SafetyCheckError", "SafetyPlugin", "ValidityPlugin", "QualificationPlugin", "ObservationValidityPlugin", "EnvironmentCheck", "check_recommended_environment", "environment_check_to_dict", "ReproducibilityReport", "RepetitionAudit", "compare_runs", "audit_repeated_runs", "audit_same_machine_runs", "cross_machine_evidence", "build_cross_machine_evidence", "build_baseline_report", "write_baseline_report", "PostprocessEligibilityError", "UnknownMetricError", "MetricDefinition", "MetricRegistry", "default_metric_registry", "RunEvidence", "load_run_evidence", "summarize_run", "export_metrics", "compare_metric_runs", "build_evidence_report", "write_evidence_report", "EvidenceClassificationError", "classify_summary", "classify_report", "classify_stage10"]

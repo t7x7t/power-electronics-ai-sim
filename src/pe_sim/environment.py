@@ -17,7 +17,9 @@ import importlib.metadata
 import re
 import sys
 import tomllib
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
+
+from .provenance import collect_backend_provenance
 
 
 _REQ_RE = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9_.-]*)(?:\[[^]]+\])?\s*(.*)$")
@@ -181,6 +183,8 @@ def check_recommended_environment(
     pyproject_path: str | Path | None = None,
     *,
     verified_python_version: str | None = "3.12.7",
+    backend_adapters: Sequence[object] = (),
+    backend_adapter: object | None = None,
 ) -> EnvironmentCheck:
     """Compare installed versions with verified pins and supported ranges.
 
@@ -236,16 +240,39 @@ def check_recommended_environment(
         status = "pass"
     limitations: list[str] = [
         "This check validates the Python package environment only; it does not install dependencies.",
-        "Ngspice and other external simulator executables are not assessed.",
     ]
     if not verified:
         limitations.append(f"verified requirement pins were unavailable: {requirements}")
+    selected_adapters = tuple(backend_adapters)
+    if backend_adapter is not None:
+        selected_adapters += (backend_adapter,)
+    backend_records = [collect_backend_provenance(adapter) for adapter in selected_adapters]
+    if not backend_records:
+        backend = {"status": "not_assessed", "reason": "no backend adapter was supplied"}
+        limitations.append("Ngspice and other external simulator executables are not assessed.")
+    else:
+        statuses = {str(record.get("status")) for record in backend_records}
+        backend_status = "unknown" if statuses & {"unknown", "unavailable"} else "partial" if statuses & {"partial", "not_assessed", "not_declared"} else "known"
+        backend = {"status": backend_status, "records": backend_records}
+        limitations.extend(str(item) for record in backend_records for item in record.get("limitations", ()))
+        # An explicitly requested executable that cannot be queried is a
+        # failed preflight, not a successful Python-only check.  Incomplete
+        # evidence (for example missing solver settings) remains ``unknown``
+        # so exploratory callers can continue while formal gates reject it.
+        if "unavailable" in statuses:
+            failures += 1
+        elif statuses & {"unknown", "partial", "not_assessed", "not_declared"}:
+            unknowns += 1
+        if failures:
+            status = "fail"
+        elif unknowns and status == "pass":
+            status = "unknown"
     return EnvironmentCheck(
         status=status,
         python=python_result,
         packages=packages,
         sources={"verified": str(requirements.name), "supported": str(pyproject.name)},
-        backend={"status": "not_assessed", "reason": "real Ngspice/backend discovery is deferred to a reviewed adapter"},
+        backend=backend,
         limitations=tuple(limitations),
     )
 
@@ -254,4 +281,3 @@ def environment_check_to_dict(**kwargs: Any) -> dict[str, Any]:
     """Convenience wrapper for JSON/CLI callers."""
 
     return check_recommended_environment(**kwargs).to_dict()
-

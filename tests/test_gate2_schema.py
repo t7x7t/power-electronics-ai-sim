@@ -41,10 +41,7 @@ def test_run_id_cannot_be_overwritten(tmp_path):
             continue
         writer.write_json(name, {})
     writer.finalize()
-    writer2 = ArtifactWriter(tmp_path, "same")
-    for name in ArtifactWriter.REQUIRED:
-        if name == "logs/.keep":
-            continue
-        writer2.write_json(name, {})
+    # Duplicate identifiers are rejected before a second temporary run is
+    # created, so a long simulation cannot fail only at final publication.
     with pytest.raises(FileExistsError):
-        writer2.finalize()
+        ArtifactWriter(tmp_path, "same")

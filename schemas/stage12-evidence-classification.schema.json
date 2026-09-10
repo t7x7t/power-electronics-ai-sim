@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/power-electronics-ai-sim/stage12-evidence-classification.schema.json",
+  "title": "Stage 12 Evidence Classification",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "evidence_level", "runs", "limitations", "blocked_conclusions", "review_required", "review_record", "automatic_upgrade_blocked"],
+  "properties": {
+    "schema": {"const": "stage12-evidence-classification-v1"},
+    "evidence_level": {"enum": ["mechanism", "functional", "comparable", "diagnostic_only", "limited"]},
+    "runs": {"type": "array", "minItems": 1, "items": {"type": "object", "required": ["run_id", "manifest_sha256", "package_sha256", "status", "working_tree_status", "source_provenance_status", "environment_status"], "properties": {"run_id": {"type": "string", "minLength": 1}, "manifest_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}, "package_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}, "status": {"type": "string", "minLength": 1}, "working_tree_status": {"const": "clean"}, "source_provenance_status": {"const": "known"}, "environment_status": {"enum": ["known", "partial"]}}, "additionalProperties": true}},
+    "limitations": {"type": "array", "items": {"type": "string"}},
+    "blocked_conclusions": {"type": "array", "items": {"type": "string"}},
+    "review_required": {"type": "boolean"},
+    "review_record": {"type": "object"},
+    "automatic_upgrade_blocked": {"type": "array", "items": {"enum": ["physical-performance", "research-safety", "hardware-readiness"]}}
+  }
+}

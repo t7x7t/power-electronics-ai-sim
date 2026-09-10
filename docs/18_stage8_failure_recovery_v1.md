@@ -18,7 +18,9 @@ LEARNING_ELIGIBLE -> LEARNING_UPDATED | LEARNING_REJECTED
 ```
 
 The terminal states are `RUN_FAILED`, `INCOMPLETE`, `DISQUALIFIED`,
-`COMPARABLE`, `LEARNING_UPDATED`, and `LEARNING_REJECTED`. Any other transition
+`COMPARABLE`, `LEARNING_UPDATED`, and `LEARNING_REJECTED`. The learning states
+are optional extension states and are not required for a core simulation run.
+Any other transition
 raises `LifecycleTransitionError`; a caller cannot bypass the matrix by
 writing a status string. Every accepted transition records sequence, reason,
 step/time context, and the lifecycle rule version. The same matrix is copied
@@ -26,7 +28,10 @@ into `manifest.json` as `state_transition_matrix`, alongside the observed
 `state_transitions` list.
 
 `RUN_FAILED` means execution or validation failed and should not be used as a
-complete result. `INCOMPLETE` means execution was interrupted, cancelled, or
+complete result. `RUN_OK` records normal execution completion; it immediately
+transitions to `QUALIFIED` or `DISQUALIFIED` after post-run qualification.
+`QUALIFIED` is the core successful result, subject to later evidence gates.
+`INCOMPLETE` means execution was interrupted, cancelled, or
 the writer was abandoned before a normal terminal result; it is eligible for
 resume only when a validated checkpoint exists. `DISQUALIFIED` means execution
 completed but qualification rules rejected the samples. None of these states
@@ -35,9 +40,15 @@ is a successful or learning-eligible result.
 ## Transaction and abandoned-run handling
 
 `ArtifactWriter` writes each file through a flush/fsync and atomic replacement
-inside a hidden temporary directory. Publication is a directory-level atomic
-rename after required-artifact validation. A `.run-state.json` marker records
-the writer phase. `scan_abandoned_runs(output_dir)` reports leftover writer
+inside a hidden temporary directory. Before publication, it requires the final
+runtime Manifest, artifact index, and derived Manifest/package hashes to be
+present and internally recomputable in that temporary directory. Publication
+is then a directory-level atomic rename. A `.run-state.json` marker records the
+writer phase, but is transaction metadata rather than immutable evidence and
+is excluded from the artifact index/package hash because it changes from
+`READY_TO_PUBLISH` to `PUBLISHED`. A failed final-summary validation or failed
+rename leaves only an `INCOMPLETE` temporary candidate; it cannot create a
+`PUBLISHED` run. `scan_abandoned_runs(output_dir)` reports leftover writer
 directories as `INCOMPLETE`, lists missing required artifacts, and leaves them
 untouched for evidence review. It never promotes partial files to `RUN_OK`.
 

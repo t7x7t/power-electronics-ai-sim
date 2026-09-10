@@ -14,6 +14,7 @@ from pe_sim.contracts import (
     negotiate_capabilities,
     snapshot_digest,
     validate_observation_visibility,
+    validate_experiment_document,
 )
 from pe_sim.runtime import FakePIController, FakePlant, Runner
 from pe_sim.cli import main as cli_main
@@ -83,7 +84,7 @@ def test_qualified_snapshot_hash_is_checked_and_restore_is_deterministic(tmp_pat
         output_dir=str(tmp_path),
     )
     first = Runner().run(spec, FakePlant(), FakePIController())
-    assert first.status == "RUN_OK"
+    assert first.status == "QUALIFIED"
     snapshot_path.write_text("{}", encoding="utf-8")
     second = Runner().run(
         ExperimentSpec(
@@ -118,7 +119,53 @@ def test_action_request_remains_legacy_compatible():
     assert ActionRequest(0.1).target_time_s == 0.0
 
 
+def test_timebase_rejects_full_period_sample_offset():
+    with pytest.raises(ValueError, match="sample_offset_s"):
+        Timebase(control_period_s=0.001, sample_offset_s=0.001)
+
+
 def test_psfb_step_cli_accepts_command_schedule(tmp_path):
     code = cli_main(["psfb-step", "--output-dir", str(tmp_path), "--run-id", "cli-regression"])
     assert code == 0
     assert (tmp_path / "cli-regression" / "manifest.json").exists()
+
+
+def test_experiment_document_rejects_unknown_fields():
+    document = {
+        "schema_version": "0.1",
+        "experiment_id": "schema",
+        "run_id": "schema-run",
+        "plant_id": "fake",
+        "controller_id": "pi",
+        "timebase": {"unit": "s", "control_period_s": 0.001, "duration_s": 0.001},
+        "initial_state": {"mode": "cold_start"},
+        "input_schedule": [],
+        "seed": 0,
+        "contracts": {"safety": {"id": "s", "hash": "0" * 64}, "qualification": {"id": "q", "hash": "0" * 64}},
+        "output": {"directory": "runs", "retention": "keep"},
+        "typo_field": True,
+    }
+    with pytest.raises(ValueError, match="schema validation"):
+        validate_experiment_document(document)
+
+
+def test_cli_rejects_schema_invalid_config_before_run(tmp_path, capsys):
+    document = {
+        "schema_version": "0.1",
+        "experiment_id": "schema",
+        "run_id": "schema-run",
+        "plant_id": "fake",
+        "controller_id": "pi",
+        "timebase": {"unit": "s", "control_period_s": 0.001, "duration_s": 0.001},
+        "initial_state": {"mode": "cold_start"},
+        "input_schedule": [],
+        "seed": 0,
+        "contracts": {"safety": {"id": "s", "hash": "0" * 64}, "qualification": {"id": "q", "hash": "0" * 64}},
+        "output": {"directory": str(tmp_path), "retention": "keep"},
+        "unknown": "must reject",
+    }
+    config = tmp_path / "invalid.json"
+    config.write_text(json.dumps(document), encoding="utf-8")
+    assert cli_main(["run", str(config)]) == 2
+    assert "CONFIG_REJECTED" in capsys.readouterr().out
+    assert not (tmp_path / "schema-run").exists()
