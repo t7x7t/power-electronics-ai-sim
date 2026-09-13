@@ -1,0 +1,11 @@
+{
+  "schema_version":"1.0",
+  "outputs":[
+    {"output_id":"vout.final","name":"Final output voltage","kind":"scalar","source":"postprocess","definition_version":"1.0","unit":"V","dtype":"float64","payload":14.0},
+    {"output_id":"vout.response","name":"Output response","kind":"series","source":"postprocess","definition_version":"1.0","unit":"V","dtype":"float64","payload":{"time_s":[0,0.002,0.004,0.006,0.008,0.01],"values":[12,12.9,13.6,13.9,14.1,14]}},
+    {"output_id":"duty.sweep","name":"Duty sweep","kind":"table","source":"postprocess","definition_version":"1.0","fields":[{"field_id":"duty","name":"Duty","unit":"1","dtype":"float64"},{"field_id":"voltage","name":"Voltage","unit":"V","dtype":"float64"}],"payload":{"rows":[{"duty":0.4,"voltage":9.5},{"duty":0.5,"voltage":12.0},{"duty":0.6,"voltage":14.2}]}}
+  ],
+  "provenance":{"run_id":"buck-workbench-fixture","producer":"workbench.fixture"},
+  "metadata":{},
+  "fingerprint":"45c647d6bb4259fbd8f6e969028915a9630701f1ddb2fa1696286aa0c35cc66f"
+}

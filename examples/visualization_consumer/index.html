@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PE Sim External Consumer Example</title>
+<style>
+  body { font: 15px system-ui, sans-serif; margin: 2rem; color: #17202a; background: #f7f9f9; }
+  main { max-width: 960px; } h1 { margin-bottom: .25rem; } .note { color: #52616b; }
+  section { background: white; border: 1px solid #ccd1d1; border-radius: 4px; margin: 1rem 0; padding: 1rem; }
+  dl { display: grid; grid-template-columns: 11rem 1fr; gap: .4rem .8rem; } dt { font-weight: 650; }
+  table { border-collapse: collapse; width: 100%; } th, td { padding: .4rem; text-align: left; border-bottom: 1px solid #e5e7e9; }
+  code, pre { overflow-wrap: anywhere; white-space: pre-wrap; } .error { color: #b03a2e; font-weight: 650; }
+</style>
+<main>
+  <h1>External visualization consumer</h1>
+  <p class="note">Read-only example. It consumes only the three Stage 11 JSON contracts.</p>
+  <p id="status">Loading contracts...</p>
+  <section><h2>Provenance</h2><dl id="provenance"></dl></section>
+  <section><h2>Topology</h2><div id="topology"></div></section>
+  <section><h2>Latest registered values</h2><pre id="latest"></pre></section>
+  <section><h2>Scalar outputs</h2><table><thead><tr><th>Name</th><th>Value</th><th>Unit</th></tr></thead><tbody id="outputs"></tbody></table></section>
+</main>
+<script>
+(() => {
+  const expected = { topology: ["schema", "topology-descriptor-v1"], trace: ["schema_version", "1.0"], outputs: ["schema_version", "1.0"] };
+  const params = new URLSearchParams(location.search);
+  const service = params.get("service");
+  const run = params.get("run");
+  const directory = params.get("directory") || "../../workbench/public/fixtures/run-demo";
+  const source = service && run ? `${service.replace(/\/$/, "")}/v1/runs/${encodeURIComponent(run)}` : directory.replace(/\/$/, "");
+  const locations = Object.fromEntries(Object.keys(expected).map(plane => [plane, `${source}/${plane}.json`]).map(([plane, url]) => service && run ? [plane, url.replace(/\.json$/, "")] : [plane, url]));
+  const text = (id, value) => document.querySelector(id).textContent = value;
+  const fail = message => { const node = document.querySelector("#status"); node.className = "error"; node.textContent = message; };
+  Promise.all(Object.entries(locations).map(async ([plane, url]) => [plane, await (await fetch(url, { credentials: "omit" })).json()]))
+    .then(entries => {
+      const data = Object.fromEntries(entries), ids = new Set();
+      for (const [plane, [field, version]] of Object.entries(expected)) {
+        if (data[plane][field] !== version) throw new Error(`${plane} is not a supported v1 contract`);
+        if (plane === "topology") {
+          if (!data.topology.fingerprint) throw new Error("topology is missing its fingerprint");
+          continue;
+        }
+        if (!data[plane].provenance?.run_id) throw new Error(`${plane} is missing provenance.run_id`);
+        ids.add(data[plane].provenance.run_id);
+      }
+      if (ids.size !== 1) throw new Error("contracts do not share provenance.run_id");
+      const provenance = data.trace.provenance;
+      document.querySelector("#provenance").innerHTML = ["run_id", "producer", "source_commit", "manifest_sha256", "package_sha256"].map(key => `<dt>${key}</dt><dd><code>${provenance[key] || "unknown"}</code></dd>`).join("");
+      const components = data.topology.components || [];
+      text("#topology", `${components.length} components: ${components.map(component => component.component_id).join(", ")}`);
+      const samples = data.trace.samples || [];
+      text("#latest", JSON.stringify(samples.at(-1)?.values || {}, null, 2));
+      document.querySelector("#outputs").innerHTML = (data.outputs.outputs || []).filter(item => item.kind === "scalar").map(item => `<tr><td>${item.name}</td><td>${item.payload}</td><td>${item.unit || ""}</td></tr>`).join("");
+      text("#status", `Loaded ${ids.values().next().value} from ${service && run ? "local service" : "contract files"}.`);
+    })
+    .catch(error => fail(`Could not load contracts: ${error.message}`));
+})();
+</script>
+</html>

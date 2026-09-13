@@ -1,0 +1,142 @@
+{
+  "components": [
+    {
+      "component_id": "vin_source",
+      "kind": "voltage_source",
+      "parameters": {
+        "voltage_v": 12.0
+      },
+      "ports": [
+        {
+          "direction": "output",
+          "net_id": "vin",
+          "port_id": "positive"
+        },
+        {
+          "direction": "passive",
+          "net_id": "gnd",
+          "port_id": "negative"
+        }
+      ],
+      "symbol_id": "source.dc"
+    },
+    {
+      "component_id": "switch",
+      "kind": "averaged_switch",
+      "parameters": {},
+      "ports": [
+        {
+          "direction": "input",
+          "net_id": "vin",
+          "port_id": "input"
+        },
+        {
+          "direction": "output",
+          "net_id": "sw",
+          "port_id": "output"
+        },
+        {
+          "direction": "control",
+          "net_id": "duty",
+          "port_id": "control"
+        }
+      ],
+      "symbol_id": "switch.averaged"
+    },
+    {
+      "component_id": "inductor",
+      "kind": "inductor",
+      "parameters": {
+        "inductance_h": 0.0001
+      },
+      "ports": [
+        {
+          "direction": "passive",
+          "net_id": "sw",
+          "port_id": "input"
+        },
+        {
+          "direction": "passive",
+          "net_id": "vout",
+          "port_id": "output"
+        }
+      ],
+      "symbol_id": "inductor"
+    },
+    {
+      "component_id": "capacitor",
+      "kind": "capacitor",
+      "parameters": {
+        "capacitance_f": 0.00047
+      },
+      "ports": [
+        {
+          "direction": "passive",
+          "net_id": "vout",
+          "port_id": "positive"
+        },
+        {
+          "direction": "passive",
+          "net_id": "gnd",
+          "port_id": "negative"
+        }
+      ],
+      "symbol_id": "capacitor"
+    },
+    {
+      "component_id": "load",
+      "kind": "resistor_load",
+      "parameters": {
+        "resistance_ohm": 10.0
+      },
+      "ports": [
+        {
+          "direction": "passive",
+          "net_id": "vout",
+          "port_id": "positive"
+        },
+        {
+          "direction": "passive",
+          "net_id": "gnd",
+          "port_id": "negative"
+        }
+      ],
+      "symbol_id": "resistor"
+    }
+  ],
+  "descriptor_version": "1.0",
+  "fingerprint": "93e8e3446155bd3bd004d3a262dfa89c1124609c57990c3321ad650c37effd77",
+  "metadata": {
+    "model_kind": "ideal_averaged_reference",
+    "model_level": "L1"
+  },
+  "nets": [
+    {
+      "kind": "electrical",
+      "label": "Vin",
+      "net_id": "vin"
+    },
+    {
+      "kind": "electrical",
+      "label": "Switch node",
+      "net_id": "sw"
+    },
+    {
+      "kind": "electrical",
+      "label": "Vout",
+      "net_id": "vout"
+    },
+    {
+      "kind": "reference",
+      "label": "GND",
+      "net_id": "gnd"
+    },
+    {
+      "kind": "control",
+      "label": "Duty",
+      "net_id": "duty"
+    }
+  ],
+  "schema": "topology-descriptor-v1",
+  "topology_id": "buck"
+}

@@ -15,11 +15,14 @@ import pytest
 
 from pe_sim import ExperimentSpec, FakePIController, Timebase, check_controller_adapter, check_plant_adapter
 from pe_sim.artifacts import manifest_digest, package_digest
-from pe_sim.evidence import classify_summary
+from pe_sim.dirty import DirtyAnalysis
+from pe_sim.evidence import classify_stage10
 from pe_sim.postprocess import summarize_run
+from pe_sim.provenance import GitProvenance
 from pe_sim.reference_plants import BoostPlant, BuckPlant
 from pe_sim.runtime import Runner
 from pe_sim.cli import main as cli_main
+import pe_sim.runtime as runtime_module
 
 
 def _plant(factory, *, step: float = 2e-6, load: float = 10.0):
@@ -32,15 +35,65 @@ def _plant(factory, *, step: float = 2e-6, load: float = 10.0):
     )
 
 
-def _spec(tmp_path: Path, plant, run_id: str, *, duration: float = 4e-5) -> ExperimentSpec:
+def _spec(
+    tmp_path: Path,
+    plant,
+    run_id: str,
+    *,
+    duration: float = 4e-5,
+    input_schedule: tuple[dict[str, float], ...] = (),
+) -> ExperimentSpec:
     return ExperimentSpec(
         "stage15-l1",
         run_id,
         plant.topology,
         "pi",
         Timebase(duration_s=duration, control_period_s=1e-5),
+        input_schedule=input_schedule,
         output_dir=str(tmp_path),
         seed=17,
+    )
+
+
+def _run_reference_with_clean_provenance(tmp_path: Path, factory, run_id: str, monkeypatch):
+    """Publish a real reference run under controlled test provenance.
+
+    Stage 10 correctly rejects the developer's dirty worktree.  This helper
+    changes only the Runner's process-local provenance collectors so the
+    integration test can exercise the published-package gate with a real
+    Buck/Boost artifact, rather than a hand-written package fixture.
+    """
+
+    observed_git = runtime_module.collect_git_provenance()
+    observed_worktree = runtime_module.analyze_git_worktree()
+    clean_git = GitProvenance(
+        source_commit=observed_git.source_commit,
+        branch=observed_git.branch,
+        working_tree_status="clean",
+        status="known",
+        limitations=(),
+    )
+    clean_worktree = DirtyAnalysis(
+        status="clean",
+        source_commit=clean_git.source_commit,
+        branch=clean_git.branch,
+        repo_root=observed_worktree.repo_root,
+        paths=(),
+        paths_by_category={
+            category: ()
+            for category in ("source", "config", "tests", "docs", "generated", "other")
+        },
+        reasons=(),
+        suggestions=(),
+    )
+    monkeypatch.setattr(runtime_module, "collect_git_provenance", lambda: clean_git)
+    monkeypatch.setattr(runtime_module, "analyze_git_worktree", lambda: clean_worktree)
+    plant = _plant(factory, step=1e-6)
+    return Runner().run(
+        _spec(tmp_path, plant, run_id),
+        plant,
+        FakePIController(kp=0.2),
+        checkpoint_interval_steps=2,
     )
 
 
@@ -112,9 +165,55 @@ def test_runner_lifecycle_checkpoint_and_package_hashes(tmp_path, factory):
     assert result.status == "QUALIFIED"
     manifest = json.loads((result.run_dir / "manifest.json").read_text(encoding="utf-8"))
     transitions = json.loads((result.run_dir / "state_transitions.json").read_text(encoding="utf-8"))
+    audit = json.loads((result.run_dir / "audit.json").read_text(encoding="utf-8"))
     assert [(item["from"], item["to"]) for item in transitions] == [
         ("CREATED", "RUNNING"), ("RUNNING", "RUN_OK"), ("RUN_OK", "QUALIFIED")
     ]
+    cycle = [
+        "plant.observe",
+        "safety.check_observation",
+        "observation.observation-validity",
+        "controller.observe",
+        "safety.project_action",
+        "plant.advance",
+        "plant.observe",
+        "advance_observation.observation-validity",
+    ]
+    expected_order = [
+        "plant.capabilities",
+        "plant.reset",
+        "controller.reset",
+        "plant.observe",
+        "initial_observation.observation-validity",
+        *cycle,
+        *cycle,
+        "plant.snapshot",
+        *cycle,
+        *cycle,
+        "plant.snapshot",
+        "qualification.check",
+        "postrun.basic-sample-qualification",
+    ]
+    assert audit["call_order"] == expected_order
+    assert [row["call_id"] for row in audit["calls"]] == list(range(1, len(audit["calls"]) + 1))
+    assert all(row["ok"] is True for row in audit["calls"])
+    assert audit["call_counts"] == {
+        "plant.capabilities": 1,
+        "plant.reset": 1,
+        "controller.reset": 1,
+        "plant.observe": 9,
+        "initial_observation.observation-validity": 1,
+        "safety.check_observation": 4,
+        "observation.observation-validity": 4,
+        "controller.observe": 4,
+        "safety.project_action": 4,
+        "plant.advance": 4,
+        "advance_observation.observation-validity": 4,
+        "plant.snapshot": 2,
+        "qualification.check": 1,
+        "postrun.basic-sample-qualification": 1,
+    }
+    assert manifest["audit"]["call_count"] == len(audit["calls"])
     assert (result.run_dir / "checkpoint.json").is_file()
     assert manifest["status"] == "QUALIFIED"
     assert manifest["manifest_sha256"] == manifest_digest(manifest)
@@ -123,7 +222,7 @@ def test_runner_lifecycle_checkpoint_and_package_hashes(tmp_path, factory):
 
 
 @pytest.mark.parametrize("factory", [BuckPlant, BoostPlant])
-def test_interrupted_reference_run_resumes(tmp_path, factory):
+def test_interrupted_reference_run_resumes_to_uninterrupted_baseline(tmp_path, factory):
     source_plant = _plant(factory, step=1e-6)
     interrupted = Runner().run(
         _spec(tmp_path, source_plant, f"{source_plant.topology}-source"),
@@ -140,9 +239,63 @@ def test_interrupted_reference_run_resumes(tmp_path, factory):
         FakePIController(kp=0.2),
         resume_from=interrupted.run_dir,
     )
+    baseline_plant = _plant(factory, step=1e-6)
+    baseline = Runner().run(
+        _spec(tmp_path, baseline_plant, f"{baseline_plant.topology}-baseline"),
+        baseline_plant,
+        FakePIController(kp=0.2),
+    )
     assert resumed.status == "QUALIFIED"
-    assert json.loads((resumed.run_dir / "samples.json").read_text())
-    assert json.loads((resumed.run_dir / "manifest.json").read_text())["recovery"]["resumed"] is True
+    assert baseline.status == "QUALIFIED"
+    assert json.loads((resumed.run_dir / "samples.json").read_text()) == json.loads(
+        (baseline.run_dir / "samples.json").read_text()
+    )
+    interrupted_manifest = json.loads((interrupted.run_dir / "manifest.json").read_text())
+    resumed_manifest = json.loads((resumed.run_dir / "manifest.json").read_text())
+    baseline_manifest = json.loads((baseline.run_dir / "manifest.json").read_text())
+    assert interrupted_manifest["status"] == "INCOMPLETE"
+    assert resumed_manifest["recovery"]["resumed"] is True
+    assert resumed_manifest["recovery"]["source"]["status"] == "INCOMPLETE"
+    assert resumed_manifest["recovery"]["source"]["manifest_sha256"] == interrupted_manifest["manifest_sha256"]
+    for name in ("plant", "controller"):
+        assert resumed_manifest[name]["hash"] == baseline_manifest[name]["hash"]
+    assert resumed_manifest["source_commit"] == baseline_manifest["source_commit"]
+    assert resumed_manifest["manifest_sha256"] != baseline_manifest["manifest_sha256"]
+    assert resumed_manifest["package_sha256"] != baseline_manifest["package_sha256"]
+    for manifest in (interrupted_manifest, resumed_manifest, baseline_manifest):
+        assert manifest["manifest_sha256"] == manifest_digest(manifest)
+        assert manifest["package_sha256"] == package_digest(
+            interrupted.run_dir if manifest is interrupted_manifest else resumed.run_dir if manifest is resumed_manifest else baseline.run_dir,
+            manifest,
+        )
+
+
+@pytest.mark.parametrize("factory", [BuckPlant, BoostPlant])
+def test_runner_applies_scheduled_input_voltage_update(tmp_path, factory):
+    nominal_plant = _plant(factory, step=1e-6)
+    nominal = Runner().run(
+        _spec(tmp_path, nominal_plant, f"{nominal_plant.topology}-nominal"),
+        nominal_plant,
+        FakePIController(kp=0.2),
+        checkpoint_interval_steps=1,
+    )
+    scheduled_plant = _plant(factory, step=1e-6)
+    schedule = ({"time_s": 0.0, "vin_v": 12.0}, {"time_s": 2e-5, "vin_v": 9.0})
+    scheduled = Runner().run(
+        _spec(tmp_path, scheduled_plant, f"{scheduled_plant.topology}-vin-step", input_schedule=schedule),
+        scheduled_plant,
+        FakePIController(kp=0.2),
+        checkpoint_interval_steps=1,
+    )
+    assert nominal.status == scheduled.status == "QUALIFIED"
+    scheduled_samples = json.loads((scheduled.run_dir / "samples.json").read_text())
+    nominal_samples = json.loads((nominal.run_dir / "samples.json").read_text())
+    checkpoint = json.loads((scheduled.run_dir / "checkpoint.json").read_text())
+    config = json.loads((scheduled.run_dir / "config.snapshot.json").read_text())
+    assert config["input_schedule"] == list(schedule)
+    assert checkpoint["plant_snapshot"]["input_voltage_v"] == pytest.approx(9.0)
+    assert scheduled_samples[:3] == nominal_samples[:3]
+    assert scheduled_samples[3]["vout"] != pytest.approx(nominal_samples[3]["vout"])
 
 
 @pytest.mark.parametrize("factory", [BuckPlant, BoostPlant])
@@ -157,14 +310,22 @@ def test_identical_reference_runs_have_identical_samples(tmp_path, factory):
     assert first_manifest["controller"]["hash"] == second_manifest["controller"]["hash"]
 
 
-def test_stage10_to_stage12_evidence_chain(tmp_path):
-    # A standalone published-package fixture keeps this acceptance test
-    # independent from the current worktree's exploratory dirty status.
-    from test_stage10_restricted_postprocess import _published_run
-
-    run = _published_run(tmp_path / "published")
-    summary = summarize_run(run)
-    classification = classify_summary(summary)
+@pytest.mark.parametrize("factory", [BuckPlant, BoostPlant])
+def test_stage10_to_stage12_evidence_chain_uses_published_reference_run(tmp_path, factory, monkeypatch):
+    result = _run_reference_with_clean_provenance(
+        tmp_path,
+        factory,
+        f"{factory.topology}-stage10-stage12",
+        monkeypatch,
+    )
+    assert result.status == "QUALIFIED"
+    published_state = json.loads((result.run_dir / ".run-state.json").read_text(encoding="utf-8"))
+    manifest = json.loads((result.run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert published_state["status"] == "PUBLISHED"
+    assert manifest["plant"]["identity"]["topology"] == factory.topology
+    assert manifest["plant"]["identity"]["implementation"]["class"] == factory.__name__
+    summary = summarize_run(result.run_dir)
+    classification = classify_stage10(summary)
     assert classification["evidence_level"] == "functional"
     assert classification["runs"][0]["run_id"] == summary["provenance"]["run_id"]
     assert classification["runs"][0]["package_sha256"] == summary["provenance"]["package_sha256"]

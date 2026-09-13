@@ -1,0 +1,132 @@
+{
+  "metadata": {
+    "derived_from": "samples.json",
+    "dropped_count": 0,
+    "source_sample_schema": "samples-v1"
+  },
+  "provenance": {
+    "manifest_sha256": "6532dd34a5f54f0e7cdec812091be32f600705760e602a5cc2553813370a8226",
+    "metadata": {
+      "derived_from": "published_run_package",
+      "evidence_level": "functional",
+      "integrity": "verified",
+      "run_mode": "exploratory",
+      "run_status": "QUALIFIED",
+      "working_tree_status": "dirty"
+    },
+    "package_sha256": "819f0796faa3e19985eacb2f5335f5d09fa6a69f43e28289e574da4b50e6c8ba",
+    "producer": "pe_sim.workbench_export.v1",
+    "run_id": "workbench-buck-demo-20260913",
+    "source_commit": "971ec51daf88d2968463b6decb8ade533dad5bb1"
+  },
+  "samples": [
+    {
+      "time_s": 0.0,
+      "values": {
+        "controller.duty": 0.2,
+        "plant.inductor_current": 0.0,
+        "plant.vout": 0.0
+      }
+    },
+    {
+      "time_s": 1.0000000000000003e-05,
+      "values": {
+        "controller.duty": 0.19948981411968342,
+        "plant.inductor_current": 0.23991494791321208,
+        "plant.vout": 0.002550929401582996
+      }
+    },
+    {
+      "time_s": 2.0000000000000012e-05,
+      "values": {
+        "controller.duty": 0.197963088161751,
+        "plant.inductor_current": 0.47870815578818765,
+        "plant.vout": 0.01018455919124504
+      }
+    },
+    {
+      "time_s": 3.0000000000000018e-05,
+      "values": {
+        "controller.duty": 0.19543042209826345,
+        "plant.inductor_current": 0.7146538504267981,
+        "plant.vout": 0.02284788950868275
+      }
+    },
+    {
+      "time_s": 3.999999999999999e-05,
+      "values": {
+        "controller.duty": 0.19190968838145955,
+        "plant.inductor_current": 0.9460461008664827,
+        "plant.vout": 0.040451558092702344
+      }
+    },
+    {
+      "time_s": 4.999999999999996e-05,
+      "values": {
+        "controller.duty": 0.18742590589553632,
+        "plant.inductor_current": 1.1712111522602575,
+        "plant.vout": 0.06287047052231837
+      }
+    },
+    {
+      "time_s": 5.9999999999999934e-05,
+      "values": {
+        "controller.duty": 0.18201106222154143,
+        "plant.inductor_current": 1.3885195325081499,
+        "plant.vout": 0.08994468889229294
+      }
+    },
+    {
+      "time_s": 6.999999999999991e-05,
+      "values": {
+        "controller.duty": 0.17570388547762472,
+        "plant.inductor_current": 1.5963978440725008,
+        "plant.vout": 0.1214805726118765
+      }
+    },
+    {
+      "time_s": 7.999999999999988e-05,
+      "values": {
+        "controller.duty": 0.1685495673617544,
+        "plant.inductor_current": 1.7933401556470367,
+        "plant.vout": 0.15725216319122814
+      }
+    },
+    {
+      "time_s": 8.999999999999986e-05,
+      "values": {
+        "controller.duty": 0.1605994393772562,
+        "plant.inductor_current": 1.9779189112045317,
+        "plant.vout": 0.19700280311371893
+      }
+    }
+  ],
+  "sampling_policy": {
+    "include_initial": true,
+    "mode": "every_step"
+  },
+  "schema_version": "1.0",
+  "signals": [
+    {
+      "dtype": "float64",
+      "name": "Output voltage",
+      "signal_id": "plant.vout",
+      "source": "measurement",
+      "unit": "V"
+    },
+    {
+      "dtype": "float64",
+      "name": "Inductor current",
+      "signal_id": "plant.inductor_current",
+      "source": "measurement",
+      "unit": "A"
+    },
+    {
+      "dtype": "float64",
+      "name": "Applied duty command",
+      "signal_id": "controller.duty",
+      "source": "action",
+      "unit": "1"
+    }
+  ]
+}

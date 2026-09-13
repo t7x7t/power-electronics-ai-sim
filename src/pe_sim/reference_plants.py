@@ -50,6 +50,27 @@ class _AveragedConverter:
     def capabilities(self) -> set[str]:
         return {"continuous_time", "external_input", "snapshot"}
 
+    def backend_provenance(self) -> dict[str, Any]:
+        """Identify the deterministic, project-owned Python reference backend.
+
+        This is not an Ngspice or physical-solver claim.  The solver identity
+        is the reviewed source implementation plus its deterministic numerical
+        settings, which is sufficient for formal comparison of this L1 model.
+        """
+        return {
+            "status": "known",
+            "name": "pe_sim.ideal_averaged_python",
+            "version": "reference-v1",
+            "solver_settings": {
+                "integrator": "rk4",
+                "substep_s": self.integration_step_s,
+                "floating_point": "IEEE-754-binary64",
+            },
+            "limitations": [
+                "project-owned deterministic Python reference; not Ngspice or a physical device solver"
+            ],
+        }
+
     def action_policy(self) -> BoundedActionPolicy:
         """Declare the duty-ratio actuator range for converter references."""
         return BoundedActionPolicy(0.0, 1.0, name="duty")
@@ -88,6 +109,10 @@ class _AveragedConverter:
             json.dumps(identity, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
         ).hexdigest()
         return identity
+
+    def topology_descriptor(self):
+        from .topology import export_topology_descriptor
+        return export_topology_descriptor(self)
 
     def reset(self, initial_state: Mapping[str, Any]) -> Mapping[str, Any]:
         state = dict(initial_state or {})

@@ -1,9 +1,17 @@
 # v0 MVP 实施路线与验收标准
 
+**状态说明（2026-09-13）**：本文保留 v0 早期建设路线和 Gate 的设计依据，
+不是当前对外发布范围的唯一来源。当前最小本地发布的支持矩阵、已验证参考对象、
+明确排除项和发布 Gate 以
+`docs/27_minimum_local_release_scope_v0.md` 为准。本文中早期的 PSFB
+“参考接入”仅表示当时的迁移规划，不能理解为已迁移或已验证的 PSFB 电路模型。
+
 ## 1. MVP 目标
 
-在全新环境中，用一个命令运行 PSFB 理想模型的负载阶跃，并得到可校验的 Manifest、
-波形、指标和明确状态。MVP 不包含器件、电热、在线学习、硬件接口或自动参数优化。
+在全新环境中，用一个命令运行项目自有的 L1 Buck 或 Boost 理想平均参考模型，并得到
+可校验的 Manifest、波形、指标和明确状态。`psfb-step` 保留为 fake backend 的
+契约 smoke fixture，不是 PSFB 理想模型。MVP 不包含器件、电热、在线学习、硬件接口
+或自动参数优化。
 
 ## 2. 任务顺序
 
@@ -13,7 +21,7 @@
 | A1 | 公共类型和单位 | `pe_sim/contracts` | fake Plant/Controller 契约测试通过 |
 | A2 | Runner 最小闭环 | `pe_sim/runtime` | reset、采样、动作、推进顺序可审计 |
 | A3 | 结果写入 | `pe_sim/artifacts`、Manifest Schema | 成功、失败、未完成均生成合法状态 |
-| A4 | PSFB 参考接入 | `examples/psfb_pi_step` | 一条命令生成完整运行目录 |
+| A4 | 参考适配器接入 | `examples/buck_pi_step`、`examples/boost_pi_step` | 一条命令生成完整运行目录 |
 | A5 | 资格与安全 | `pe_sim/qualification`、`pe_sim/safety` | 非有限值、越界、合同不匹配 fail-closed |
 | A6 | 可复现性 | 重跑脚本和回归基线 | 相同输入可复现，dirty 基线被拒绝 |
 | A7 | 第二对象验证 | 第二种简单拓扑或独立 fake backend | 公共接口不依赖 PSFB 字段 |
@@ -50,8 +58,9 @@ fake Plant + fake Controller 完成闭环；时间倒退、缺失能力、非法
 
 ### Gate 3：参考实验
 
-陌生用户可从 README 创建环境并运行 PSFB PI 负载阶跃；结果可重复，图形和指标能回到
-同一 run；结论带证据等级和限制。
+陌生用户可从 README 创建环境并运行 Buck 或 Boost PI 参考负载阶跃；结果可重复，
+图形和指标能回到同一 run；结论带证据等级和限制。PSFB 迁移仍须单独完成来源、
+许可证和技术审查。
 
 ### Gate 4：泛化检查
 

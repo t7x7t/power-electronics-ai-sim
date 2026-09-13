@@ -19,6 +19,21 @@ support or response. The MIT License and its warranty/liability terms apply.
 Unreviewed material from `D:\PySpice` and other third-party sources is not
 relicensed by this repository.
 
+## Minimum local release scope
+
+The first shareable release is a deliberately narrow, local, source-distributed
+simulation-infrastructure slice. Its supported Python orchestration, verified
+L1 Buck/Boost reference adapters, read-only visualization contracts, constrained
+local visualization service, reference workbench, exclusions, run-status
+meanings, and release gates are defined in
+[docs/27_minimum_local_release_scope_v0.md](docs/27_minimum_local_release_scope_v0.md).
+In particular, `QUALIFIED` is only an automated per-run qualification state; it
+does not establish physical correctness, hardware safety, product readiness, or
+maintainer approval.
+The admitted version ranges, exact locally verified Python/Node/npm toolchain,
+and clean-install policy are defined separately in
+[docs/28_release_toolchain_policy_v0.md](docs/28_release_toolchain_policy_v0.md).
+
 ## Generic Runner entry point
 
 The low-friction Python entry point uses the standard audited runner defaults:
@@ -54,9 +69,11 @@ and control algorithms remain in Plant/Controller adapters.
 
 ## v0 的明确范围
 
-v0 只承诺一个可运行的纵向切片：PSFB 理想 Plant、PI Controller、负载阶跃、
-统一 Runner、Manifest 和最小可复现实验。物理、器件、电热、学习和第二种拓扑
-属于后续扩展，不能在 v0 验收中隐式加入。
+v0 以项目自有的理想平均 Buck/Boost L1 参考适配器、统一 Runner、Manifest、
+受限后处理和只读可视化数据边界作为最小可发布切片。`psfb-step` 仍保留为 fake
+backend 的契约 smoke fixture，而不是 PSFB 电路模型。完整支持矩阵和明确排除项以
+`docs/27_minimum_local_release_scope_v0.md` 为准；物理、器件、电热、真实
+PySpice/Ngspice、PSFB/LLC、学习和硬件结论均不因该切片而被隐式纳入。
 
 ## 最小运行切片
 

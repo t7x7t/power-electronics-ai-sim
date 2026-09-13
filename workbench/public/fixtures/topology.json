@@ -1,0 +1,15 @@
+{
+  "schema": "topology-descriptor-v1",
+  "descriptor_version": "1.0",
+  "topology_id": "buck",
+  "components": [
+    {"component_id":"vin_source","kind":"voltage_source","parameters":{"voltage_v":24},"symbol_id":"source.dc","ports":[{"port_id":"positive","net_id":"vin","direction":"output"},{"port_id":"negative","net_id":"gnd","direction":"passive"}]},
+    {"component_id":"switch","kind":"averaged_switch","parameters":{},"symbol_id":"switch.averaged","ports":[{"port_id":"input","net_id":"vin","direction":"input"},{"port_id":"output","net_id":"sw","direction":"output"},{"port_id":"control","net_id":"duty","direction":"control"}]},
+    {"component_id":"inductor","kind":"inductor","parameters":{"inductance_h":0.0001},"symbol_id":"inductor","ports":[{"port_id":"input","net_id":"sw","direction":"passive"},{"port_id":"output","net_id":"vout","direction":"passive"}]},
+    {"component_id":"capacitor","kind":"capacitor","parameters":{"capacitance_f":0.0001},"symbol_id":"capacitor","ports":[{"port_id":"positive","net_id":"vout","direction":"passive"},{"port_id":"negative","net_id":"gnd","direction":"passive"}]},
+    {"component_id":"load","kind":"resistor_load","parameters":{"resistance_ohm":4},"symbol_id":"resistor","ports":[{"port_id":"positive","net_id":"vout","direction":"passive"},{"port_id":"negative","net_id":"gnd","direction":"passive"}]}
+  ],
+  "nets":[{"net_id":"vin","label":"Vin","kind":"electrical"},{"net_id":"sw","label":"Switch node","kind":"electrical"},{"net_id":"vout","label":"Vout","kind":"electrical"},{"net_id":"gnd","label":"GND","kind":"reference"},{"net_id":"duty","label":"Duty","kind":"control"}],
+  "metadata":{"model_kind":"ideal_averaged_reference","model_level":"L1"},
+  "fingerprint":"9c7c88b88f7ca37c28b8508838f1e219ce8481126d9f4d343b24e154a0b39b9a"
+}

@@ -121,6 +121,21 @@ class FakePIController:
     def manifest_identity(self) -> dict[str, Any]:
         return {"kind": "fixture_controller", "module": type(self).__module__, "class": type(self).__qualname__, "parameters": {"kp": self.kp}, "capabilities": []}
 
+    def backend_provenance(self) -> dict[str, Any]:
+        """Declare the project-owned deterministic reference-controller path.
+
+        The environment collector treats every participating component as a
+        provenance source.  This records the controller's numerical identity
+        without pretending it is an external circuit solver.
+        """
+        return {
+            "status": "known",
+            "name": "pe_sim.reference_pi_controller",
+            "version": "reference-v1",
+            "solver_settings": {"arithmetic": "IEEE-754-binary64", "state": "stateless-proportional"},
+            "limitations": ["project-owned reference controller; not a tuning or deployment claim"],
+        }
+
     def reset(self, controller_state: Mapping[str, Any] | None, seed: int) -> Mapping[str, Any]:
         del seed
         self.state = dict(controller_state or {})

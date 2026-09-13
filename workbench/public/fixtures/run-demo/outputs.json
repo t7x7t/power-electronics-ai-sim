@@ -1,0 +1,125 @@
+{
+  "fingerprint": "4d2ebc26156a2b8ff5533b3c7bfd2556731b58c9b724c4d32ab5286bed24fe7c",
+  "metadata": {
+    "derived_from": "samples.json",
+    "source_sample_count": 10
+  },
+  "outputs": [
+    {
+      "definition_version": "1.0",
+      "dtype": "float64",
+      "kind": "scalar",
+      "name": "Final output voltage",
+      "output_id": "vout.final",
+      "payload": 0.19700280311371893,
+      "source": "samples",
+      "unit": "V"
+    },
+    {
+      "definition_version": "1.0",
+      "dtype": "float64",
+      "kind": "scalar",
+      "name": "Final inductor current",
+      "output_id": "inductor_current.final",
+      "payload": 1.9779189112045317,
+      "source": "samples",
+      "unit": "A"
+    },
+    {
+      "definition_version": "1.0",
+      "dtype": "float64",
+      "kind": "scalar",
+      "name": "Final applied duty command",
+      "output_id": "duty.final",
+      "payload": 0.1605994393772562,
+      "source": "samples",
+      "unit": "1"
+    },
+    {
+      "definition_version": "1.0",
+      "dtype": "float64",
+      "kind": "series",
+      "name": "Output-voltage response",
+      "output_id": "vout.response",
+      "payload": {
+        "time_s": [
+          0.0,
+          1.0000000000000003e-05,
+          2.0000000000000012e-05,
+          3.0000000000000018e-05,
+          3.999999999999999e-05,
+          4.999999999999996e-05,
+          5.9999999999999934e-05,
+          6.999999999999991e-05,
+          7.999999999999988e-05,
+          8.999999999999986e-05
+        ],
+        "values": [
+          0.0,
+          0.002550929401582996,
+          0.01018455919124504,
+          0.02284788950868275,
+          0.040451558092702344,
+          0.06287047052231837,
+          0.08994468889229294,
+          0.1214805726118765,
+          0.15725216319122814,
+          0.19700280311371893
+        ]
+      },
+      "source": "samples",
+      "unit": "V"
+    },
+    {
+      "definition_version": "1.0",
+      "dtype": "float64",
+      "kind": "series",
+      "name": "Inductor-current response",
+      "output_id": "inductor_current.response",
+      "payload": {
+        "time_s": [
+          0.0,
+          1.0000000000000003e-05,
+          2.0000000000000012e-05,
+          3.0000000000000018e-05,
+          3.999999999999999e-05,
+          4.999999999999996e-05,
+          5.9999999999999934e-05,
+          6.999999999999991e-05,
+          7.999999999999988e-05,
+          8.999999999999986e-05
+        ],
+        "values": [
+          0.0,
+          0.23991494791321208,
+          0.47870815578818765,
+          0.7146538504267981,
+          0.9460461008664827,
+          1.1712111522602575,
+          1.3885195325081499,
+          1.5963978440725008,
+          1.7933401556470367,
+          1.9779189112045317
+        ]
+      },
+      "source": "samples",
+      "unit": "A"
+    }
+  ],
+  "provenance": {
+    "manifest_sha256": "6532dd34a5f54f0e7cdec812091be32f600705760e602a5cc2553813370a8226",
+    "metadata": {
+      "derived_from": "published_run_package",
+      "evidence_level": "functional",
+      "integrity": "verified",
+      "run_mode": "exploratory",
+      "run_status": "QUALIFIED",
+      "working_tree_status": "dirty"
+    },
+    "package_sha256": "819f0796faa3e19985eacb2f5335f5d09fa6a69f43e28289e574da4b50e6c8ba",
+    "producer": "pe_sim.workbench_export.v1",
+    "run_id": "workbench-buck-demo-20260913",
+    "source_commit": "971ec51daf88d2968463b6decb8ade533dad5bb1"
+  },
+  "schema_version": "1.0"
+}

@@ -31,17 +31,27 @@ limits, control hardware, or an Ngspice backend.
 | S15-03 | Numerical integration | Halving the fixed RK4 substep stays within the declared L1 tolerance | Required | `test_step_halving_is_numerically_stable` |
 | S15-04 | Parameter boundary | Non-finite/non-positive component parameters, invalid duty, and Boost duty 1 are rejected | Required | `test_reference_parameter_and_duty_boundaries_fail_closed` |
 | S15-05 | Sweep and long run | A small duty sweep remains finite and a bounded cold-start run reaches finite observations | Required | `test_small_duty_sweep_and_long_run_remain_finite` |
-| S15-06 | Runner lifecycle | Qualified completion records the expected state path and audited calls | Required | `test_runner_lifecycle_checkpoint_and_package_hashes` |
-| S15-07 | Recovery | An interrupted Buck/Boost run resumes from a checkpoint and reaches `QUALIFIED` | Required | `test_interrupted_reference_run_resumes` |
+| S15-06 | Runner lifecycle | Qualified completion records the expected state path; `audit.json` call order, call counts, contiguous call identifiers, success flags, and Manifest count all agree | Required | `test_runner_lifecycle_checkpoint_and_package_hashes` |
+| S15-07 | Recovery | An interrupted Buck/Boost run resumes from a checkpoint to a `QUALIFIED` package whose samples exactly equal an uninterrupted baseline; component and recovery hashes are checked with their correct equality boundaries | Required | `test_interrupted_reference_run_resumes_to_uninterrupted_baseline` |
 | S15-08 | Repetition | Identical model/configuration/seed produces identical sample data and component identities | Required | `test_identical_reference_runs_have_identical_samples` |
-| S15-09 | Post-processing chain | Published package -> Stage 10 summary -> Stage 12 functional classification retains provenance links | Required | `test_stage10_to_stage12_evidence_chain` |
-| S15-10 | CLI | Buck and Boost JSON configuration smoke runs return success and publish a manifest | Required | `test_cli_buck_and_boost_smoke` |
+| S15-09 | Scheduled external input | Both Buck and Boost consume a scheduled `vin_v` update through the Runner; the persisted snapshot and affected observations demonstrate that it reached the Plant | Required | `test_runner_applies_scheduled_input_voltage_update` |
+| S15-10 | Post-processing chain | A real published Buck/Boost Runner package -> Stage 10 summary -> Stage 12 functional classification retains provenance links | Required | `test_stage10_to_stage12_evidence_chain_uses_published_reference_run` |
+| S15-11 | CLI | Buck and Boost JSON configuration smoke runs return success and publish a manifest | Required | `test_cli_buck_and_boost_smoke` |
 
 The matrix intentionally uses exploratory runs in this worktree. Formal
 comparison remains subject to the clean-worktree and complete-provenance gate.
 The package hash and manifest hash are independently recomputed in the
 Runner/hash and Stage 10 tests; they exclude mutable transaction metadata by
 design.
+
+The Stage 10/12 integration check needs a clean source-provenance record by
+design. Its test creates a real Buck or Boost Runner package and only replaces
+the process-local provenance collectors with a controlled clean record. This
+does not weaken the production dirty-worktree gate: a normal run from this
+development worktree remains exploratory and Stage 10 rejects it. The
+controlled record exists solely so the test can exercise publication,
+restricted post-processing, and classification with real generated artifacts
+rather than a hand-written package fixture.
 
 ## Test entry points
 
@@ -79,4 +89,3 @@ This acceptance does not test or certify:
 Any Stage 10/12 output from this matrix remains `functional` reference
 evidence at most. It must not be promoted to a physical-performance,
 research-safety, hardware-readiness, or product conclusion.
-

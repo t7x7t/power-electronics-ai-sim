@@ -10,6 +10,7 @@ import hashlib
 import json
 from pathlib import Path
 
+
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 CURRENT_SCHEMA_VERSION = "0.1"
@@ -398,6 +399,8 @@ class ExperimentSpec:
     initial_state: InitialState = field(default_factory=InitialState)
     input_schedule: tuple[Mapping[str, Any], ...] = ()
     seed: int | None = 0
+    # Zero hashes preserve the safe exploratory default. Formal runs must
+    # provide an explicit reviewed contract identity.
     contracts: Mapping[str, Mapping[str, str]] = field(default_factory=lambda: {"safety": {"id": "default-safety", "hash": "0" * 64}, "qualification": {"id": "default-qualification", "hash": "0" * 64}})
     output_dir: str = "runs"
     result_retention: str = "keep"

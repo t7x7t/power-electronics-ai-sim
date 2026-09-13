@@ -11,6 +11,7 @@ from .environment import check_recommended_environment
 from .provenance import ExecutableBackendAdapter
 from .reproducibility import audit_repeated_runs, compare_runs, cross_machine_evidence
 from .baseline import build_baseline_report
+from .visualization_service import serve as serve_visualization
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -48,6 +49,10 @@ def main(argv: list[str] | None = None) -> int:
     baseline = sub.add_parser("baseline-report", help="build a release/baseline evidence template")
     baseline.add_argument("manifest", type=Path)
     baseline.add_argument("--output", type=Path, default=None)
+    service = sub.add_parser("visualization-serve", help="serve verified visualization contracts read-only")
+    service.add_argument("--runs-root", type=Path, default=Path("runs"))
+    service.add_argument("--host", default="127.0.0.1")
+    service.add_argument("--port", type=int, default=8765)
     args = parser.parse_args(argv)
     try:
         if args.command == "run":
@@ -92,6 +97,9 @@ def main(argv: list[str] | None = None) -> int:
                 args.output.parent.mkdir(parents=True, exist_ok=True)
                 args.output.write_text(payload, encoding="utf-8")
                 print(json.dumps({"status": "written", "path": str(args.output)}, sort_keys=True))
+            return 0
+        elif args.command == "visualization-serve":
+            serve_visualization(args.runs_root, args.host, args.port)
             return 0
         else:
             parser.print_help()

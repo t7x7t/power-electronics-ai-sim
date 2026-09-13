@@ -1,0 +1,34 @@
+{
+  "artifacts": {
+    "samples.json": {
+      "path": "samples.json",
+      "sha256": "a9a345cb8d201517a783157ccd2acc3dd03515db83f8711c2d33fc730411468a"
+    }
+  },
+  "evidence_level": "test_fixture",
+  "hashes": {
+    "manifest_sha256": "1b3ebebbf3e43e204b748f181aa5112b4f5a79882b534215b1c58dd906c284ca",
+    "package_sha256": "0138c8a9b1de4264d399a9978b426f1c3758ed9033683d92f716b920c40a86a5"
+  },
+  "manifest_sha256": "1b3ebebbf3e43e204b748f181aa5112b4f5a79882b534215b1c58dd906c284ca",
+  "package_sha256": "0138c8a9b1de4264d399a9978b426f1c3758ed9033683d92f716b920c40a86a5",
+  "plant": {
+    "id": "buck",
+    "identity": {
+      "kind": "ideal_averaged_reference",
+      "parameters": {
+        "capacitance_f": 0.00047,
+        "inductance_h": 0.0001,
+        "input_voltage_v": 12.0,
+        "integration_step_s": 1e-06,
+        "load_resistance_ohm": 10.0
+      },
+      "topology": "buck"
+    }
+  },
+  "run_id": "buck-contract-fixture",
+  "run_mode": "exploratory",
+  "source_commit": "0000000000000000000000000000000000000000",
+  "status": "QUALIFIED",
+  "working_tree_status": "not_applicable"
+}

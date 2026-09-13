@@ -18,7 +18,7 @@ behavior only; it is not a hardware or product approval.
 | # | Stage | Status | Current evidence and remaining work |
 |---|---|---|---|
 | 1 | Requirements, scope, and responsibility boundaries | Partial | L0/L1 documents define the infrastructure boundary, user responsibility, and Agent limits. A named requirement owner and final approver still need to be recorded. |
-| 2 | Project and environment configuration | Partial | `pyproject.toml`, MIT license, Git baseline, tested-version record, and light CI exist. Environment locking, platform policy, and release evidence are incomplete. |
+| 2 | Project and environment configuration | Partial (release preparation) | `pyproject.toml`, MIT license, Git baseline, tested-version record, exact Python/Node/npm release policy, and light CI exist. The local release gate and a clean tagged baseline are still required. |
 | 3 | Public data and interface contracts | Done (v1 incremental) | v0 contracts are extended with normalized capability negotiation, explicit event/multi-rate gates, schema compatibility checks, observation visibility/time-window checks, snapshot hash verification, and regression tests. A reusable Plant/Controller conformance harness is now available. Full event scheduling semantics and richer unit registries remain future work. |
 | 4 | Plant and Controller integration | Partial (L1 references) | Self-owned ideal averaged Buck and Boost Plants now implement the public lifecycle, units, external-input updates, snapshots, and fail-closed bounds. Fake Plant, Fake Load Plant, and Fake PI Controller remain compatibility fixtures. Real `D:\PySpice` code and PSFB/LLC migration are intentionally deferred pending review. |
 | 5 | Generic Runner | Partial (modular audited lifecycle v1) | Low-friction `run_experiment` facade, pre-reset run-directory/identifier gates, formal-evidence admission, explicit CREATED/RUNNING/terminal state transitions, call-order audit, checkpoint/resume with full execution-spec identity, explicit Controller state protocols, interruption as INCOMPLETE, structured capability failures, policy-driven action handling, configured primary measurements, and endpoint-checked segmented plant timing are implemented and tested. Process-level recovery, full event scheduling, and richer timing semantics remain future work. |
@@ -27,11 +27,11 @@ behavior only; it is not a hardware or product approval.
 | 8 | Failure and recovery behavior | Done (v1 Python/file transaction boundary) | Public lifecycle matrix rejects illegal transitions; interrupted/cancelled runs are `INCOMPLETE`, backend failures remain `RUN_FAILED`, checkpoints are validated, resume provenance is recorded, and abandoned temporary directories are scanned without publication. Automatic retention/deletion policy remains an operator-approved follow-up; OS-level crash recovery and physical-model recovery remain out of scope. |
 | 9 | Reproducibility | Partial (preparatory v1) | Recommended-environment checks, deterministic Fake/Buck/Boost comparison, and explicit exact/tolerance/unknown outcomes are implemented. Cross-machine and real Ngspice reproducibility is not verified. |
 | 10 | Metrics and data export | Partial (restricted v1 slice) | Published qualified Fake/FakeLoad/Buck/Boost packages now support a versioned metric registry, explicit input-data version/fingerprint records, machine-checkable output schemas, numeric multi-run comparison, and source-linked JSON evidence reports. Domain metric registries, richer units/statistics, visualization, and physical conclusions remain later work. |
-| 11 | Data visualization | Planned | No supported plotting or report CLI exists yet. Visualizations must retain a link to the source run and Manifest. |
+| 11 | Data visualization | Partial (minimum release slice delivered) | Renderer-neutral `TopologyDescriptor`, `TraceDataset`/`SignalRegistry`, and `OutputDataset` contracts are implemented, explicitly published, validated, provenance-aware, immutable at the published boundary, and locally tested with Buck/Boost topology exporters. `pe_sim.workbench_export` is a constrained offline verified-run-to-fixture adapter, while `pe-sim visualization-serve` provides a versioned local read-only service for verified L1 Buck/Boost packages. `workbench/` is a separate TypeScript/Vite consumer providing SVG topology, selectable canvas traces, and scalar/series/table outputs; `examples/visualization_consumer/` demonstrates an independent consumer without simulation authority. Live delivery, a general remote API, a visualization CLI beyond the narrow exporter, and a general plugin runtime remain deferred. |
 | 12 | Evidence and conclusion levels | Partial (restricted v1 classification) | Stage 10 summaries/comparison reports can be classified as mechanism, functional, comparable, limited, or diagnostic_only with explicit limitations, blocked conclusions, and review records. Physical, research-safety, and hardware-readiness upgrades remain prohibited and domain conclusion templates remain later work. |
 | 13 | Optional learning/adaptation integration boundary | Optional (boundary only) | Learning and adaptation are not required for the core simulation infrastructure. The project defines an opt-in boundary for reviewed adapters: only eligible, qualified, provenance-complete evidence may be handed to an external learner. No built-in trainer, online-learning loop, model update, or automatic adaptation workflow is planned for the core. |
 | 14 | PySpice/Ngspice migration | Blocked by review | The source tree has not been migrated. PI/PID and model implementations require independent technical, provenance, and license review first. |
-| 15 | Testing and acceptance | Partial (L1 Buck/Boost slice) | The project-owned ideal averaged Buck/Boost adapters now have a dedicated acceptance matrix covering equations, boundaries, numerical step sensitivity, small sweeps/long runs, conformance, Runner lifecycle/recovery, deterministic repetition, CLI smoke, and the Stage 10/12 evidence chain. This is infrastructure acceptance only; real Ngspice/PSFB, switching, thermal, hardware, product, visualization, migration, and final full-project gates remain future work. |
+| 15 | Testing and acceptance | Partial (L1 Buck/Boost slice) | The project-owned ideal averaged Buck/Boost adapters now have a dedicated acceptance matrix covering equations, boundaries, numerical step sensitivity, small sweeps/long runs, conformance, Runner lifecycle/recovery, deterministic repetition, CLI smoke, and the Stage 10/12 evidence chain. This is infrastructure acceptance only; real Ngspice/PSFB, switching, thermal, hardware, product, visualization, migration, and final full-project gates remain future work. A local release gate now records machine-readable evidence; browser interaction and human release review remain open. |
 | 16 | Agent collaboration governance | Partial | Agent policy and independent acceptance are documented. Task records, approval evidence, and automated hand-off gates are not yet standardized. |
 
 ## Completed governance additions
@@ -637,3 +637,117 @@ hardware or product behavior, cross-machine equivalence, Stage 11
 visualization, Stage 13 learning, or Stage 14 migration. Stage 15 remains
 `Partial` until the explicitly excluded real-model and final project gates
 are separately reviewed.
+
+### Stage 11 minimum visualization data core (current direction)
+
+Stage 11 serves later visualization needs, but its immediate deliverable is
+not a MATLAB replacement or a browser application.  The infrastructure first
+provides three versioned, renderer-neutral, read-only data planes:
+
+1. `TopologyDescriptor`: components, declared ports, nets, parameter
+   summaries, and a stable descriptor fingerprint;
+2. `TraceDataset`: explicitly registered selectable signals, units, sampling
+   policy, timestamps, events, visibility, and trace provenance;
+3. `OutputDataset`: versioned scalar, sequence, and tabular simulation-target
+   outputs with field definitions, units, source/provenance, and data identity.
+
+Only values intentionally published by a Plant, solver, Controller, runtime,
+or reviewed adapter may enter a Trace or Output dataset.  The data contracts
+must not inspect arbitrary Python state, disclose Plant truth by default, or
+allow a renderer to alter topology connectivity, model parameters, Runner
+state, or immutable run packages.  All derived data must retain a link to the
+source run, Manifest hash, package hash, and source identity when these are
+available.  New visualization artifacts belong outside the immutable run
+package.
+
+The immediate acceptance sequence is:
+
+1. validate serialization, schema/version handling, units, finite values,
+   explicit visibility, provenance, and fail-closed invalid-input behavior for
+   all three data planes;
+2. validate a read-only Buck/Boost reference adapter for each applicable data
+   plane without changing default Runner behavior or published package bytes;
+3. document the immutable-package/derived-artifact boundary and demonstrate
+   that tampered or unknown provenance cannot be silently presented as trusted
+   simulation evidence.
+
+The three data-plane contracts, explicit publication rules, immutable-package
+boundary, provenance handling, and focused minimum-core verification are
+implemented. `docs/24_stage11_visualization_scope_v1.md` is the authoritative
+scope and non-goal record for this phase. The next possible increment is a
+separate review of a small consumer workbench; it is not part of the core
+simulation authority.
+
+After the minimum core is accepted, a small reference workbench and a versioned
+local read-only HTTP adapter may consume only these three contracts.  Live
+streaming, a general remote API, a visualization CLI beyond the constrained
+exporter, reusable UI/plugin runtime, or AI-assisted custom-symbol workflow
+remain future work.  Any future AI-produced symbol remains display-only and
+must bind to already declared component ports; it may never create, remove, or
+rewire a net.
+
+### Stage 11 fixture workbench increment (current)
+
+`workbench/` is an optional TypeScript/Vite reference consumer, not a new
+simulation subsystem. It loads only local JSON fixtures through
+`src/adapters/fixture-loader.ts`, whose input types are the three Stage 11
+contracts. Its three isolated panels provide a read-only deterministic SVG
+topology canvas, selectable multi-signal Canvas waveforms with declared units,
+zoom and click cursor, and scalar/series/table output presentation.
+
+The workbench does not import Python or inspect Plant, Controller, Runner,
+Manifest, or run-package internals. It cannot edit a topology, rerun a model,
+claim evidence validity, stream a run, or mutate a package. Contract display
+values are escaped before they enter HTML; generated `symbol_id` values remain
+display-only.
+
+Acceptance entry point:
+
+```text
+cd workbench
+npm run build
+npm run dev
+```
+
+The workbench can also explicitly consume the local service routes after an
+operator starts `pe-sim visualization-serve`; it never receives Runner or
+Plant authority. The remaining Stage 11 increments are explicitly scoped live
+delivery (SSE or WebSocket) only if a real consumer need justifies it. A
+complete MATLAB-style IDE, topology editor, arbitrary browser plugin execution,
+and UI marketplace are intentionally out of scope.
+
+The workbench also includes a restricted offline proof path for the reference
+Buck/Boost artifacts: `python -m pe_sim.workbench_export <published-run>
+<fixture-directory>`. It recomputes the recorded package integrity data before
+writing three derived contract files outside the immutable package. It is not
+a general visualization CLI, server, live stream, or formal-comparison path;
+the generated provenance retains the run mode and dirty-worktree status.
+
+### Stage 11 minimum-release residual work
+
+Formal Buck/Boost release-demo generation is now implemented by
+`scripts/generate_formal_demos.py`. It is deliberately a separate local step:
+the generator requires the exact verified toolchain and a clean Git commit,
+creates only in a new/empty evidence directory, runs both L1 references in
+`formal_comparison`, and revalidates published package hashes. The generated
+packages remain functional deterministic Python reference evidence only; they
+do not imply physical, Ngspice, thermal, hardware, or product validation.
+
+The following items are release work, not a reason to expand the visualization
+scope:
+
+1. add an install-and-clean-checkout acceptance job that starts the local
+   service, runs the independent consumer, and builds the workbench on the
+   documented recommended Python and Node versions;
+2. publish an explicit support matrix for the constrained exporter/service
+   (`BuckPlant` and `BoostPlant` L1 only) and retain the hard rejection of
+   unreviewed models such as Ngspice/LLC until their own model review closes;
+3. add browser-level interaction coverage for the workbench's service mode
+   when a supported headless-browser tool is adopted;
+4. define release packaging/versioning for the optional `workbench/` directory
+   and decide whether it is distributed as source only or as a separately
+   versioned static asset.
+
+Live traces, arbitrary browser plugin execution, topology editing, remote
+multi-user hosting, and a MATLAB-scale IDE are deliberately not minimum-release
+requirements.
