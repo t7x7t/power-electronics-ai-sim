@@ -121,6 +121,7 @@ function Record-InputDigests {
     foreach ($relative in @(
         "pyproject.toml",
         "requirements-tested.txt",
+        ".github/workflows/ci.yml",
         "workbench/package.json",
         "workbench/package-lock.json",
         "docs/27_minimum_local_release_scope_v0.md",

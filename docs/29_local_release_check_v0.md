@@ -35,6 +35,11 @@ diagnostic, observed Python/Node/npm versions, pip freeze log, each gate's
 status/exit code/log path, and the non-claim limitations.  A non-zero script
 exit, `outcome: "fail"`, or any skipped gate is release-blocking.
 
+The evidence also records SHA-256 digests of the checked-in release inputs,
+including the GitHub Actions workflow. This binds the local acceptance record
+to the lightweight CI configuration without claiming that the local script ran
+a hosted CI service.
+
 The gate checks a clean Git worktree, Python environment policy, the complete
 pytest suite, an isolated-copy `npm ci`, and `npm run build`.  It does not
 create official Buck/Boost demonstrations: pass their already-reviewed,
