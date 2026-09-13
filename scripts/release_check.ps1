@@ -236,15 +236,15 @@ from pe_sim.workbench_export import load_run_workbench_contracts
 root = Path(sys.argv[1]).resolve()
 commit = sys.argv[2]
 records = []
-for topology in ("buck", "boost"):
+for topology in ('buck', 'boost'):
     run_dir = root / topology
     contracts = load_run_workbench_contracts(run_dir)
-    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
-    if manifest.get("run_mode") != "formal_comparison":
-        raise ValueError(f"{topology} is not a formal_comparison run")
-    if manifest.get("source_commit") != commit:
-        raise ValueError(f"{topology} source_commit does not match release commit")
-    records.append({"topology": topology, "run_path": str(run_dir), "manifest_sha256": contracts.manifest_sha256, "package_sha256": contracts.package_sha256})
+    manifest = json.loads((run_dir / 'manifest.json').read_text(encoding='utf-8'))
+    if manifest.get('run_mode') != 'formal_comparison':
+        raise ValueError(f'{topology} is not a formal_comparison run')
+    if manifest.get('source_commit') != commit:
+        raise ValueError(f'{topology} source_commit does not match release commit')
+    records.append({'topology': topology, 'run_path': str(run_dir), 'manifest_sha256': contracts.manifest_sha256, 'package_sha256': contracts.package_sha256})
 print(json.dumps(records, sort_keys=True))
 '@
     $ok = Invoke-NativeGate "formal-demo-evidence" "python" @("-c", $probe, $root, $commit)
