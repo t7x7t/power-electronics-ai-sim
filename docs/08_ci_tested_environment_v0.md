@@ -21,6 +21,10 @@ of the documented CI surface. The matrix still provides Python-version
 compatibility coverage; the formal local release gate remains the only exact
 release-toolchain record.
 
+Python 3.10 is supported through the small conditional `tomli` dependency,
+which supplies the standard-library `tomllib` interface used by environment
+metadata parsing on that interpreter version.
+
 The optional workbench has a separate Node/npm compatibility range and an exact
 locally verified Node/npm pair. The distinction between admitted ranges and
 the release-gate toolchain is defined in

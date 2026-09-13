@@ -7,7 +7,9 @@ name = "power-electronics-ai-sim"
 version = "0.2.1"
 description = "Auditable, extensible power-electronics simulation runtime"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "tomli>=2.0.1; python_version < '3.11'",
+]
 
 [project.optional-dependencies]
 test = [

@@ -1,4 +1,6 @@
 import json
+import importlib.metadata
+import sys
 
 from pe_sim.baseline import build_baseline_report
 from pe_sim.environment import check_recommended_environment
@@ -30,8 +32,21 @@ def _run_dir(path, manifest, samples):
     (path / "samples.json").write_text(json.dumps(samples), encoding="utf-8")
 
 
-def test_recommended_environment_reports_verified_and_supported_statuses():
-    result = check_recommended_environment()
+def test_recommended_environment_reports_verified_and_supported_statuses(tmp_path):
+    current_python = ".".join(map(str, sys.version_info[:3]))
+    requirements = tmp_path / "requirements-tested.txt"
+    requirements.write_text(
+        "\n".join(
+            f"{name}=={importlib.metadata.version(name)}"
+            for name in ("pytest", "jsonschema", "numpy")
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    result = check_recommended_environment(
+        requirements_path=requirements,
+        verified_python_version=current_python,
+    )
     assert result.status == "pass"
     value = result.to_dict()
     assert value["python"]["verified_status"] == "match"

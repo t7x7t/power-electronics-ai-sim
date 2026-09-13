@@ -16,8 +16,12 @@ from pathlib import Path
 import importlib.metadata
 import re
 import sys
-import tomllib
 from typing import Any, Mapping, Sequence
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10 uses the supported backport.
+    import tomli as tomllib
 
 from .provenance import collect_backend_provenance
 
