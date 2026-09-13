@@ -26,7 +26,7 @@ by Git.  To retain evidence elsewhere, supply an explicit empty or
 release-specific destination:
 
 ```powershell
-pwsh -File scripts/release_check.ps1 -EvidenceDirectory D:\release-evidence\v0.1.0
+pwsh -File scripts/release_check.ps1 -EvidenceDirectory D:\release-evidence\v0.2.0
 ```
 
 The resulting `release-evidence.json` has schema
@@ -61,7 +61,7 @@ that state.  A passing result remains automation evidence only: a human
 Generate official demonstration packages separately, before this gate:
 
 ```powershell
-python scripts/generate_formal_demos.py D:\release-evidence\v0.1.0\formal-demos
+python scripts/generate_formal_demos.py D:\release-evidence\v0.2.0\formal-demos
 ```
 
 The destination must be new or empty and outside the source checkout. The
