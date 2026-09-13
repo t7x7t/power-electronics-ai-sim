@@ -75,6 +75,19 @@ def test_explicit_unavailable_backend_fails_environment_preflight(tmp_path):
     assert result.backend["status"] == "unknown"
 
 
+def test_environment_ignores_non_matching_python_version_marker(tmp_path):
+    requirements = tmp_path / "requirements-tested.txt"
+    requirements.write_text('tomli==2.3.0; python_version < "3.11"\n', encoding="utf-8")
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        "[project]\nrequires-python = '>=3.10'\ndependencies = [\"tomli>=2.0.1; python_version < '3.11'\"]\n",
+        encoding="utf-8",
+    )
+    result = check_recommended_environment(requirements, pyproject)
+    if sys.version_info >= (3, 11):
+        assert "tomli" not in result.packages
+
+
 def test_reproducibility_exact_and_tolerance_outcomes(tmp_path):
     samples = [{"step_index": 0, "time_s": 0.0, "vout": 1.0}]
     left_manifest = _manifest()

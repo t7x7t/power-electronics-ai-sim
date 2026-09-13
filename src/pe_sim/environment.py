@@ -28,6 +28,7 @@ from .provenance import collect_backend_provenance
 
 _REQ_RE = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9_.-]*)(?:\[[^]]+\])?\s*(.*)$")
 _COMPARATOR_RE = re.compile(r"^(===|==|!=|~=|>=|<=|>|<)\s*([0-9][^,;\s]*)")
+_PYTHON_VERSION_MARKER_RE = re.compile(r"^python_version\s*(===|==|!=|~=|>=|<=|>|<)\s*['\"]([^'\"]+)['\"]$")
 
 
 def _project_root() -> Path:
@@ -42,8 +43,10 @@ def _parse_requirement(line: str) -> tuple[str, str] | None:
     line = line.split("#", 1)[0].strip()
     if not line or line.startswith("-"):
         return None
-    # Markers are not needed for this small, platform-neutral test set.
-    line = line.split(";", 1)[0].strip()
+    if ";" in line:
+        line, marker = (item.strip() for item in line.split(";", 1))
+        if not _python_version_marker_applies(marker):
+            return None
     match = _REQ_RE.match(line)
     if not match:
         return None
@@ -135,6 +138,17 @@ def _satisfies(actual: str, specification: str | None) -> bool | None:
         return True
     except ValueError:
         return None
+
+
+def _python_version_marker_applies(marker: str) -> bool:
+    """Evaluate the Python-version markers used by the tested dependency set."""
+
+    match = _PYTHON_VERSION_MARKER_RE.fullmatch(marker.strip())
+    if match is None:
+        return False
+    relation, expected = match.groups()
+    actual = f"{sys.version_info.major}.{sys.version_info.minor}"
+    return _satisfies(actual, f"{relation}{expected}") is True
 
 
 def _installed_version(name: str) -> str | None:
