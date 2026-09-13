@@ -2,16 +2,16 @@
   "artifacts": {
     "samples.json": {
       "path": "samples.json",
-      "sha256": "a9a345cb8d201517a783157ccd2acc3dd03515db83f8711c2d33fc730411468a"
+      "sha256": "a73d4bbc27b6702caf97c68fd997b979b8efe876f7195f498b99606d61002643"
     }
   },
   "evidence_level": "test_fixture",
   "hashes": {
-    "manifest_sha256": "1b3ebebbf3e43e204b748f181aa5112b4f5a79882b534215b1c58dd906c284ca",
-    "package_sha256": "0138c8a9b1de4264d399a9978b426f1c3758ed9033683d92f716b920c40a86a5"
+    "manifest_sha256": "dc8a389e36bf84ef2639274c1c46dfbad2d2804dfe8ca8ce786c6316b5d7f733",
+    "package_sha256": "3135570f620b7458260314349643362a0e583e150a9123a78f6c033059d9e36a"
   },
-  "manifest_sha256": "1b3ebebbf3e43e204b748f181aa5112b4f5a79882b534215b1c58dd906c284ca",
-  "package_sha256": "0138c8a9b1de4264d399a9978b426f1c3758ed9033683d92f716b920c40a86a5",
+  "manifest_sha256": "dc8a389e36bf84ef2639274c1c46dfbad2d2804dfe8ca8ce786c6316b5d7f733",
+  "package_sha256": "3135570f620b7458260314349643362a0e583e150a9123a78f6c033059d9e36a",
   "plant": {
     "id": "buck",
     "identity": {

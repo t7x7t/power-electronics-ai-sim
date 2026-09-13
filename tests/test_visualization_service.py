@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 from http.client import HTTPConnection
+from pathlib import Path
+import shutil
 from threading import Thread
 from unittest.mock import patch
 
@@ -9,6 +11,9 @@ import pytest
 
 from pe_sim.artifacts import artifact_index, manifest_digest, package_digest
 from pe_sim.visualization_service import create_server
+
+
+FIXTURE = Path(__file__).parent / "fixtures" / "visualization_service" / "buck-contract-fixture"
 
 
 def _run(root, run_id="buck-demo"):
@@ -96,6 +101,27 @@ def test_health_discovery_and_contract_routes(service):
         if plane != "topology":
             assert payload["provenance"]["run_id"] == "buck-demo"
     assert {path.name: path.read_bytes() for path in run.iterdir() if path.is_file()} == before
+
+
+def test_checked_in_contract_fixture_is_served_without_integrity_errors(tmp_path):
+    root = tmp_path / "runs"
+    root.mkdir()
+    shutil.copytree(FIXTURE, root / FIXTURE.name)
+    server = create_server(root, "127.0.0.1", 0)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        status, _, discovery = _get(server, "/v1/discovery")
+        assert status == 200
+        assert [run["run_id"] for run in discovery["runs"]] == [FIXTURE.name]
+        for plane in ("topology", "trace", "outputs"):
+            status, _, payload = _get(server, f"/v1/runs/{FIXTURE.name}/{plane}")
+            assert status == 200
+            assert payload
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
 
 
 def test_tampered_run_is_not_served(service):
