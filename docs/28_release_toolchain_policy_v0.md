@@ -18,9 +18,10 @@ The verified reference combination below was checked locally on 2026-09-13.
 
 The Python test dependency pins are recorded in
 `requirements-tested.txt`. They are a reference test environment, not runtime
-dependencies of the base package. The source CI currently exercises Python
-3.10, 3.11, and 3.12; this is useful compatibility coverage but is not a
-replacement for the exact release-gate record.
+dependencies of the base package. The source CI installs these pins while it
+exercises Python 3.10, 3.11, and 3.12; this provides Python-version
+compatibility coverage without treating an unreviewed resolver update as a
+source regression. It is not a replacement for the exact release-gate record.
 
 The workbench is optional and source-distributed. Its `packageManager` and
 Volta metadata pin the verified npm/Node pair for tools that honor those

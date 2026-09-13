@@ -14,6 +14,13 @@ reference combination, not a claim that every platform is equivalent. The
 runtime package remains dependency-light; PySpice and Ngspice require a
 separate environment review and lock before migration.
 
+The lightweight GitHub Actions matrix uses these pins on Python 3.10, 3.11,
+and 3.12 before it runs the source test suite. This prevents a resolver's
+newest unverified dependency release from being misrepresented as a failure
+of the documented CI surface. The matrix still provides Python-version
+compatibility coverage; the formal local release gate remains the only exact
+release-toolchain record.
+
 The optional workbench has a separate Node/npm compatibility range and an exact
 locally verified Node/npm pair. The distinction between admitted ranges and
 the release-gate toolchain is defined in

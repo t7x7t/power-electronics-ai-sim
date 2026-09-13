@@ -27,7 +27,11 @@ jobs:
           cache: pip
 
       - name: Install package and test dependencies
-        run: python -m pip install --upgrade pip && python -m pip install -e ".[test]"
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-tested.txt
+          python -m pip install -e ".[test]"
+          python -m pip check
 
       - name: Validate JSON Schemas and example configuration
         run: |
