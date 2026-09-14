@@ -1,0 +1,2 @@
+# Integrity-checked JSON fixtures must keep identical bytes on every checkout.
+tests/fixtures/visualization_service/**/*.json text eol=lf
