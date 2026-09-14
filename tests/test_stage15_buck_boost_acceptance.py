@@ -66,9 +66,12 @@ def _run_reference_with_clean_provenance(tmp_path: Path, factory, run_id: str, m
 
     observed_git = runtime_module.collect_git_provenance()
     observed_worktree = runtime_module.analyze_git_worktree()
+    # This is a process-local test provenance override.  Do not copy an
+    # unavailable commit from the host checkout and label it clean: the
+    # post-processing gate must continue to reject such evidence.
     clean_git = GitProvenance(
-        source_commit=observed_git.source_commit,
-        branch=observed_git.branch,
+        source_commit="a" * 40,
+        branch=observed_git.branch if observed_git.branch != "unavailable" else "test",
         working_tree_status="clean",
         status="known",
         limitations=(),
