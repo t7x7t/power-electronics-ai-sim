@@ -69,7 +69,8 @@ function Initialize-ReleasePython {
         & $creator @creatorArgs *>&1 | Tee-Object -FilePath (Join-Path $EvidenceDirectory "python-venv-create.log") | Out-Host
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $python)) { throw "unable to create isolated Python venv at $venv" }
         & $python -m pip install --upgrade pip setuptools *>&1 | Tee-Object -FilePath (Join-Path $EvidenceDirectory "python-venv-bootstrap.log") | Out-Host
-        & $python -m pip install -r (Join-Path $RepositoryRoot "requirements-tested.txt") *>&1 | Tee-Object -FilePath (Join-Path $EvidenceDirectory "python-venv-requirements.log") | Out-Host
+        & $python -m pip install -r (Join-Path $RepositoryRoot "requirements-release.txt") *>&1 | Tee-Object -FilePath (Join-Path $EvidenceDirectory "python-venv-requirements.log") | Out-Host
+        & $python -m playwright install chromium *>&1 | Tee-Object -FilePath (Join-Path $EvidenceDirectory "python-playwright-browser.log") | Out-Host
         & $python -m pip install -e (Join-Path $RepositoryRoot ".[test]") *>&1 | Tee-Object -FilePath (Join-Path $EvidenceDirectory "python-venv-project.log") | Out-Host
         $pythonEnvironment.created = $true
     } else { $pythonEnvironment.reused = $true }
@@ -156,6 +157,7 @@ function Record-InputDigests {
     foreach ($relative in @(
         "pyproject.toml",
         "requirements-tested.txt",
+        "requirements-release.txt",
         ".github/workflows/ci.yml",
         "workbench/package.json",
         "workbench/package-lock.json",

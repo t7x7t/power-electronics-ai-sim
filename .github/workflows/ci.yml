@@ -33,6 +33,12 @@ jobs:
           python -m pip install -e ".[test]"
           python -m pip check
 
+      - name: Install browser acceptance dependencies
+        if: matrix.python-version == '3.12'
+        run: |
+          python -m pip install -r requirements-release.txt
+          python -m playwright install --with-deps chromium
+
       - name: Validate JSON Schemas and example configuration
         run: |
           python - <<'PY'

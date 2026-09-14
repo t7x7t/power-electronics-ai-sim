@@ -29,6 +29,12 @@ path and their installed toolchain is still checked by the release gates.
 The generated evidence records the interpreter path and isolated-environment
 mode, making accidental use of a global Conda environment visible.
 
+The release environment installs `requirements-release.txt`, which extends the
+verified test pins with the fixed Python Playwright package. It also installs
+the Chromium browser into Playwright's managed cache. Playwright and Chromium
+are release/browser-test dependencies only; they are not runtime dependencies
+of the Python package or the workbench.
+
 It writes a new evidence directory by default under
 `.tmp/release-evidence/<timestamp>-<commit>/`, which is intentionally ignored
 by Git.  To retain evidence elsewhere, supply an explicit empty or
