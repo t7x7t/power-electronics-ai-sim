@@ -58,7 +58,7 @@ jobs:
           PY
 
       - name: Run test suite
-        run: python -m pytest --basetemp .pytest_ci
+        run: python -m pytest --basetemp .pytest_ci -o cache_dir=.pytest_cache
 
       - name: Run CLI smoke test
         run: |
