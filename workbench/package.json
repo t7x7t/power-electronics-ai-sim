@@ -1,7 +1,7 @@
 {
   "name": "pe-sim-minimum-workbench",
   "private": true,
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "packageManager": "npm@11.12.1",
   "engines": {
