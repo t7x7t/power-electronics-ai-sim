@@ -8,7 +8,9 @@ automation gate required by the release scope and toolchain policy:
 - `docs/28_release_toolchain_policy_v0.md` defines the recorded toolchain and
   clean-install policy.
 
-Run it from a clean checkout in PowerShell:
+Run it from a clean checkout in PowerShell. The script creates a dedicated
+isolated virtual environment under `.tmp/release-venv/<commit>` and uses its
+absolute interpreter for every Python gate; no manual activation is needed:
 
 ```powershell
 pwsh -File scripts/release_check.ps1
@@ -19,6 +21,13 @@ On Windows PowerShell, use:
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/release_check.ps1
 ```
+
+The default creator is the Windows Python launcher (`py -3.12`). Override it
+when necessary with `-PythonExecutable`, `-PythonVersion`, or
+`-VirtualEnvironment`. Existing environments are reused only as an explicit
+path and their installed toolchain is still checked by the release gates.
+The generated evidence records the interpreter path and isolated-environment
+mode, making accidental use of a global Conda environment visible.
 
 It writes a new evidence directory by default under
 `.tmp/release-evidence/<timestamp>-<commit>/`, which is intentionally ignored

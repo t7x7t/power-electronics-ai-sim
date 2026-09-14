@@ -4,6 +4,10 @@ param(
     [ValidateRange(1, 65535)]
     [int]$ServicePort = 8765,
     [string]$FormalDemoRunsRoot,
+    [string]$PythonExecutable = "py",
+    [string]$PythonVersion = "3.12",
+    [string]$VirtualEnvironment,
+    [switch]$ReuseVirtualEnvironment,
     [switch]$PreflightOnly
 )
 
@@ -42,6 +46,37 @@ $formalDemoEvidence = @()
 $serviceProcess = $null
 $hasFailure = $false
 $executionMode = if ($PreflightOnly) { "preflight_only" } else { "full_local_gate" }
+$pythonEnvironment = [ordered]@{ mode = "isolated_venv"; path = $null; interpreter = $null; created = $false; reused = $false }
+
+function Initialize-ReleasePython {
+    if (-not $VirtualEnvironment) {
+        $suffix = if ($commit -eq "unknown") { "unknown" } else { $commit.Substring(0, 12) }
+        $VirtualEnvironment = Join-Path $RepositoryRoot ".tmp\release-venv\$suffix"
+    }
+    $venv = [System.IO.Path]::GetFullPath($VirtualEnvironment)
+    $python = Join-Path $venv "Scripts\python.exe"
+    if (-not (Test-Path -LiteralPath $python)) {
+        New-Item -ItemType Directory -Force -Path (Split-Path $venv) | Out-Null
+        $creator = $PythonExecutable
+        $creatorArgs = @("-$PythonVersion", "-m", "venv", $venv)
+        if ($PythonExecutable -eq "py" -and -not (Get-Command py -ErrorAction SilentlyContinue)) {
+            $creator = "python"
+            $creatorArgs = @("-m", "venv", $venv)
+        }
+        if (-not (Get-Command $creator -ErrorAction SilentlyContinue) -and -not (Test-Path -LiteralPath $creator)) {
+            throw "Python launcher '$PythonExecutable' was not found. Install Python $PythonVersion or pass -PythonExecutable with its path."
+        }
+        & $creator @creatorArgs *>&1 | Tee-Object -FilePath (Join-Path $EvidenceDirectory "python-venv-create.log") | Out-Host
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $python)) { throw "unable to create isolated Python venv at $venv" }
+        & $python -m pip install --upgrade pip setuptools *>&1 | Tee-Object -FilePath (Join-Path $EvidenceDirectory "python-venv-bootstrap.log") | Out-Host
+        & $python -m pip install -r (Join-Path $RepositoryRoot "requirements-tested.txt") *>&1 | Tee-Object -FilePath (Join-Path $EvidenceDirectory "python-venv-requirements.log") | Out-Host
+        & $python -m pip install -e (Join-Path $RepositoryRoot ".[test]") *>&1 | Tee-Object -FilePath (Join-Path $EvidenceDirectory "python-venv-project.log") | Out-Host
+        $pythonEnvironment.created = $true
+    } else { $pythonEnvironment.reused = $true }
+    $pythonEnvironment.path = $venv
+    $pythonEnvironment.interpreter = $python
+    return $python
+}
 
 function Format-Command {
     param([string]$FilePath, [string[]]$Arguments)
@@ -248,7 +283,7 @@ for topology in ('buck', 'boost'):
     records.append({'topology': topology, 'run_path': str(run_dir), 'manifest_sha256': contracts.manifest_sha256, 'package_sha256': contracts.package_sha256})
 print(json.dumps(records, sort_keys=True))
 '@
-    $ok = Invoke-NativeGate "formal-demo-evidence" "python" @("-c", $probe, $root, $commit)
+    $ok = Invoke-NativeGate "formal-demo-evidence" $PythonPath @("-c", $probe, $root, $commit)
     if (-not $ok) { return }
     try {
         $script:formalDemoEvidence = @((Get-Content -LiteralPath (Join-Path $EvidenceDirectory "formal-demo-evidence.log") -Raw | ConvertFrom-Json))
@@ -282,6 +317,7 @@ function Write-Evidence {
             expected = $ExpectedToolchain
             observed_file = "toolchain-observed.json"
         }
+        python_environment = $pythonEnvironment
         source_input_digests = @($inputDigests.ToArray())
         gates = @($records.ToArray())
         formal_demo_evidence = @($formalDemoEvidence)
@@ -303,6 +339,7 @@ function Write-Evidence {
 
 try {
     Push-Location -LiteralPath $RepositoryRoot
+    $script:PythonPath = Initialize-ReleasePython
     Record-InputDigests
     $gitClean = Test-GitClean
     if (-not $gitClean) {
@@ -313,9 +350,9 @@ try {
     $toolchainOk = Test-ExactToolchain
     # Keep the complete resolved Python environment alongside the exact
     # version probe so a later reviewer can audit transitive dependencies.
-    $pipFreezeOk = Invoke-NativeGate "python-pip-freeze" "python" @("-m", "pip", "freeze")
-    $pipOk = Invoke-NativeGate "python-pip-check" "python" @("-m", "pip", "check")
-    $environmentOk = Invoke-NativeGate "python-environment-check" "python" @("-m", "pe_sim.cli", "environment-check", "--requirements", "requirements-tested.txt", "--pyproject", "pyproject.toml")
+    $pipFreezeOk = Invoke-NativeGate "python-pip-freeze" $PythonPath @("-m", "pip", "freeze")
+    $pipOk = Invoke-NativeGate "python-pip-check" $PythonPath @("-m", "pip", "check")
+    $environmentOk = Invoke-NativeGate "python-environment-check" $PythonPath @("-m", "pe_sim.cli", "environment-check", "--requirements", "requirements-tested.txt", "--pyproject", "pyproject.toml")
     if ($PreflightOnly) {
         Add-NotRunRecord "full-local-gate" "preflight only: tests, npm ci, build, service, consumer, and formal-demo evidence checks were intentionally not run"
         return
@@ -329,7 +366,7 @@ try {
     }
 
     $pytestBase = Join-Path $EvidenceDirectory "pytest-basetemp"
-    $pythonTestsOk = Invoke-NativeGate "python-pytest" "python" @("-m", "pytest", "-q", "--basetemp", $pytestBase, "-o", "cache_dir=$EvidenceDirectory\\pytest-cache")
+    $pythonTestsOk = Invoke-NativeGate "python-pytest" $PythonPath @("-m", "pytest", "-q", "--basetemp", $pytestBase, "-o", "cache_dir=$EvidenceDirectory\\pytest-cache")
     $workbenchCopy = Copy-IsolatedWorkbench
     $nodeOk = $false
     if ($null -ne $workbenchCopy) {
@@ -354,7 +391,7 @@ try {
     $serviceStdout = Join-Path $EvidenceDirectory "visualization-service.stdout.log"
     $serviceStderr = Join-Path $EvidenceDirectory "visualization-service.stderr.log"
     $serviceCommand = Format-Command "python" @("-m", "pe_sim.cli", "visualization-serve", "--runs-root", $fixtureRoot, "--host", "127.0.0.1", "--port", "$ServicePort")
-    $serviceProcess = Start-Process -FilePath "python" -ArgumentList @("-m", "pe_sim.cli", "visualization-serve", "--runs-root", $fixtureRoot, "--host", "127.0.0.1", "--port", "$ServicePort") -WorkingDirectory $RepositoryRoot -RedirectStandardOutput $serviceStdout -RedirectStandardError $serviceStderr -PassThru
+    $serviceProcess = Start-Process -FilePath $PythonPath -ArgumentList @("-m", "pe_sim.cli", "visualization-serve", "--runs-root", $fixtureRoot, "--host", "127.0.0.1", "--port", "$ServicePort") -WorkingDirectory $RepositoryRoot -RedirectStandardOutput $serviceStdout -RedirectStandardError $serviceStderr -PassThru
     $baseUrl = "http://127.0.0.1:$ServicePort"
     $ready = $false
     for ($attempt = 0; $attempt -lt 30; $attempt++) {
@@ -367,7 +404,7 @@ try {
     }
     if ($ready) {
         Add-Record "visualization-service" "pass" 0 "process_id=$($serviceProcess.Id); loopback read-only health endpoint responded" $serviceCommand $serviceStdout | Out-Null
-        Invoke-NativeGate "external-consumer-service" "python" @("examples/visualization_consumer/verify_contracts.py", "--service", $baseUrl, "--run", "buck-contract-fixture") | Out-Null
+        Invoke-NativeGate "external-consumer-service" $PythonPath @("examples/visualization_consumer/verify_contracts.py", "--service", $baseUrl, "--run", "buck-contract-fixture") | Out-Null
         # The test starts Vite only from the isolated npm-ci copy.  The service
         # remains the loopback process started above, exercising CORS and the
         # actual service-mode contract load without modifying workbench/.
@@ -375,7 +412,7 @@ try {
         $env:PE_SIM_WORKBENCH_DIR = $workbenchCopy
         $env:PE_SIM_BROWSER_SERVICE_URL = $baseUrl
         $env:PE_SIM_BROWSER_RUN_ID = "buck-contract-fixture"
-        Invoke-NativeGate "workbench-browser-e2e" "python" @("-m", "pytest", "-q", "tests/test_workbench_browser_e2e.py", "--basetemp", (Join-Path $EvidenceDirectory "browser-e2e-basetemp"), "-o", "cache_dir=$EvidenceDirectory\\browser-e2e-cache") | Out-Null
+        Invoke-NativeGate "workbench-browser-e2e" $PythonPath @("-m", "pytest", "-q", "tests/test_workbench_browser_e2e.py", "--basetemp", (Join-Path $EvidenceDirectory "browser-e2e-basetemp"), "-o", "cache_dir=$EvidenceDirectory\\browser-e2e-cache") | Out-Null
         Remove-Item Env:PE_SIM_RUN_BROWSER_E2E -ErrorAction SilentlyContinue
         Remove-Item Env:PE_SIM_WORKBENCH_DIR -ErrorAction SilentlyContinue
         Remove-Item Env:PE_SIM_BROWSER_SERVICE_URL -ErrorAction SilentlyContinue
