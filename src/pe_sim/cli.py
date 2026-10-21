@@ -37,7 +37,7 @@ from .workbench_export import export_run_to_workbench_fixture
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Auditable power-electronics simulation runtime")
-    parser.add_argument("--version", action="version", version="0.3.2")
+    parser.add_argument("--version", action="version", version="0.3.3")
     sub = parser.add_subparsers(dest="command")
     run = sub.add_parser("run", help="run an experiment from JSON config")
     run.add_argument("config", type=Path)
@@ -134,6 +134,7 @@ def main(argv: list[str] | None = None) -> int:
             # fields from being silently ignored at the CLI boundary.
             validate_experiment_document(document)
             backend = _select_backend(document, args.backend)
+            _validate_schedule_keys(document, backend)
             spec = ExperimentSpec.from_dict(document)
             plant = _build_plant(backend, spec.plant_config, spec.timebase, args.ngspice, args.model_builder)
             _validate_plant_adapter(backend, plant)
@@ -247,6 +248,28 @@ def _select_backend(document: dict[str, object], requested: str | None) -> str:
             f"plant_id {plant_id!r} requires --backend {expected!r}, not {backend!r}"
         )
     return backend
+
+
+def _validate_schedule_keys(document: dict[str, object], backend: str) -> None:
+    """Reject schedule keys that the selected Plant would silently ignore."""
+
+    allowed = {"time_s", "vref"}
+    if backend == "fake-load":
+        allowed.add("load")
+    elif backend in {"buck", "boost", "ngspice-buck"}:
+        allowed.update({"vin_v", "input_voltage_v", "load_ohm", "load_resistance_ohm"})
+    schedule = document.get("input_schedule", [])
+    if not isinstance(schedule, list):
+        raise ValueError("input_schedule must be an array")
+    for index, item in enumerate(schedule):
+        if not isinstance(item, dict):
+            raise ValueError(f"input_schedule[{index}] must be an object")
+        unknown = set(item) - allowed
+        if unknown:
+            raise ValueError(
+                f"input_schedule[{index}] has keys not supported by backend {backend!r}: "
+                f"{sorted(unknown)}; allowed: {sorted(allowed)}"
+            )
 
 
 def _validate_plant_adapter(backend: str, plant: object) -> None:

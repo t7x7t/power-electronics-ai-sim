@@ -130,9 +130,11 @@ pe-sim run examples/boost_pi_step/config.json --backend boost
 - `controller_id` currently supports `pi`. `controller_config` accepts only
   `kp`, `ki`, `output_min`, `output_max`, `anti_windup`, and `measurement_key`;
   `ki` is a real integral term with integral clamping when limits are present.
-- `input_schedule` entries accept `time_s`, `vref`, `vin_v`/`input_voltage_v`,
-  and `load`/`load_ohm`/`load_resistance_ohm`. Unknown keys are rejected
-  instead of being silently ignored.
+- `input_schedule` keys are backend-specific: `fake` accepts `time_s`/`vref`;
+  `fake-load` additionally accepts `load`; `buck`/`boost`/`ngspice-buck`
+  accept `vin_v`/`input_voltage_v` and `load_ohm`/`load_resistance_ohm`.
+  Unknown or backend-inapplicable keys are rejected instead of being silently
+  ignored.
 - The ideal averaged Buck/Boost examples are test fixtures. The reviewed Buck
   reference uses PySpice construction plus ngspice execution.
 

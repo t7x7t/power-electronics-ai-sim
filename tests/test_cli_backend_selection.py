@@ -123,3 +123,22 @@ def test_unknown_schedule_key_is_rejected(tmp_path, monkeypatch, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["status"] == "CONFIG_REJECTED"
     assert "input_schedule" in payload["error"]
+
+
+def test_schedule_key_must_be_supported_by_the_selected_backend(tmp_path, monkeypatch, capsys):
+    document = _document("backend-schedule", "buck", tmp_path)
+    document["plant_config"] = {
+        "input_voltage_v": 12.0,
+        "inductance_h": 100e-6,
+        "capacitance_f": 470e-6,
+        "load_resistance_ohm": 10.0,
+    }
+    # `load` is valid for fake-load but not for the reviewed averaged Buck.
+    document["input_schedule"] = [{"time_s": 0.0, "load": 1.0}]
+    config = _write(tmp_path, document)
+    monkeypatch.chdir(tmp_path)
+
+    assert main(["run", str(config), "--backend", "buck"]) == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "CONFIG_REJECTED"
+    assert "not supported by backend" in payload["error"]
