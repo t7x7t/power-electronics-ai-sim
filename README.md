@@ -106,11 +106,13 @@ the CLI. PySpice 1.5 is installed separately and is used only to construct the
 circuit; execution stays on the reviewed ngspice process adapter:
 
 ```powershell
-pip install "PySpice==1.5"
+# Python 3.10-3.12 verified pin set; use a dedicated environment
+pip install -r requirements-pyspice-tested.txt
 pe-sim run examples/ngspice_buck_step/config.json --backend ngspice-buck --model-builder pyspice
 ```
 
-The ideal averaged `buck_pi_step` and `boost_pi_step` examples are deterministic
+On Python 3.13, use an isolated environment and install `PySpice==1.5` without
+the 1.26.4 NumPy pin, then run `pip check` there. The ideal averaged `buck_pi_step` and `boost_pi_step` examples are deterministic
 test fixtures, not reference-circuit results. They remain available for runtime
 and comparison tests:
 
@@ -128,12 +130,15 @@ process boundary. Both external components are optional installations and are
 never bundled:
 
 ```powershell
-pip install "PySpice==1.5"
+# Python 3.10-3.12 verified pin set; use a dedicated environment
+pip install -r requirements-pyspice-tested.txt
 pe-sim backend doctor --name ngspice
 pe-sim run examples/ngspice_buck_step/config.json --backend ngspice-buck --model-builder pyspice
 ```
 
-The native netlist builder remains available for offline and CI tests, but it is
+The pin set keeps NumPy on the project-verified 1.26.4 line while selecting
+compatible `scipy`/`matplotlib`/`contourpy` releases, so `pip check` stays
+clean. The native netlist builder remains available for offline and CI tests, but it is
 not the reference construction path. The definition, failure semantics, and
 acceptance matrix are in `docs/31`; the PySpice construction boundary is in
 `docs/34`.
@@ -192,9 +197,10 @@ The reference path therefore uses PySpice only for circuit construction and
 keeps execution on the reviewed ngspice process adapter:
 
 ```powershell
-# in an environment where PySpice is installed (construction verified with Python 3.10 and 3.13)
-pip install "PySpice==1.5"
+# dedicated environment; Python 3.10-3.12 verified pin set
+pip install -r requirements-pyspice-tested.txt
 pip install -e .
+python -m pip check
 pe-sim run examples/ngspice_buck_step/config.json --backend ngspice-buck --model-builder pyspice
 ```
 

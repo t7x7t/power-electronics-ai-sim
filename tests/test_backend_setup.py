@@ -49,6 +49,15 @@ def test_guide_reports_platform_specific_recipes(capsys):
     methods = {recipe["method"] for recipe in payload["install_recipes"]}
     assert {"conda", "manual"} <= methods
     assert payload["config_template"].startswith('schema_version = "1.0"')
+    setup_commands = [
+        command
+        for recipe in payload["install_recipes"]
+        for command in recipe["commands"]
+        if "backend setup" in command
+    ]
+    assert setup_commands
+    assert all("--name ngspice" in command for command in setup_commands)
+    assert all("backend setup ngspice " not in command for command in setup_commands)
 
 
 def test_guide_marks_planned_backends(capsys):
@@ -111,6 +120,8 @@ def test_setup_missing_binary_prints_install_recipes(tmp_path, monkeypatch, caps
     assert payload["status"] == "NOT_FOUND"
     assert payload["install_recipes"]
     assert any("ngspice" in step for step in payload["next_steps"])
+    assert any("backend setup --name ngspice" in step for step in payload["next_steps"])
+    assert all("backend setup ngspice " not in step for step in payload["next_steps"])
 
 
 def test_setup_refuses_to_write_config_inside_the_repository(tmp_path, monkeypatch, capsys):

@@ -21,9 +21,29 @@ GPLv3 dependency look like part of its own distribution. Install it manually in
 the environment that will build PySpice circuits:
 
 ```powershell
-pip install "PySpice==1.5"
+# Python 3.10-3.12: verified pin set, keeps numpy on 1.26.4
+pip install -r requirements-pyspice-tested.txt
 pip install -e .       # the MIT-licensed core
+python -m pip check
 ```
+
+### Dependency pitfall and pin set
+
+Installing `PySpice==1.5` without constraints lets the resolver select current
+`scipy`, `matplotlib`, and `contourpy` releases that require NumPy 2.x. If the
+project's verified NumPy 1.26.4 pin is then restored, `pip check` reports a
+conflict. `requirements-pyspice-tested.txt` pins a compatible set:
+
+```text
+PySpice==1.5, numpy==1.26.4, scipy==1.13.1,
+matplotlib==3.9.4, contourpy==1.3.1
+```
+
+This set was verified on Python 3.10 with ngspice 41: `pip check` reports no
+broken requirements and the PySpice-built Buck reference runs. Use a dedicated
+environment for PySpice. NumPy 1.26.4 has no Python 3.13 wheel; on Python 3.13
+use an isolated environment and let pip select the PySpice dependency set, then
+run `pip check` there rather than mixing it with the 3.12 release pins.
 
 ## Verified compatibility findings
 
@@ -87,9 +107,11 @@ Use an environment where PySpice is importable. The verified combination is
 Python 3.10 with PySpice 1.5.
 
 ```powershell
-pip install "PySpice==1.5"
+# Python 3.10-3.12 verified pin set
+pip install -r requirements-pyspice-tested.txt
 pip install -e .
-pe-sim backend doctor
+python -m pip check
+pe-sim backend doctor --name ngspice
 pe-sim run examples/ngspice_buck_step/config.json --backend ngspice-buck --model-builder pyspice
 ```
 

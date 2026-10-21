@@ -144,7 +144,7 @@ NGSPICE = BackendDescriptor(
                 "# download the official Windows archive and extract it to a non-system drive",
                 "# example: D:\\tools\\ngspice-44.2",
                 "# then either add Spice64\\bin to PATH or run:",
-                'pe-sim backend setup ngspice --executable "D:\\tools\\ngspice-44.2\\Spice64\\bin\\ngspice_con.exe" --write-config',
+                'pe-sim backend setup --name ngspice --executable "D:\\tools\\ngspice-44.2\\Spice64\\bin\\ngspice_con.exe" --write-config',
             ),
             url="https://ngspice.sourceforge.io/download.html",
             notes=("Prefer the console build ngspice_con.exe; the GUI build may ignore batch output.",),

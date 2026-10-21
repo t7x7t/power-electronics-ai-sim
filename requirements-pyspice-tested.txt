@@ -1,0 +1,22 @@
+# Verified PySpice construction environment (Python 3.10-3.12).
+#
+# Install this file into a dedicated environment before installing the project:
+#   python -m pip install -r requirements-tested.txt
+#   python -m pip install -r requirements-pyspice-tested.txt
+#   python -m pip install -e ".[test]"
+#   python -m pip check
+#
+# The pins keep numpy on the project-verified 1.26.4 line while selecting
+# scipy/matplotlib/contourpy releases that still support that numpy version.
+# Installing PySpice without these pins lets the resolver choose newer
+# scipy/contourpy releases that require numpy >= 2, which makes `pip check`
+# fail after numpy is rolled back.
+PySpice==1.5
+PyYAML==6.0.2
+cffi==1.17.1
+contourpy==1.3.1
+matplotlib==3.9.4
+numpy==1.26.4
+ply==3.11
+requests==2.32.3
+scipy==1.13.1

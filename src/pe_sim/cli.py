@@ -37,7 +37,7 @@ from .workbench_export import export_run_to_workbench_fixture
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Auditable power-electronics simulation runtime")
-    parser.add_argument("--version", action="version", version="0.3.0")
+    parser.add_argument("--version", action="version", version="0.3.1")
     sub = parser.add_subparsers(dest="command")
     run = sub.add_parser("run", help="run an experiment from JSON config")
     run.add_argument("config", type=Path)
@@ -402,7 +402,7 @@ def _run_backend_command(args) -> int:
                 "install_recipes": [recipe.to_dict() for recipe in descriptor.recipes_for()],
                 "next_steps": [
                     f"install {descriptor.display_name} using one of the recipes above",
-                    f"then run: pe-sim backend setup {descriptor.name} --executable <path> --write-config",
+                    f"then run: pe-sim backend setup --name {descriptor.name} --executable <path> --write-config",
                 ],
             }
             print(json.dumps(payload, indent=2, sort_keys=True))
@@ -424,7 +424,7 @@ def _run_backend_command(args) -> int:
             payload["config_written"] = str(written)
             payload["next_steps"] = [
                 f"verify: pe-sim backend doctor --name {descriptor.name}",
-                "run: pe-sim run examples/ngspice_buck_step/config.json --backend ngspice-buck",
+                "run: pe-sim run examples/ngspice_buck_step/config.json --backend ngspice-buck --model-builder pyspice",
             ]
         else:
             payload["next_steps"] = [

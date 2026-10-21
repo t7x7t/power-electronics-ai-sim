@@ -364,6 +364,16 @@ Two packaging defects were found and fixed: `jsonschema` was not a declared
 runtime dependency, and the default experiment schema was not shipped in the
 wheel. Regression coverage is in `tests/test_packaging.py`.
 
+### User-discovery follow-ups (backlog)
+
+An independent new-user test on 2026-10-22 is recorded in
+`docs/37_user_discovery_backlog_v1.md`. It fixed the onboarding command typo
+(`--name ngspice`) and the PySpice/NumPy dependency conflict with
+`requirements-pyspice-tested.txt`. The functional follow-ups remain backlog,
+not release claims: CLI PI/PID/feedforward controller configuration and
+compatibility, switching-level topology coverage, and documented access to
+switching-resolution waveforms for ripple/loss analysis.
+
 ### Stage 10 restricted post-processing increment (current)
 
 `docs/21_stage10_restricted_metrics_export_v1.md` records the first post-run

@@ -71,7 +71,10 @@ python -m pip install -e .
 
 The Buck reference additionally requires a separate **PySpice 1.5** installation
 for circuit construction. PySpice is GPLv3 and is deliberately not a package
-dependency or extra; the reference command is documented in `docs/34` and
+dependency or extra. Use `requirements-pyspice-tested.txt` in a dedicated
+Python 3.10-3.12 environment so `numpy==1.26.4` stays compatible with the
+selected `scipy`/`matplotlib`/`contourpy` versions; run `python -m pip check`
+before acceptance. The reference command is documented in `docs/34` and
 `docs/35`. ngspice remains a separately installed external executable.
 
 For the locally verified test set, install the exact pins in a fresh Python

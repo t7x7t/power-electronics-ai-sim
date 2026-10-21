@@ -51,8 +51,9 @@ If the executable is on `PATH`, `pe-sim backend doctor --name ngspice` finds it
 immediately. Otherwise use one of:
 
 ```powershell
-# expected reference environment (PySpice 1.5 must be installed separately)
-pip install "PySpice==1.5"
+# expected reference environment (Python 3.10-3.12 verified pin set)
+pip install -r requirements-pyspice-tested.txt
+python -m pip check
 
 # explicit path for one command
 pe-sim run examples/ngspice_buck_step/config.json --backend ngspice-buck --model-builder pyspice --ngspice <path>

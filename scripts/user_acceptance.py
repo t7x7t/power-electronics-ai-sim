@@ -341,9 +341,38 @@ class Acceptance:
             args.append("-e")
         args.append(".")
         completed = self.run(args, cwd=self.checkout, timeout=900)
+        pyspice_requirements: str | None = None
         if self.pyspice:
-            self.run(
+            version_text = self.run(
                 [
+                    self.venv_python,
+                    "-c",
+                    "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')",
+                ],
+                cwd=self.checkout,
+            ).stdout.strip()
+            try:
+                major, minor = (int(item) for item in version_text.split(".")[:2])
+            except ValueError as exc:
+                raise AcceptanceError(f"could not determine the fresh venv Python version: {version_text}") from exc
+            if (major, minor) < (3, 13):
+                requirements = self.checkout / "requirements-pyspice-tested.txt"
+                if not requirements.is_file():
+                    raise AcceptanceError("requirements-pyspice-tested.txt is missing from the checkout")
+                pyspice_requirements = str(requirements)
+                install_args = [
+                    self.venv_python,
+                    "-m",
+                    "pip",
+                    "install",
+                    "--disable-pip-version-check",
+                    "-q",
+                    "-r",
+                    str(requirements),
+                ]
+            else:
+                pyspice_requirements = "resolver-selected (Python 3.13+)"
+                install_args = [
                     self.venv_python,
                     "-m",
                     "pip",
@@ -351,10 +380,8 @@ class Acceptance:
                     "--disable-pip-version-check",
                     "-q",
                     "PySpice==1.5",
-                ],
-                cwd=self.checkout,
-                timeout=900,
-            )
+                ]
+            self.run(install_args, cwd=self.checkout, timeout=900)
         names = ["power-electronics-ai-sim", "jsonschema"]
         if self.pyspice:
             names.append("PySpice")
@@ -376,12 +403,22 @@ class Acceptance:
         missing = [name for name in names if not versions.get(name)]
         if missing:
             raise AcceptanceError(f"fresh install is missing required packages: {missing}")
+        dependency_check = self.run(
+            [self.venv_python, "-m", "pip", "check"],
+            cwd=self.checkout,
+            expect=(0, 1),
+        )
+        if dependency_check.returncode != 0:
+            raise AcceptanceError(f"pip check is not clean: {dependency_check.stdout[-1000:]}")
         summary = f"{self.install_mode} install, jsonschema {versions['jsonschema']}"
         if versions.get("PySpice"):
             summary += f", PySpice {versions['PySpice']} (reference construction path)"
+        summary += ", pip check clean"
         return {
             "mode": self.install_mode,
             "pip_stdout_tail": completed.stdout[-500:],
+            "pyspice_requirements": pyspice_requirements,
+            "pip_check": "clean",
             "packages": versions,
             "summary": summary,
         }

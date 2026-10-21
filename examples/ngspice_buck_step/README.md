@@ -5,7 +5,9 @@ switching asynchronous Buck circuit through its object API; the generated
 netlist is executed by a separately installed ngspice console executable.
 
 ```powershell
-pip install "PySpice==1.5"
+# dedicated Python 3.10-3.12 environment
+pip install -r requirements-pyspice-tested.txt
+python -m pip check
 pe-sim backend doctor --name ngspice
 pe-sim run examples/ngspice_buck_step/config.json --backend ngspice-buck --model-builder pyspice
 ```
