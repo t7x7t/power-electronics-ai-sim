@@ -37,11 +37,16 @@ from .workbench_export import export_run_to_workbench_fixture
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Auditable power-electronics simulation runtime")
-    parser.add_argument("--version", action="version", version="0.3.1")
+    parser.add_argument("--version", action="version", version="0.3.2")
     sub = parser.add_subparsers(dest="command")
     run = sub.add_parser("run", help="run an experiment from JSON config")
     run.add_argument("config", type=Path)
-    run.add_argument("--backend", choices=("fake", "fake-load", "buck", "boost", "ngspice-buck"), default="fake")
+    run.add_argument(
+        "--backend",
+        choices=("fake", "fake-load", "buck", "boost", "ngspice-buck"),
+        default=None,
+        help="backend adapter; defaults to the plant_id mapping and must match it",
+    )
     run.add_argument("--mode", choices=("exploratory", "formal_comparison"), default="exploratory")
     run.add_argument(
         "--ngspice",
@@ -54,10 +59,6 @@ def main(argv: list[str] | None = None) -> int:
         default="native",
         help="netlist builder for the ngspice-buck backend; 'pyspice' requires the optional PySpice install",
     )
-    demo = sub.add_parser("psfb-step", help="run the PSFB reference idealized load-step")
-    demo.add_argument("--output-dir", type=Path, default=Path("runs"))
-    demo.add_argument("--run-id", default="psfb-pi-step")
-    demo.add_argument("--mode", choices=("exploratory", "formal_comparison"), default="exploratory")
     status = sub.add_parser("git-status", help="inspect Git worktree readiness without modifying it")
     status.add_argument("path", nargs="?", type=Path, default=Path.cwd())
     environment = sub.add_parser("environment-check", help="check the verified and supported Python environment")
@@ -132,13 +133,12 @@ def main(argv: list[str] | None = None) -> int:
             # constructs an ExperimentSpec.  This prevents unknown or misspelled
             # fields from being silently ignored at the CLI boundary.
             validate_experiment_document(document)
+            backend = _select_backend(document, args.backend)
             spec = ExperimentSpec.from_dict(document)
-            plant = _build_plant(args.backend, spec.plant_config, spec.timebase, args.ngspice, args.model_builder)
-            controller = FakePIController(kp=float(spec.controller_config.get("kp", 1.0)))
+            plant = _build_plant(backend, spec.plant_config, spec.timebase, args.ngspice, args.model_builder)
+            _validate_plant_adapter(backend, plant)
+            controller = _build_controller(spec)
             result = Runner().run(spec, plant, controller, mode=args.mode)
-        elif args.command == "psfb-step":
-            spec = ExperimentSpec("psfb_pi_step", args.run_id, "psfb-ideal", "pi", Timebase(duration_s=0.02, control_period_s=0.001), input_schedule=({"time_s": 0.01, "vref": 0.8},), output_dir=str(args.output_dir))
-            result = Runner().run(spec, FakePlant(gain=1.0, tau_s=0.004), FakePIController(kp=1.8), mode=args.mode)
         elif args.command == "git-status":
             print(json.dumps(analyze_git_worktree(args.path).to_dict(), sort_keys=True))
             return 0
@@ -197,19 +197,87 @@ def main(argv: list[str] | None = None) -> int:
         # therefore covered here as well.
         print(json.dumps({"status": "CONFIG_REJECTED", "error": str(exc)}, sort_keys=True))
         return 2
-    print(json.dumps({"status": result.status, "run_dir": str(result.run_dir), "qualification": result.qualification}, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "status": result.status,
+                "run_dir": str(result.run_dir),
+                "backend": backend,
+                "plant_id": spec.plant_id,
+                "plant_class": type(plant).__name__,
+                "qualification": result.qualification,
+            },
+            sort_keys=True,
+        )
+    )
     # A completed and qualified run is the normal successful CLI outcome.
     # Keep RUN_OK accepted for compatibility with callers that disable or
     # defer post-run qualification in a custom integration.
     return 0 if result.status in {"RUN_OK", "QUALIFIED"} else 1
 
 
+_PLANT_BACKENDS = {
+    "fake": "fake",
+    "fake-load": "fake-load",
+    "buck": "buck",
+    "boost": "boost",
+    "ngspice-buck": "ngspice-buck",
+}
+_BACKEND_CLASSES = {
+    "fake": "FakePlant",
+    "fake-load": "FakeLoadPlant",
+    "buck": "BuckPlant",
+    "boost": "BoostPlant",
+    "ngspice-buck": "NgspiceBuckPlant",
+}
+
+
+def _select_backend(document: dict[str, object], requested: str | None) -> str:
+    """Map plant_id to a reviewed backend and fail closed on mismatch."""
+
+    plant_id = str(document.get("plant_id", ""))
+    expected = _PLANT_BACKENDS.get(plant_id)
+    if expected is None:
+        raise ValueError(
+            f"plant_id {plant_id!r} has no reviewed CLI backend; supported: {sorted(_PLANT_BACKENDS)}"
+        )
+    backend = requested or expected
+    if backend != expected:
+        raise ValueError(
+            f"plant_id {plant_id!r} requires --backend {expected!r}, not {backend!r}"
+        )
+    return backend
+
+
+def _validate_plant_adapter(backend: str, plant: object) -> None:
+    """Reject a runtime adapter that does not match the declared backend."""
+
+    expected = _BACKEND_CLASSES.get(backend)
+    actual = type(plant).__name__
+    if expected is not None and actual != expected:
+        raise ValueError(f"backend {backend!r} built {actual!r}, expected {expected!r}")
+
+
+def _build_controller(spec: ExperimentSpec):
+    """Build the reviewed PI controller from validated configuration."""
+
+    if spec.controller_id != "pi":
+        raise ValueError(
+            f"unsupported controller_id {spec.controller_id!r}; supported: ['pi']"
+        )
+    return FakePIController.from_config(spec.controller_config)
+
+
 def _build_plant(backend: str, config: dict[str, object], timebase: Timebase | None = None, ngspice_executable: str | None = None, model_builder: str = "native"):
     """Instantiate a named backend from JSON-safe configuration values."""
-    if backend == "fake":
-        return FakePlant()
-    if backend == "fake-load":
-        return FakeLoadPlant()
+    if backend in {"fake", "fake-load"}:
+        allowed = {"gain", "tau_s"}
+        unknown = set(config) - allowed
+        if unknown:
+            raise ValueError(f"unsupported {backend} plant_config fields: {sorted(unknown)}")
+        values = dict(config)
+        plant_type = FakePlant if backend == "fake" else FakeLoadPlant
+        return plant_type(**values)
     if backend == "ngspice-buck":
         return _build_ngspice_buck(config, timebase, ngspice_executable, model_builder)
     defaults = {

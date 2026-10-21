@@ -262,7 +262,7 @@ test command, commit/tag, environment, reviewer, and remaining limitations.
 The Stage 3 incremental contract update is documented in
 `docs/12_public_contracts_stage3_v1.md` and was locally verified with
 `pytest -q --basetemp .tmp/pytest-stage3` (27 passed) plus a successful
-`psfb-step` CLI smoke run. The update does not claim physical model validity.
+Buck-fixture CLI smoke run. The update does not claim physical model validity.
 
 The Stage 4 L1 reference increment is documented in
 `docs/13_stage4_reference_plants_v0.md` and was locally verified with
@@ -368,11 +368,14 @@ wheel. Regression coverage is in `tests/test_packaging.py`.
 
 An independent new-user test on 2026-10-22 is recorded in
 `docs/37_user_discovery_backlog_v1.md`. It fixed the onboarding command typo
-(`--name ngspice`) and the PySpice/NumPy dependency conflict with
-`requirements-pyspice-tested.txt`. The functional follow-ups remain backlog,
-not release claims: CLI PI/PID/feedforward controller configuration and
-compatibility, switching-level topology coverage, and documented access to
-switching-resolution waveforms for ripple/loss analysis.
+(`--name ngspice`), the PySpice/NumPy dependency conflict with
+`requirements-pyspice-tested.txt`, backend selection (CLI now maps `plant_id`
+to a reviewed backend and rejects mismatches), the false PI claim (real
+integral state, limits, anti-windup, checkpoint/restore, strict configuration
+keys), and removed the misleading PSFB fake example/CLI. The functional
+follow-ups remain backlog, not release claims: PID/feedforward controller
+configuration and registry, switching-level topology coverage, and documented
+access to switching-resolution waveforms for ripple/loss analysis.
 
 ### Stage 10 restricted post-processing increment (current)
 

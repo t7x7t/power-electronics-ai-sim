@@ -151,7 +151,11 @@ def test_malformed_check_report_fails_closed(tmp_path):
 
 
 def test_controller_state_update_is_serialized_for_checkpoint(tmp_path):
-    class Stateful(FakePIController):
+    class Stateful:
+        def reset(self, controller_state, seed):
+            del seed
+            return dict(controller_state or {})
+
         def observe(self, measurement, command, timing, state):
             return ActionRequest(0.1, produced_time_s=timing["sample_time_s"], target_time_s=timing["sample_time_s"], state_update={"count": int(state.get("count", 0)) + 1})
 

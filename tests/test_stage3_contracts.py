@@ -124,8 +124,36 @@ def test_timebase_rejects_full_period_sample_offset():
         Timebase(control_period_s=0.001, sample_offset_s=0.001)
 
 
-def test_psfb_step_cli_accepts_command_schedule(tmp_path):
-    code = cli_main(["psfb-step", "--output-dir", str(tmp_path), "--run-id", "cli-regression"])
+def test_run_cli_accepts_command_schedule_and_infers_backend(tmp_path):
+    document = {
+        "schema_version": "0.1",
+        "experiment_id": "cli-schedule",
+        "run_id": "cli-regression",
+        "plant_id": "fake",
+        "controller_id": "pi",
+        "plant_config": {},
+        "controller_config": {"kp": 1.0},
+        "timebase": {"unit": "s", "control_period_s": 0.001, "duration_s": 0.01},
+        "initial_state": {"mode": "cold_start"},
+        "input_schedule": [{"time_s": 0.0, "vref": 0.5}],
+        "seed": 0,
+        "contracts": {
+            "safety": {
+                "id": "default-safety",
+                "hash": "c8af0de8cfeec979bf5fd17dbf1c819df90d6fc5a95fc3a2f53d84271ba0ef58",
+            },
+            "qualification": {
+                "id": "default-qualification",
+                "hash": "a3ef375ff21b886d76977854178c77a5bd397e551170fe13e4db9e606f9f121e",
+            },
+        },
+        "output": {"directory": str(tmp_path), "retention": "keep"},
+    }
+    config = tmp_path / "schedule.json"
+    config.write_text(json.dumps(document), encoding="utf-8")
+
+    code = cli_main(["run", str(config)])
+
     assert code == 0
     assert (tmp_path / "cli-regression" / "manifest.json").exists()
 

@@ -12,7 +12,7 @@ records the source status and a read-only worktree analysis in
 formal comparison baseline.
 
 ```powershell
-pe-sim psfb-step --mode exploratory --output-dir runs --run-id trial-001
+pe-sim run examples/buck_pi_step/config.json --backend buck --mode exploratory
 ```
 
 ## Formal comparison mode
@@ -23,7 +23,7 @@ uncommitted source or configuration change from being silently compared with
 another baseline.
 
 ```powershell
-pe-sim psfb-step --mode formal_comparison --output-dir runs --run-id baseline-001
+pe-sim run examples/buck_pi_step/config.json --backend buck --mode formal_comparison
 ```
 
 After making or reviewing changes, create a commit (or otherwise remove the

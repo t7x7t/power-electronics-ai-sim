@@ -72,10 +72,10 @@ and control algorithms remain in Plant/Controller adapters.
 
 v0 以 **Buck 参考电路（PySpice 构建 + ngspice 进程执行）**、统一 Runner、
 Manifest、受限后处理和只读可视化数据边界作为最小可发布切片。理想平均
-Buck/Boost 模型仅保留为确定性测试夹具，不再作为参考电路。`psfb-step` 仍保留为
-fake backend 的契约 smoke fixture，而不是 PSFB 电路模型。完整支持矩阵和明确
-排除项以 `docs/27_minimum_local_release_scope_v0.md` 为准；器件、电热、
-PSFB/LLC、学习和硬件结论均不因该切片而被隐式纳入。
+Buck/Boost 模型仅保留为确定性测试夹具，不再作为参考电路。fake backend 仅用于
+Runner/CLI 契约测试，不是任何 PSFB 电路模型。完整支持矩阵和明确排除项以
+`docs/27_minimum_local_release_scope_v0.md` 为准；器件、电热、PSFB/LLC、学习和
+硬件结论均不因该切片而被隐式纳入。
 
 ## 最小运行切片
 
@@ -84,12 +84,12 @@ PSFB/LLC、学习和硬件结论均不因该切片而被隐式纳入。
 ```powershell
 python -m pip install -e .
 pe-sim --help
-pe-sim psfb-step --output-dir runs --run-id demo
+pe-sim run examples/buck_pi_step/config.json --backend buck
 ```
 
-`psfb-step` 使用内置 fake backend 作为契约验收 fixture，不代表真实
-PySpice/Ngspice 物理结果。运行目录包含配置快照、事件、样本、资格/安全记录和
-带 SHA-256 的 `manifest.json`。真实 PSFB 适配器只有在 Gate 1/2 通过后才迁移。
+该命令使用内置的理想平均 Buck 测试夹具，不代表真实 PySpice/Ngspice 物理结果；
+参考电路请使用 `examples/ngspice_buck_step/`。运行目录包含配置快照、事件、样本、
+资格/安全记录和带 SHA-256 的 `manifest.json`。PSFB/LLC 不在当前项目中。
 
 ## Runner entry points
 
@@ -120,6 +120,21 @@ and comparison tests:
 pe-sim run examples/buck_pi_step/config.json --backend buck
 pe-sim run examples/boost_pi_step/config.json --backend boost
 ```
+
+### CLI configuration contract
+
+- `--backend` is optional only when it matches `plant_id`. A mismatch, an
+  unknown `plant_id`, or an unknown backend is rejected before a run directory
+  is created. The CLI output records the selected `backend`, `plant_id`, and
+  `plant_class`.
+- `controller_id` currently supports `pi`. `controller_config` accepts only
+  `kp`, `ki`, `output_min`, `output_max`, `anti_windup`, and `measurement_key`;
+  `ki` is a real integral term with integral clamping when limits are present.
+- `input_schedule` entries accept `time_s`, `vref`, `vin_v`/`input_voltage_v`,
+  and `load`/`load_ohm`/`load_resistance_ohm`. Unknown keys are rejected
+  instead of being silently ignored.
+- The ideal averaged Buck/Boost examples are test fixtures. The reviewed Buck
+  reference uses PySpice construction plus ngspice execution.
 
 ## Buck reference: PySpice construction + ngspice execution
 

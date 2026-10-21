@@ -114,12 +114,113 @@ class FakeLoadPlant(FakePlant):
 
 
 class FakePIController:
-    def __init__(self, kp: float = 1.0):
+    """Project-owned PI controller with an explicit integral state.
+
+    The class name is retained for compatibility with existing fixtures.  With
+    ``ki=0`` it reduces exactly to the previous proportional controller.  The
+    CLI constructs it with actuator limits ``[0, 1]`` so conditional
+    anti-windup is active; direct Python callers may omit the limits to retain
+    an unbounded proportional action.
+
+    ``ki`` is in duty-ratio per (volt * second), ``kp`` in duty-ratio per volt,
+    and ``kd`` is intentionally not implemented.  This is a fixture controller,
+    not a deployment or tuning claim.
+    """
+
+    _CONFIG_KEYS = frozenset(
+        {
+            "kp",
+            "ki",
+            "output_min",
+            "output_max",
+            "anti_windup",
+            "measurement_key",
+        }
+    )
+
+    def __init__(
+        self,
+        kp: float = 1.0,
+        ki: float = 0.0,
+        *,
+        output_min: float | None = None,
+        output_max: float | None = None,
+        anti_windup: bool = True,
+        measurement_key: str = "vout",
+    ):
         self.kp = float(kp)
+        self.ki = float(ki)
+        if not math.isfinite(self.kp) or not math.isfinite(self.ki):
+            raise ValueError("controller gains must be finite")
+        if (output_min is None) != (output_max is None):
+            raise ValueError("output_min and output_max must be provided together")
+        if output_min is not None:
+            self.output_min = float(output_min)
+            self.output_max = float(output_max)
+            if not math.isfinite(self.output_min) or not math.isfinite(self.output_max):
+                raise ValueError("controller output limits must be finite")
+            if not self.output_min < self.output_max:
+                raise ValueError("output_min must be smaller than output_max")
+        else:
+            self.output_min = None
+            self.output_max = None
+        if not isinstance(anti_windup, bool):
+            raise ValueError("anti_windup must be a boolean")
+        if not isinstance(measurement_key, str) or not measurement_key:
+            raise ValueError("measurement_key must be a non-empty string")
+        self.anti_windup = anti_windup
+        self.measurement_key = measurement_key
+        self._integral = 0.0
+        self._previous_time_s: float | None = None
         self.state: dict[str, Any] = {}
 
+    @classmethod
+    def from_config(cls, config: Mapping[str, Any] | None) -> "FakePIController":
+        """Build from JSON-safe configuration and reject unknown keys.
+
+        The CLI path supplies actuator limits by default so integral windup is
+        bounded for the reviewed duty-ratio plants.
+        """
+
+        values = dict(config or {})
+        unknown = set(values) - cls._CONFIG_KEYS
+        if unknown:
+            raise ValueError(f"unsupported pi controller_config fields: {sorted(unknown)}")
+        has_min = "output_min" in values
+        has_max = "output_max" in values
+        if has_min != has_max:
+            raise ValueError("output_min and output_max must be provided together")
+        if not has_min:
+            output_min, output_max = 0.0, 1.0
+        else:
+            output_min, output_max = float(values["output_min"]), float(values["output_max"])
+        anti_windup = values.get("anti_windup", True)
+        if not isinstance(anti_windup, bool):
+            raise ValueError("anti_windup must be a boolean")
+        return cls(
+            kp=float(values.get("kp", 1.0)),
+            ki=float(values.get("ki", 0.0)),
+            output_min=output_min,
+            output_max=output_max,
+            anti_windup=anti_windup,
+            measurement_key=str(values.get("measurement_key", "vout")),
+        )
+
     def manifest_identity(self) -> dict[str, Any]:
-        return {"kind": "fixture_controller", "module": type(self).__module__, "class": type(self).__qualname__, "parameters": {"kp": self.kp}, "capabilities": []}
+        return {
+            "kind": "fixture_controller",
+            "module": type(self).__module__,
+            "class": type(self).__qualname__,
+            "parameters": {
+                "kp": self.kp,
+                "ki": self.ki,
+                "output_min": self.output_min,
+                "output_max": self.output_max,
+                "anti_windup": self.anti_windup,
+                "measurement_key": self.measurement_key,
+            },
+            "capabilities": [],
+        }
 
     def backend_provenance(self) -> dict[str, Any]:
         """Declare the project-owned deterministic reference-controller path.
@@ -131,22 +232,86 @@ class FakePIController:
         return {
             "status": "known",
             "name": "pe_sim.reference_pi_controller",
-            "version": "reference-v1",
-            "solver_settings": {"arithmetic": "IEEE-754-binary64", "state": "stateless-proportional"},
+            "version": "reference-pi-v2",
+            "solver_settings": {
+                "arithmetic": "IEEE-754-binary64",
+                "state": "integral-state" if self.ki else "proportional-only",
+                "anti_windup": "integral-clamping" if self.anti_windup else "none",
+            },
             "limitations": ["project-owned reference controller; not a tuning or deployment claim"],
         }
 
     def reset(self, controller_state: Mapping[str, Any] | None, seed: int) -> Mapping[str, Any]:
         del seed
-        self.state = dict(controller_state or {})
+        state = dict(controller_state or {})
+        self.restore(state)
+        return self.snapshot()
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "integral": self._integral,
+            "previous_time_s": self._previous_time_s,
+        }
+
+    def restore(self, snapshot: Mapping[str, Any]) -> Mapping[str, Any]:
+        state = dict(snapshot or {})
+        self._integral = float(state.get("integral", 0.0))
+        if not math.isfinite(self._integral):
+            raise ValueError("controller integral state must be finite")
+        previous = state.get("previous_time_s")
+        self._previous_time_s = None if previous is None else float(previous)
+        if self._previous_time_s is not None and (
+            not math.isfinite(self._previous_time_s) or self._previous_time_s < 0.0
+        ):
+            raise ValueError("controller previous_time_s must be finite and non-negative")
+        self.state = self.snapshot()
         return dict(self.state)
 
-    def observe(self, measurement: Mapping[str, float], command: Mapping[str, Any], timing: Mapping[str, Any], state: Mapping[str, Any]) -> ActionRequest:
-        del state
-        key = str(command.get("measurement_key", "vout"))
+    def observe(
+        self,
+        measurement: Mapping[str, float],
+        command: Mapping[str, Any],
+        timing: Mapping[str, Any],
+        state: Mapping[str, Any],
+    ) -> ActionRequest:
+        del state  # The returned state_update is authoritative for the Runner.
+        key = str(command.get("measurement_key", self.measurement_key))
+        if key not in measurement:
+            raise ValueError(f"measurement does not contain {key!r}")
         error = float(command.get("vref", 1.0)) - float(measurement[key])
         now = float(timing["sample_time_s"])
-        return ActionRequest(value=self.kp * error, produced_time_s=now, target_time_s=now)
+        if not math.isfinite(error) or not math.isfinite(now):
+            raise ValueError("controller input must be finite")
+
+        period = timing.get("control_period_s")
+        dt = float(period) if period is not None else 0.0
+        if not math.isfinite(dt) or dt <= 0.0:
+            dt = now - self._previous_time_s if self._previous_time_s is not None else 1e-6
+        if not math.isfinite(dt) or dt <= 0.0:
+            dt = 1e-6
+
+        integral_candidate = self._integral + self.ki * error * dt if self.ki else 0.0
+        if self.output_min is not None and self.output_max is not None:
+            if self.anti_windup:
+                # Integral clamping keeps the stored state inside the actuator
+                # range instead of accumulating an unusable windup term.
+                integral_candidate = min(
+                    max(integral_candidate, self.output_min), self.output_max
+                )
+            output = self.kp * error + integral_candidate
+            output = min(max(output, self.output_min), self.output_max)
+        else:
+            output = self.kp * error + integral_candidate
+
+        self._integral = integral_candidate
+        self._previous_time_s = now
+        self.state = self.snapshot()
+        return ActionRequest(
+            value=output,
+            produced_time_s=now,
+            target_time_s=now,
+            state_update=dict(self.state),
+        )
 
 
 class Runner:

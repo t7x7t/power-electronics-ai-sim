@@ -8,10 +8,9 @@
 
 ## 1. MVP 目标
 
-在全新环境中，用一个命令运行项目自有的 L1 Buck 或 Boost 理想平均参考模型，并得到
-可校验的 Manifest、波形、指标和明确状态。`psfb-step` 保留为 fake backend 的
-契约 smoke fixture，不是 PSFB 理想模型。MVP 不包含器件、电热、在线学习、硬件接口
-或自动参数优化。
+在全新环境中，用一个命令运行项目自有的 L1 Buck 或 Boost 理想平均测试夹具，并得到
+可校验的 Manifest、波形、指标和明确状态。fake backend 仅用于 `tests/` 中的契约
+smoke，不是 PSFB 理想模型。MVP 不包含器件、电热、在线学习、硬件接口或自动参数优化。
 
 ## 2. 任务顺序
 

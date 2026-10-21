@@ -10,24 +10,27 @@ matrix, and none of the items below are implicit release claims.
 | --- | --- | --- |
 | UD-F1 | `backend list` / `setup` guidance printed `pe-sim backend setup ngspice ...`, but the CLI requires `--name ngspice` | Guidance in `registry.py` and the CLI `next_steps` now uses `--name ngspice`; regression tests assert it |
 | UD-F2 | Installing `PySpice==1.5` selected NumPy 2.x/current SciPy/ContourPy; restoring NumPy 1.26.4 left `pip check` broken | `requirements-pyspice-tested.txt` pins a compatible set (`numpy 1.26.4`, `scipy 1.13.1`, `matplotlib 3.9.4`, `contourpy 1.3.1`, PySpice 1.5); user acceptance runs `pip check` and records the result |
+| UD-F3 | `--backend` defaulted to `fake` while `plant_id` was ignored; a config declaring `ngspice-buck` could publish a FakePlant run | CLI now maps `plant_id` to a reviewed backend, rejects unknown/mismatched combinations before running, validates the adapter class, and prints the selected backend/plant class |
+| UD-F4 | The class named `FakePIController` implemented only `kp`; `ki` was silently ignored | Added a real integral state, output limits, integral-clamping anti-windup, checkpoint/restore, and strict `controller_config` validation. Unknown `input_schedule` keys are also rejected |
+| UD-F5 | The PSFB example and `psfb-step` CLI were fake-backend fixtures whose names implied a PSFB model | Removed from the release tree; PSFB remains a future reviewed topology, not a shipped example or CLI command |
 
 ## Functional follow-ups
 
 ### UD-01: CLI controller capability and compatibility
 
-**Finding:** `pe-sim run` always constructs `FakePIController` and exposes only
-`kp`, so it is proportional control, not a configurable PI/PID or feedforward
-workflow. Custom controllers require the Python API.
+**Finding:** the CLI now supports a true PI (`kp`, `ki`, limits, integral
+clamping), but it still lacks a controller registry, PID (derivative) action,
+feedforward/load compensation, and custom controller selection. Custom
+controllers require the Python API.
 
 **Required work:**
 
-- define a controller registry keyed by `controller_id` (at minimum `pi`, `pid`,
-  and the existing fixture controller), with explicit configuration schemas;
-- add integral/derivative state, output limits, anti-windup, derivative filter,
-  and measurement-key handling;
-- support optional feedforward/load compensation without hiding the control law;
+- define a controller registry keyed by `controller_id` (`pi`, `pid`, and the
+  existing fixture controller), with explicit configuration schemas;
+- add derivative state/filtering and feedforward/load compensation without
+  hiding the control law;
 - preserve backward compatibility for existing `controller_id: "pi"` and
-  `kp`-only configurations;
+  `kp`/`ki` configurations;
 - document that controller identity and parameters are recorded in the
   manifest;
 - add CLI, contract, checkpoint/restore, and end-to-end acceptance tests.

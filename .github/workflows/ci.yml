@@ -49,7 +49,7 @@ jobs:
           root = Path.cwd()
           experiment_schema = json.loads((root / "schemas/experiment.schema.json").read_text(encoding="utf-8"))
           manifest_schema = json.loads((root / "schemas/manifest.schema.json").read_text(encoding="utf-8"))
-          example = json.loads((root / "examples/psfb_pi_step/config.json").read_text(encoding="utf-8"))
+          example = json.loads((root / "examples/buck_pi_step/config.json").read_text(encoding="utf-8"))
           ngspice_example = json.loads((root / "examples/ngspice_buck_step/config.json").read_text(encoding="utf-8"))
           jsonschema.Draft202012Validator.check_schema(experiment_schema)
           jsonschema.Draft202012Validator.check_schema(manifest_schema)
@@ -65,5 +65,5 @@ jobs:
       - name: Run CLI smoke test
         run: |
           python -m pe_sim.cli --help
-          python -m pe_sim.cli psfb-step --output-dir .ci-runs --run-id ci-smoke
-          test -f .ci-runs/ci-smoke/manifest.json
+          python -m pe_sim.cli run examples/buck_pi_step/config.json --backend buck
+          test -f runs/buck-reference/manifest.json
