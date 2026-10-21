@@ -31,6 +31,14 @@ _PLANT_PARAMETERS = (
     "load_resistance_ohm",
     "integration_step_s",
 )
+_SWITCHING_PLANT_PARAMETERS = (
+    "input_voltage_v",
+    "inductance_h",
+    "capacitance_f",
+    "load_resistance_ohm",
+    "switching_frequency_hz",
+    "control_period_s",
+)
 
 
 class WorkbenchExportError(ValueError):
@@ -139,15 +147,41 @@ def _published_manifest(run_dir: Path) -> Mapping[str, Any]:
     return manifest
 
 
-def _reference_plant(manifest: Mapping[str, Any]) -> BuckPlant | BoostPlant:
+def _topology_descriptor(manifest: Mapping[str, Any]) -> TopologyDescriptor:
+    """Build the reviewed descriptor for a supported published plant family.
+
+    The exporter never instantiates an unpaid solver: the averaged reference is
+    reconstructed from manifest parameters, while the switching reference only
+    needs its reviewed descriptor builder. Unknown families fail closed.
+    """
+
     plant = _mapping(manifest.get("plant"), "manifest plant")
     plant_id = plant.get("id")
     identity = _mapping(plant.get("identity"), "manifest plant identity")
     parameters = _mapping(identity.get("parameters"), "manifest plant parameters")
+    kind = identity.get("kind")
+
+    if kind == "ngspice_switching_reference":
+        if identity.get("topology") != "buck":
+            raise WorkbenchExportError(f"no reviewed workbench topology exporter for {plant_id!r}")
+        missing = set(_SWITCHING_PLANT_PARAMETERS) - set(parameters)
+        if missing:
+            raise WorkbenchExportError(
+                "manifest plant parameters are incomplete: " + ", ".join(sorted(missing))
+            )
+        try:
+            values = {name: float(parameters[name]) for name in _SWITCHING_PLANT_PARAMETERS}
+        except (TypeError, ValueError) as exc:
+            raise WorkbenchExportError(f"manifest plant parameters are invalid: {exc}") from exc
+        from types import SimpleNamespace
+        from .topology import ngspice_buck_topology_descriptor
+
+        return ngspice_buck_topology_descriptor(SimpleNamespace(**values))
+
     if (
         plant_id not in {"buck", "boost"}
         or identity.get("topology") != plant_id
-        or identity.get("kind") != "ideal_averaged_reference"
+        or kind != "ideal_averaged_reference"
     ):
         raise WorkbenchExportError(f"no reviewed workbench topology exporter for {plant_id!r}")
     missing = set(_PLANT_PARAMETERS) - set(parameters)
@@ -155,9 +189,10 @@ def _reference_plant(manifest: Mapping[str, Any]) -> BuckPlant | BoostPlant:
         raise WorkbenchExportError("manifest plant parameters are incomplete: " + ", ".join(sorted(missing)))
     try:
         kwargs = {name: float(parameters[name]) for name in _PLANT_PARAMETERS}
-        return BuckPlant(**kwargs) if plant_id == "buck" else BoostPlant(**kwargs)
+        plant_view = BuckPlant(**kwargs) if plant_id == "buck" else BoostPlant(**kwargs)
     except (TypeError, ValueError) as exc:
         raise WorkbenchExportError(f"manifest plant parameters are invalid: {exc}") from exc
+    return export_topology_descriptor(plant_view)
 
 
 def _provenance(manifest: Mapping[str, Any]) -> TraceProvenance:
@@ -310,7 +345,7 @@ def load_run_workbench_contracts(run_dir: str | Path) -> WorkbenchContracts:
     manifest = _published_manifest(source)
     samples = _load_json(source / "samples.json", "samples.json")
     provenance = _provenance(manifest)
-    topology = export_topology_descriptor(_reference_plant(manifest))
+    topology = _topology_descriptor(manifest)
     trace = _samples_to_trace(samples, provenance)
     outputs = _outputs_from_trace(trace, provenance)
     return WorkbenchContracts(

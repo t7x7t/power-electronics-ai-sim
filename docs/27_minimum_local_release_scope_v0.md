@@ -37,12 +37,13 @@ not a claim that the model represents a physical circuit accurately.
 | Area | v0 release level | Scope that may be claimed | Important boundary |
 | --- | --- | --- | --- |
 | Python simulation infrastructure | Supported locally | The documented `run_experiment(...)`, compatible `Runner().run(...)`, CLI, lifecycle, audit, checkpoint/resume, artifact, provenance, safety, validity, and qualification boundaries. | It orchestrates adapters; it is not a general solver, real-time system, or engineering decision maker. |
-| Project-owned Buck and Boost adapters | Verified L1 references | Deterministic ideal averaged continuous-conduction Buck and Boost reference Plants through the documented CLI/configuration and public Plant contract. | Only the Stage 15 equation, timing, boundary, recovery, and evidence checks are covered. Parameters are reproducible examples, not rated designs. |
+| Deterministic averaged Buck/Boost models | Test fixtures only | Ideal averaged continuous-conduction Buck and Boost Plants used by unit, boundary, recovery, comparison, and post-processing tests. | These models are retained for deterministic infrastructure tests and are not the Buck reference circuit. They do not represent switching behavior or physical performance. |
+| Buck reference: PySpice construction + ngspice execution | Verified local reference (opt-in) | The referenced asynchronous Buck is constructed with the PySpice object API, rendered as a deterministic netlist, and executed by the reviewed ngspice process adapter with audited window evidence. | One ideal switching Buck circuit only, as defined in `docs/31`. Requires separate PySpice 1.5 and ngspice installations. PySpice native solver execution is not used or claimed. No device, magnetic, thermal, or loss model; no cross-machine numerical-equivalence claim. |
 | Fake/FakeLoad fixtures and `psfb-step` | Test fixture only | Contract, CLI, and Runner smoke verification. | `psfb-step` uses a fake backend. It is not a PSFB electrical model and must not be described as a PSFB reference result. |
 | Controller examples | Reference integration only | The included simple PI-style reference controllers demonstrate the Controller boundary. | No controller quality, tuning suitability, stability margin, or deployment claim is made. |
 | Stage 10/12 post-processing | Restricted local utility | Versioned metrics, comparison evidence, and bounded evidence classification for eligible packages. | It reports the limits of recorded evidence; it cannot validate physics, controller quality, or product conclusions. |
 | Visualization contracts | Supported public data boundary | Versioned `TopologyDescriptor`, `TraceDataset`, and `OutputDataset` JSON documents with explicit publication and provenance rules. | A descriptor or rendering is not electrical truth and cannot alter a run, topology, or model. |
-| Workbench exporter and local service | Constrained local adapter | Export or read-only HTTP display of integrity-checked, published project-owned L1 Buck/Boost packages through the three visualization contracts. | No simulation control, package writes, arbitrary model export, credentials, multi-user operation, or remote deployment is part of this release. The local service is intended to bind only to loopback. |
+| Workbench exporter and local service | Constrained local adapter | Export or read-only HTTP display of integrity-checked, published project-owned Buck/Boost packages, including the reviewed switching-level ngspice Buck package, through the three visualization contracts. | No simulation control, package writes, arbitrary model export, credentials, multi-user operation, or remote deployment is part of this release. The local service is intended to bind only to loopback. |
 | `workbench/` | Source-distributed reference consumer | A minimal TypeScript/Vite workbench for read-only topology, waveform, and output display, built locally from source. | It is not a product UI, topology editor, plugin host, or separately versioned/distributed static application. |
 | External visualization consumers | Supported extension boundary | A user or AI Agent may build a separate consumer against the three versioned JSON contracts or local service. | Consumers receive no Runner, Plant, Controller, mutation, reflection, or arbitrary browser-plugin authority. |
 
@@ -50,8 +51,12 @@ not a claim that the model represents a physical circuit accurately.
 
 The release does not support, verify, or make an engineering claim about:
 
-- PySpice or Ngspice execution, solver convergence, executable supervision, or
-  cross-machine numerical equivalence;
+- PySpice native solver linkage/execution, cross-machine numerical equivalence
+  for an external solver, solver convergence for user-authored circuits, or any
+  device, magnetic, parasitic, thermal, or loss model beyond the single
+  reviewed switching Buck reference defined in `docs/31`. PySpice is used only
+  as the optional circuit-construction frontend for that reference; execution
+  remains on the reviewed ngspice process boundary;
 - PSFB or LLC electrical models, switching/PWM waveforms, device models,
   parasitics, losses, magnetics, thermal behavior, rated power, or component
   selection;
@@ -119,6 +124,13 @@ checkout, and explicit
 generated evidence is limited to functional deterministic Python reference
 behavior and must not be described as physical, thermal, switching, Ngspice,
 hardware, or product validation.
+
+An end-user acceptance run is recommended before a release that advertises the
+ngspice backend: `scripts/user_acceptance.py --require-ngspice`. It starts from
+a clean checkout snapshot and verifies installation, onboarding, simulation,
+determinism, export, and the external consumer. Without an installed
+simulator, the report is explicitly `partial`; it is never treated as a pass.
+See `docs/36_user_acceptance_v0.md`.
 
 ## Responsibility boundary
 

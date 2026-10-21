@@ -196,6 +196,23 @@ class EnvironmentCheck:
         }
 
 
+def _resolve_project_file(name: str, explicit: str | Path | None) -> Path:
+    """Locate a release-policy file in the checkout or the current directory.
+
+    Editable installs expose the checkout through ``__file__``.  A wheel
+    install does not, so a user running the check from the cloned checkout is
+    still able to compare against its pinned requirement set.
+    """
+
+    if explicit is not None:
+        return Path(explicit)
+    candidate = _project_root() / name
+    if candidate.exists():
+        return candidate
+    working = Path.cwd() / name
+    return working if working.exists() else candidate
+
+
 def check_recommended_environment(
     requirements_path: str | Path | None = None,
     pyproject_path: str | Path | None = None,
@@ -211,9 +228,8 @@ def check_recommended_environment(
     not available; the supported range is still checked.
     """
 
-    root = _project_root()
-    requirements = Path(requirements_path) if requirements_path else root / "requirements-tested.txt"
-    pyproject = Path(pyproject_path) if pyproject_path else root / "pyproject.toml"
+    requirements = _resolve_project_file("requirements-tested.txt", requirements_path)
+    pyproject = _resolve_project_file("pyproject.toml", pyproject_path)
     verified = _read_verified(requirements)
     python_supported, supported = _read_supported(pyproject)
     python_result = _python_status(verified_python_version, python_supported)

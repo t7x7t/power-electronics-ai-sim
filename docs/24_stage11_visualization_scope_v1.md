@@ -125,7 +125,7 @@ The minimum core is complete when all of the following are locally verified:
 2. Publishers are explicit and fail closed for unregistered or inaccessible
    values.  The default Runner behavior and Controller measurement boundary are
    unchanged.
-3. Buck and Boost reference adapters can provide the applicable semantic
+3. The averaged Buck and Boost test fixtures can provide the applicable semantic
    topology, trace, and structured outputs without changing their equations or
    published run package bytes.
 4. Provenance is retained where a source run exists, and tampered, missing, or

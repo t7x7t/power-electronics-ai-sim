@@ -1,0 +1,31 @@
+{
+  "schema_version": "0.1",
+  "experiment_id": "ngspice_buck_pi_step",
+  "run_id": "ngspice-buck-reference",
+  "plant_id": "ngspice-buck",
+  "controller_id": "pi",
+  "plant_config": {
+    "input_voltage_v": 12.0,
+    "inductance_h": 0.0001,
+    "capacitance_f": 0.00047,
+    "load_resistance_ohm": 10.0,
+    "switching_frequency_hz": 100000.0,
+    "control_period_s": 0.00001,
+    "switch_on_resistance_ohm": 0.001,
+    "switch_off_resistance_ohm": 1000000000.0,
+    "diode_saturation_current_a": 1e-12,
+    "diode_emission_coefficient": 0.02,
+    "timeout_s": 60.0,
+    "keep_artifacts": false
+  },
+  "controller_config": {"kp": 0.2},
+  "timebase": {"unit": "s", "control_period_s": 0.00001, "duration_s": 0.0001},
+  "initial_state": {"mode": "cold_start"},
+  "input_schedule": [],
+  "seed": 0,
+  "contracts": {
+    "safety": {"id": "default-safety", "hash": "c8af0de8cfeec979bf5fd17dbf1c819df90d6fc5a95fc3a2f53d84271ba0ef58"},
+    "qualification": {"id": "default-qualification", "hash": "a3ef375ff21b886d76977854178c77a5bd397e551170fe13e4db9e606f9f121e"}
+  },
+  "output": {"directory": "runs", "retention": "keep"}
+}

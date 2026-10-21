@@ -297,11 +297,51 @@ def boost_topology_descriptor(plant: Any | None = None) -> TopologyDescriptor:
     return TopologyDescriptor("boost", components, nets, metadata={"model_level": "L1", "model_kind": "ideal_averaged_reference"})
 
 
+def ngspice_buck_topology_descriptor(plant: Any | None = None) -> TopologyDescriptor:
+    """Build the semantic graph for the switching-level ngspice Buck reference.
+
+    The descriptor names the real simulation elements (PWM source, controlled
+    switch, freewheeling diode) rather than the averaged behavioural blocks.
+    It is a display/contract identity, not a netlist or an electrical truth
+    claim.
+    """
+
+    params = _plant_parameters(plant)
+    nets = tuple(TopologyNet(net_id, label=label, kind=kind) for net_id, label, kind in (
+        ("vin", "Vin", "electrical"), ("sw", "Switch node", "electrical"),
+        ("vout", "Vout", "electrical"), ("gnd", "GND", "reference"),
+        ("pwm", "PWM control", "control"),
+    ))
+    components = (
+        _component("vin_source", "voltage_source", (("positive", "vin", "output"), ("negative", "gnd", "passive")), parameters={"voltage_v": params.get("input_voltage_v")}, symbol_id="source.dc"),
+        _component("pwm_source", "pulse_source", (("positive", "pwm", "output"), ("negative", "gnd", "passive")), parameters={"switching_frequency_hz": params.get("switching_frequency_hz")}, symbol_id="source.pulse"),
+        _component("switch", "voltage_controlled_switch", (("input", "vin", "input"), ("output", "sw", "output"), ("control", "pwm", "control")), parameters={}, symbol_id="switch.ideal"),
+        _component("diode", "freewheeling_diode", (("anode", "gnd", "passive"), ("cathode", "sw", "passive")), parameters={}, symbol_id="diode"),
+        _component("inductor", "inductor", (("input", "sw", "passive"), ("output", "vout", "passive")), parameters={"inductance_h": params.get("inductance_h")}, symbol_id="inductor"),
+        _component("capacitor", "capacitor", (("positive", "vout", "passive"), ("negative", "gnd", "passive")), parameters={"capacitance_f": params.get("capacitance_f")}, symbol_id="capacitor"),
+        _component("load", "resistor_load", (("positive", "vout", "passive"), ("negative", "gnd", "passive")), parameters={"resistance_ohm": params.get("load_resistance_ohm")}, symbol_id="resistor"),
+    )
+    return TopologyDescriptor(
+        "buck",
+        components,
+        nets,
+        metadata={
+            "model_level": "L2",
+            "model_kind": "ngspice_switching_reference",
+            "backend": "ngspice",
+            "control_period_s": params.get("control_period_s"),
+        },
+    )
+
+
 def export_topology_descriptor(plant: Any) -> TopologyDescriptor:
     """Export a known reference topology; unknown custom plants fail closed."""
 
     topology = str(getattr(plant, "topology", ""))
+    model_kind = str(getattr(plant, "model_kind", "ideal_averaged_reference"))
     if topology == "buck":
+        if model_kind == "ngspice_switching_reference":
+            return ngspice_buck_topology_descriptor(plant)
         return buck_topology_descriptor(plant)
     if topology == "boost":
         return boost_topology_descriptor(plant)
@@ -344,4 +384,14 @@ def topology_to_adjacency(descriptor: TopologyDescriptor) -> dict[str, list[dict
 def _plant_parameters(plant: Any | None) -> dict[str, Any]:
     if plant is None:
         return {}
-    return {name: getattr(plant, name, None) for name in ("input_voltage_v", "inductance_h", "capacitance_f", "load_resistance_ohm")}
+    return {
+        name: getattr(plant, name, None)
+        for name in (
+            "input_voltage_v",
+            "inductance_h",
+            "capacitance_f",
+            "load_resistance_ohm",
+            "switching_frequency_hz",
+            "control_period_s",
+        )
+    }

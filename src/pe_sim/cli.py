@@ -6,22 +6,54 @@ from pathlib import Path
 from .contracts import ExperimentSpec, Timebase, validate_experiment_document
 from .runtime import FakeLoadPlant, FakePIController, FakePlant, Runner
 from .reference_plants import BuckPlant, BoostPlant
+from .backends import (
+    BackendConfigError,
+    BackendNotFoundError,
+    NativeBuckNetlistBuilder,
+    NgspiceBuckPlant,
+    NgspiceExecutableAdapter,
+    PyspiceBuckNetlistBuilder,
+    PyspiceUnavailableError,
+    config_template,
+    current_platform,
+    get_backend,
+    list_backends,
+    pyspice_version,
+    resolve_backend_executable,
+    resolve_ngspice_executable,
+    scan_for_backend,
+    scan_for_ngspice,
+    user_config_path,
+    write_user_config,
+)
 from .dirty import FormalComparisonError, analyze_git_worktree
 from .environment import check_recommended_environment
 from .provenance import ExecutableBackendAdapter
 from .reproducibility import audit_repeated_runs, compare_runs, cross_machine_evidence
 from .baseline import build_baseline_report
 from .visualization_service import serve as serve_visualization
+from .workbench_export import export_run_to_workbench_fixture
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Auditable power-electronics simulation runtime")
-    parser.add_argument("--version", action="version", version="0.2.2")
+    parser.add_argument("--version", action="version", version="0.3.0")
     sub = parser.add_subparsers(dest="command")
     run = sub.add_parser("run", help="run an experiment from JSON config")
     run.add_argument("config", type=Path)
-    run.add_argument("--backend", choices=("fake", "fake-load", "buck", "boost"), default="fake")
+    run.add_argument("--backend", choices=("fake", "fake-load", "buck", "boost", "ngspice-buck"), default="fake")
     run.add_argument("--mode", choices=("exploratory", "formal_comparison"), default="exploratory")
+    run.add_argument(
+        "--ngspice",
+        default=None,
+        help="reviewed ngspice executable; defaults to PE_SIM_NGSPICE or PATH",
+    )
+    run.add_argument(
+        "--model-builder",
+        choices=("native", "pyspice"),
+        default="native",
+        help="netlist builder for the ngspice-buck backend; 'pyspice' requires the optional PySpice install",
+    )
     demo = sub.add_parser("psfb-step", help="run the PSFB reference idealized load-step")
     demo.add_argument("--output-dir", type=Path, default=Path("runs"))
     demo.add_argument("--run-id", default="psfb-pi-step")
@@ -33,6 +65,36 @@ def main(argv: list[str] | None = None) -> int:
     environment.add_argument("--pyproject", type=Path, default=None)
     environment.add_argument("--backend-executable", type=Path, default=None, help="optional external backend executable to query")
     environment.add_argument("--backend-name", default="external-backend")
+    environment.add_argument(
+        "--backend-profile",
+        choices=("executable", "ngspice"),
+        default="executable",
+        help="provenance profile used with --backend-executable",
+    )
+    backend = sub.add_parser("backend", help="inspect external simulator discovery and configuration")
+    backend_sub = backend.add_subparsers(dest="backend_command")
+    backend_sub.add_parser("list", help="list registered backends and their status")
+    guide = backend_sub.add_parser("guide", help="print installation guidance for a backend")
+    guide.add_argument("--name", default="ngspice")
+    guide.add_argument("--platform", choices=("windows", "linux", "macos"), default=None)
+    setup = backend_sub.add_parser("setup", help="detect a backend, verify it, and optionally save its path")
+    setup.add_argument("--name", default="ngspice")
+    setup.add_argument("--executable", default=None, help="explicit executable path or command name")
+    setup.add_argument("--config", type=Path, default=None, help="explicit user-level backends.toml path")
+    setup.add_argument("--write-config", action="store_true", help="write the resolved path to the user-level config")
+    doctor = backend_sub.add_parser("doctor", help="resolve and inspect an external simulator executable")
+    doctor.add_argument("--name", default="ngspice")
+    doctor.add_argument("--executable", default=None, help="explicit executable path or command name")
+    doctor.add_argument("--config", type=Path, default=None, help="explicit user-level backends.toml path")
+    scan = backend_sub.add_parser("scan", help="search local directories for simulator executables")
+    scan.add_argument("--name", default="ngspice")
+    scan.add_argument("--root", action="append", type=Path, required=True, help="directory to search; repeatable")
+    scan.add_argument("--max-depth", type=int, default=4)
+    backend_sub.add_parser("config-path", help="print the user-level configuration path")
+    template = backend_sub.add_parser("template", help="print a copyable user configuration template")
+    template.add_argument("--executable", default="<path-to-ngspice-console-executable>")
+    template.add_argument("--name", default="ngspice")
+    template.add_argument("--minimum-major", type=int, default=40)
     compare = sub.add_parser("compare-runs", help="compare two published run directories")
     compare.add_argument("left", type=Path)
     compare.add_argument("right", type=Path)
@@ -49,12 +111,21 @@ def main(argv: list[str] | None = None) -> int:
     baseline = sub.add_parser("baseline-report", help="build a release/baseline evidence template")
     baseline.add_argument("manifest", type=Path)
     baseline.add_argument("--output", type=Path, default=None)
+    export = sub.add_parser(
+        "export-workbench",
+        help="export a verified run as the three read-only workbench contracts",
+    )
+    export.add_argument("run_dir", type=Path, help="published run-package directory")
+    export.add_argument("destination", type=Path, help="derived fixture directory outside the run package")
+    export.add_argument("--overwrite", action="store_true", help="replace existing derived fixture files")
     service = sub.add_parser("visualization-serve", help="serve verified visualization contracts read-only")
     service.add_argument("--runs-root", type=Path, default=Path("runs"))
     service.add_argument("--host", default="127.0.0.1")
     service.add_argument("--port", type=int, default=8765)
     args = parser.parse_args(argv)
     try:
+        if args.command == "backend":
+            return _run_backend_command(args)
         if args.command == "run":
             document = json.loads(args.config.read_text(encoding="utf-8"))
             # Validate the serialized contract before the compatibility reader
@@ -62,7 +133,7 @@ def main(argv: list[str] | None = None) -> int:
             # fields from being silently ignored at the CLI boundary.
             validate_experiment_document(document)
             spec = ExperimentSpec.from_dict(document)
-            plant = _build_plant(args.backend, spec.plant_config)
+            plant = _build_plant(args.backend, spec.plant_config, spec.timebase, args.ngspice, args.model_builder)
             controller = FakePIController(kp=float(spec.controller_config.get("kp", 1.0)))
             result = Runner().run(spec, plant, controller, mode=args.mode)
         elif args.command == "psfb-step":
@@ -72,7 +143,12 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(analyze_git_worktree(args.path).to_dict(), sort_keys=True))
             return 0
         elif args.command == "environment-check":
-            adapters = () if args.backend_executable is None else (ExecutableBackendAdapter(args.backend_executable, name=args.backend_name),)
+            if args.backend_executable is None:
+                adapters = ()
+            elif args.backend_profile == "ngspice":
+                adapters = (NgspiceExecutableAdapter(args.backend_executable),)
+            else:
+                adapters = (ExecutableBackendAdapter(args.backend_executable, name=args.backend_name),)
             result = check_recommended_environment(args.requirements, args.pyproject, backend_adapters=adapters)
             print(json.dumps(result.to_dict(), sort_keys=True))
             return 0 if result.status == "pass" else 1
@@ -98,6 +174,14 @@ def main(argv: list[str] | None = None) -> int:
                 args.output.write_text(payload, encoding="utf-8")
                 print(json.dumps({"status": "written", "path": str(args.output)}, sort_keys=True))
             return 0
+        elif args.command == "export-workbench":
+            exported = export_run_to_workbench_fixture(
+                args.run_dir,
+                args.destination,
+                overwrite=args.overwrite,
+            )
+            print(json.dumps(exported.to_dict(), ensure_ascii=True, sort_keys=True, indent=2))
+            return 0
         elif args.command == "visualization-serve":
             serve_visualization(args.runs_root, args.host, args.port)
             return 0
@@ -120,12 +204,14 @@ def main(argv: list[str] | None = None) -> int:
     return 0 if result.status in {"RUN_OK", "QUALIFIED"} else 1
 
 
-def _build_plant(backend: str, config: dict[str, object]):
+def _build_plant(backend: str, config: dict[str, object], timebase: Timebase | None = None, ngspice_executable: str | None = None, model_builder: str = "native"):
     """Instantiate a named backend from JSON-safe configuration values."""
     if backend == "fake":
         return FakePlant()
     if backend == "fake-load":
         return FakeLoadPlant()
+    if backend == "ngspice-buck":
+        return _build_ngspice_buck(config, timebase, ngspice_executable, model_builder)
     defaults = {
         "input_voltage_v": 12.0,
         "inductance_h": 100e-6,
@@ -140,6 +226,222 @@ def _build_plant(backend: str, config: dict[str, object]):
     values.update(config)
     plant_type = BuckPlant if backend == "buck" else BoostPlant
     return plant_type(**values)
+
+
+def _build_ngspice_buck(config: dict[str, object], timebase: Timebase | None, ngspice_executable: str | None, model_builder: str = "native"):
+    """Build the reviewed switching-level Buck adapter with explicit evidence."""
+    defaults = {
+        "input_voltage_v": 12.0,
+        "inductance_h": 100e-6,
+        "capacitance_f": 470e-6,
+        "load_resistance_ohm": 10.0,
+        "switching_frequency_hz": 100e3,
+        "control_period_s": None,
+        "switch_on_resistance_ohm": 1e-3,
+        "switch_off_resistance_ohm": 1e9,
+        "diode_saturation_current_a": 1e-12,
+        "diode_emission_coefficient": 0.02,
+        "timeout_s": 30.0,
+        "sample_step_s": None,
+        "keep_artifacts": False,
+    }
+    values = dict(defaults)
+    unknown = set(config) - set(values)
+    if unknown:
+        raise ValueError(f"unsupported ngspice-buck plant_config fields: {sorted(unknown)}")
+    values.update(config)
+    control_period = values.pop("control_period_s")
+    if control_period is None:
+        if timebase is None:
+            raise ValueError("ngspice-buck requires control_period_s in plant_config or timebase")
+        control_period = timebase.control_period_s
+    try:
+        resolution = resolve_ngspice_executable(ngspice_executable)
+    except (BackendNotFoundError, BackendConfigError) as exc:
+        raise ValueError(str(exc)) from exc
+    if model_builder == "pyspice":
+        builder = PyspiceBuckNetlistBuilder()
+        try:
+            builder.check_available()
+        except PyspiceUnavailableError as exc:
+            raise ValueError(str(exc)) from exc
+    else:
+        builder = NativeBuckNetlistBuilder()
+    return NgspiceBuckPlant(
+        control_period_s=float(control_period),
+        ngspice_executable=resolution.executable,
+        netlist_builder=builder,
+        **values,
+    )
+
+
+def _run_backend_command(args) -> int:
+    """Inspect discovery and onboarding without modifying the checkout."""
+
+    if args.backend_command == "list":
+        print(
+            json.dumps(
+                {"platform": current_platform(), "backends": [item.to_dict() for item in list_backends()]},
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+
+    if args.backend_command == "config-path":
+        path = user_config_path()
+        print(json.dumps({"path": str(path), "exists": path.is_file()}, sort_keys=True))
+        return 0
+    if args.backend_command == "template":
+        print(
+            config_template(
+                args.executable,
+                backend=args.name,
+                minimum_major=args.minimum_major,
+            ),
+            end="",
+        )
+        return 0
+    if args.backend_command == "guide":
+        try:
+            descriptor = get_backend(args.name)
+        except KeyError as exc:
+            print(json.dumps({"status": "UNKNOWN_BACKEND", "error": str(exc)}, sort_keys=True))
+            return 2
+        platform = args.platform or current_platform()
+        print(
+            json.dumps(
+                {
+                    "status": descriptor.status,
+                    "backend": descriptor.name,
+                    "platform": platform,
+                    "kind": descriptor.kind,
+                    "notes": list(descriptor.notes),
+                    "install_recipes": [recipe.to_dict() for recipe in descriptor.recipes_for(platform)],
+                    "config_path": str(user_config_path()),
+                    "config_template": config_template(
+                        "<path-to-executable>",
+                        backend=descriptor.name,
+                        minimum_major=descriptor.minimum_major,
+                    )
+                    if descriptor.kind == "executable"
+                    else None,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
+    if args.backend_command == "scan":
+        try:
+            descriptor = get_backend(args.name)
+        except KeyError as exc:
+            print(json.dumps({"status": "UNKNOWN_BACKEND", "error": str(exc)}, sort_keys=True))
+            return 2
+        candidates = scan_for_backend(descriptor, args.root, max_depth=args.max_depth)
+        payload = {
+            "status": "FOUND" if candidates else "NOT_FOUND",
+            "backend": descriptor.name,
+            "roots": [str(Path(root)) for root in args.root],
+            "candidates": [
+                {"path": str(item), "preferred": item.name.lower() == (descriptor.console_sibling or "").lower()}
+                for item in candidates
+            ],
+            "config_template": config_template(
+                str(candidates[0]),
+                backend=descriptor.name,
+                minimum_major=descriptor.minimum_major,
+            )
+            if candidates
+            else None,
+        }
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0 if candidates else 1
+    if args.backend_command in {"doctor", "setup"}:
+        try:
+            descriptor = get_backend(args.name)
+        except KeyError as exc:
+            print(json.dumps({"status": "UNKNOWN_BACKEND", "error": str(exc)}, sort_keys=True))
+            return 2
+        config_path = args.config if args.config is not None else user_config_path()
+        if descriptor.kind == "library":
+            version = pyspice_version() if descriptor.name == "pyspice" else None
+            payload = {
+                "status": "known" if version else "NOT_FOUND",
+                "backend": descriptor.name,
+                "kind": descriptor.kind,
+                "version": version,
+                "notes": list(descriptor.notes),
+                "install_recipes": [recipe.to_dict() for recipe in descriptor.recipes_for()],
+                "config_path": str(config_path),
+            }
+            print(json.dumps(payload, indent=2, sort_keys=True))
+            return 0 if version else 1
+        if descriptor.status == "planned":
+            payload = {
+                "status": "PLANNED",
+                "backend": descriptor.name,
+                "notes": list(descriptor.notes),
+                "install_recipes": [recipe.to_dict() for recipe in descriptor.recipes_for()],
+                "config_path": str(config_path),
+            }
+            print(json.dumps(payload, indent=2, sort_keys=True))
+            return 1
+        try:
+            resolution = resolve_backend_executable(
+                descriptor,
+                args.executable,
+                config_path=args.config,
+            )
+        except (BackendNotFoundError, BackendConfigError) as exc:
+            payload = {
+                "status": "NOT_FOUND",
+                "backend": descriptor.name,
+                "error": str(exc),
+                "config_path": str(config_path),
+                "install_recipes": [recipe.to_dict() for recipe in descriptor.recipes_for()],
+                "next_steps": [
+                    f"install {descriptor.display_name} using one of the recipes above",
+                    f"then run: pe-sim backend setup {descriptor.name} --executable <path> --write-config",
+                ],
+            }
+            print(json.dumps(payload, indent=2, sort_keys=True))
+            return 1
+        evidence = dict(NgspiceExecutableAdapter(resolution.executable).backend_provenance())
+        payload = {
+            "status": evidence.get("status"),
+            "resolution": resolution.to_dict(),
+            "provenance": evidence,
+            "config_path": str(config_path),
+        }
+        if getattr(args, "write_config", False):
+            try:
+                written = write_user_config(descriptor, resolution.executable, config_path=args.config)
+            except BackendConfigError as exc:
+                payload["config_write_error"] = str(exc)
+                print(json.dumps(payload, indent=2, sort_keys=True))
+                return 2
+            payload["config_written"] = str(written)
+            payload["next_steps"] = [
+                f"verify: pe-sim backend doctor --name {descriptor.name}",
+                "run: pe-sim run examples/ngspice_buck_step/config.json --backend ngspice-buck",
+            ]
+        else:
+            payload["next_steps"] = [
+                "repeat with --write-config to save this path outside the repository",
+            ]
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0 if evidence.get("status") == "known" else 1
+    print(
+        json.dumps(
+            {
+                "status": "USAGE",
+                "error": "backend requires one of: list, guide, setup, doctor, scan, config-path, template",
+            },
+            sort_keys=True,
+        )
+    )
+    return 2
 
 
 if __name__ == "__main__":

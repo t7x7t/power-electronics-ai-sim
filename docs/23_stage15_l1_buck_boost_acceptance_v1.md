@@ -1,9 +1,14 @@
 # Stage 15: L1 Buck/Boost Acceptance
 
+> **Historical note (2026-10-21):** this acceptance slice covers deterministic
+> averaged test fixtures, not the release Buck reference. The referenced Buck
+> circuit is the PySpice-constructed switching model executed by ngspice, defined
+> in `docs/31`.
+
 ## Purpose and boundary
 
 This document defines the first acceptance slice for the project-owned
-`BuckPlant` and `BoostPlant` ideal averaged reference adapters. It verifies
+`BuckPlant` and `BoostPlant` ideal averaged test-fixture adapters. It verifies
 that the public contracts, deterministic integrator, Runner lifecycle, and
 the Stage 10/12 evidence hand-off work together for a small, reviewable
 experiment.

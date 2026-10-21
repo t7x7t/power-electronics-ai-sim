@@ -1,0 +1,16 @@
+# Copy this file to the user-level location; never commit the real file.
+#
+# Windows: %APPDATA%\pe-sim\backends.toml
+# Linux/macOS: $XDG_CONFIG_HOME/pe-sim/backends.toml or ~/.config/pe-sim/backends.toml
+#
+# You can print the exact path with:
+#   pe-sim backend config-path
+# and generate this template with:
+#   pe-sim backend template
+schema_version = "1.0"
+
+[ngspice]
+# Prefer the console build on Windows (ngspice_con.exe). The GUI build
+# (ngspice.exe) may open a window and ignore batch output.
+executable = "<path-to-ngspice-console-executable>"
+minimum_major = 40

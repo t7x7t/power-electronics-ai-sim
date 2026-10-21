@@ -1,6 +1,11 @@
 # Stage 4 reference Plant adapters
 
-Stage 4 adds two self-owned L1 reference adapters:
+> **Historical note (2026-10-21):** the averaged Buck and Boost models in this
+> document are retained as deterministic test fixtures. They are **not** the
+> release Buck reference. The referenced Buck circuit is the PySpice-constructed
+> switching model executed by ngspice, defined in `docs/31`.
+
+Stage 4 adds two self-owned averaged test-fixture adapters:
 
 - `pe_sim.reference_plants.BuckPlant`
 - `pe_sim.reference_plants.BoostPlant`

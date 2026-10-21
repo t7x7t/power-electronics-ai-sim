@@ -7,6 +7,7 @@ param(
     [string]$PythonExecutable = "py",
     [string]$PythonVersion = "3.12",
     [string]$VirtualEnvironment,
+    [string]$NgspiceExecutable,
     [switch]$ReuseVirtualEnvironment,
     [switch]$PreflightOnly
 )
@@ -165,11 +166,15 @@ function Record-InputDigests {
         "docs/28_release_toolchain_policy_v0.md",
         "docs/29_local_release_check_v0.md",
         "docs/30_stage11_browser_e2e_v0.md",
+        "docs/31_ngspice_backend_scope_v1.md",
+        "docs/32_ngspice_environment_lock_v0.md",
+        "docs/adr/0002-ngspice-process-boundary.md",
         "scripts/release_check.ps1",
         "scripts/generate_formal_demos.py",
         "src/pe_sim/default_contracts.py",
         "examples/buck_pi_step/config.json",
-        "examples/boost_pi_step/config.json"
+        "examples/boost_pi_step/config.json",
+        "examples/ngspice_buck_step/config.json"
     )) {
         Add-InputDigest $relative
     }
@@ -389,6 +394,25 @@ try {
     }
 
     Test-FormalDemoEvidence
+    if ($NgspiceExecutable) {
+        $ngspicePath = [System.IO.Path]::GetFullPath($NgspiceExecutable)
+        if (-not (Test-Path -LiteralPath $ngspicePath -PathType Leaf)) {
+            Add-Record "ngspice-environment" "fail" 1 "ngspice executable does not exist: $ngspicePath" "" "" | Out-Null
+            Add-NotRunRecord "ngspice-acceptance" "supplied ngspice executable does not exist"
+        } else {
+            $ngspiceEnvironmentOk = Invoke-NativeGate "ngspice-environment" $PythonPath @("-m", "pe_sim.cli", "environment-check", "--backend-profile", "ngspice", "--backend-executable", $ngspicePath)
+            if ($ngspiceEnvironmentOk) {
+                $env:PE_SIM_NGSPICE = $ngspicePath
+                Invoke-NativeGate "ngspice-acceptance" $PythonPath @("-m", "pytest", "-q", "tests/test_ngspice_real_backend.py", "--basetemp", (Join-Path $EvidenceDirectory "ngspice-basetemp"), "-o", "cache_dir=$EvidenceDirectory\\ngspice-cache") | Out-Null
+                Remove-Item Env:PE_SIM_NGSPICE -ErrorAction SilentlyContinue
+            } else {
+                Add-NotRunRecord "ngspice-acceptance" "blocked by ngspice environment provenance failure"
+            }
+        }
+    } else {
+        Add-NotRunRecord "ngspice-environment" "no -NgspiceExecutable was supplied; the external-simulator surface is not part of this evidence record"
+        Add-NotRunRecord "ngspice-acceptance" "no -NgspiceExecutable was supplied"
+    }
     $fixtureRoot = Join-Path $RepositoryRoot "tests\fixtures\visualization_service"
     $serviceStdout = Join-Path $EvidenceDirectory "visualization-service.stdout.log"
     $serviceStderr = Join-Path $EvidenceDirectory "visualization-service.stderr.log"

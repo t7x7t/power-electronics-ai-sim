@@ -50,10 +50,12 @@ jobs:
           experiment_schema = json.loads((root / "schemas/experiment.schema.json").read_text(encoding="utf-8"))
           manifest_schema = json.loads((root / "schemas/manifest.schema.json").read_text(encoding="utf-8"))
           example = json.loads((root / "examples/psfb_pi_step/config.json").read_text(encoding="utf-8"))
+          ngspice_example = json.loads((root / "examples/ngspice_buck_step/config.json").read_text(encoding="utf-8"))
           jsonschema.Draft202012Validator.check_schema(experiment_schema)
           jsonschema.Draft202012Validator.check_schema(manifest_schema)
           jsonschema.Draft202012Validator(experiment_schema).validate(example)
-          print("validated experiment schema and reference configuration")
+          jsonschema.Draft202012Validator(experiment_schema).validate(ngspice_example)
+          print("validated experiment schema and reference configurations")
           print(f"manifest schema title: {manifest_schema['title']}")
           PY
 

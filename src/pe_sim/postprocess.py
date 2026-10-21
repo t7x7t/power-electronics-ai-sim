@@ -23,7 +23,9 @@ from .artifacts import ArtifactWriter, artifact_index, canonical_json, manifest_
 
 _SOURCE_COMMIT_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$", re.IGNORECASE)
 _PUBLISHED_MARKER = "PUBLISHED"
-_ALLOWED_PLANT_CLASSES = frozenset({"FakePlant", "FakeLoadPlant", "BuckPlant", "BoostPlant"})
+_ALLOWED_PLANT_CLASSES = frozenset(
+    {"FakePlant", "FakeLoadPlant", "BuckPlant", "BoostPlant", "NgspiceBuckPlant"}
+)
 _ALLOWED_BACKEND_STATUSES = frozenset({"known", "not_declared", "not_assessed"})
 _METRIC_SCHEMA = "stage10-metrics-v1"
 _COMPARISON_SCHEMA = "stage10-metric-comparison-v1"

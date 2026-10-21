@@ -22,8 +22,9 @@ relicensed by this repository.
 ## Minimum local release scope
 
 The first shareable release is a deliberately narrow, local, source-distributed
-simulation-infrastructure slice. Its supported Python orchestration, verified
-L1 Buck/Boost reference adapters, read-only visualization contracts, constrained
+simulation-infrastructure slice. Its supported Python orchestration, the
+PySpice-constructed and ngspice-executed Buck reference, deterministic averaged
+test fixtures, read-only visualization contracts, constrained
 local visualization service, reference workbench, exclusions, run-status
 meanings, and release gates are defined in
 [docs/27_minimum_local_release_scope_v0.md](docs/27_minimum_local_release_scope_v0.md).
@@ -69,11 +70,12 @@ and control algorithms remain in Plant/Controller adapters.
 
 ## v0 的明确范围
 
-v0 以项目自有的理想平均 Buck/Boost L1 参考适配器、统一 Runner、Manifest、
-受限后处理和只读可视化数据边界作为最小可发布切片。`psfb-step` 仍保留为 fake
-backend 的契约 smoke fixture，而不是 PSFB 电路模型。完整支持矩阵和明确排除项以
-`docs/27_minimum_local_release_scope_v0.md` 为准；物理、器件、电热、真实
-PySpice/Ngspice、PSFB/LLC、学习和硬件结论均不因该切片而被隐式纳入。
+v0 以 **Buck 参考电路（PySpice 构建 + ngspice 进程执行）**、统一 Runner、
+Manifest、受限后处理和只读可视化数据边界作为最小可发布切片。理想平均
+Buck/Boost 模型仅保留为确定性测试夹具，不再作为参考电路。`psfb-step` 仍保留为
+fake backend 的契约 smoke fixture，而不是 PSFB 电路模型。完整支持矩阵和明确
+排除项以 `docs/27_minimum_local_release_scope_v0.md` 为准；器件、电热、
+PSFB/LLC、学习和硬件结论均不因该切片而被隐式纳入。
 
 ## 最小运行切片
 
@@ -99,12 +101,114 @@ from pe_sim import run_experiment
 result = run_experiment(spec, plant, controller)
 ```
 
-For configuration-driven use, select a supported backend through the CLI:
+For configuration-driven use, select the reviewed Buck reference backend through
+the CLI. PySpice 1.5 is installed separately and is used only to construct the
+circuit; execution stays on the reviewed ngspice process adapter:
+
+```powershell
+pip install "PySpice==1.5"
+pe-sim run examples/ngspice_buck_step/config.json --backend ngspice-buck --model-builder pyspice
+```
+
+The ideal averaged `buck_pi_step` and `boost_pi_step` examples are deterministic
+test fixtures, not reference-circuit results. They remain available for runtime
+and comparison tests:
 
 ```powershell
 pe-sim run examples/buck_pi_step/config.json --backend buck
 pe-sim run examples/boost_pi_step/config.json --backend boost
 ```
+
+## Buck reference: PySpice construction + ngspice execution
+
+The reviewed Buck reference is an ideal switching asynchronous Buck circuit.
+PySpice builds the circuit through its object API; the generated netlist is
+executed by a separately installed ngspice executable through the reviewed
+process boundary. Both external components are optional installations and are
+never bundled:
+
+```powershell
+pip install "PySpice==1.5"
+pe-sim backend doctor --name ngspice
+pe-sim run examples/ngspice_buck_step/config.json --backend ngspice-buck --model-builder pyspice
+```
+
+The native netlist builder remains available for offline and CI tests, but it is
+not the reference construction path. The definition, failure semantics, and
+acceptance matrix are in `docs/31`; the PySpice construction boundary is in
+`docs/34`.
+
+### If ngspice is not installed
+
+```powershell
+pe-sim backend list
+pe-sim backend setup --name ngspice
+```
+
+`setup` detects the absence, prints platform-specific installation recipes
+(conda, official archive, apt, brew) and the exact follow-up command. It does
+not install anything and writes no configuration.
+
+### If ngspice is already installed
+
+```powershell
+$env:PE_SIM_NGSPICE = "D:\tools\ngspice-44.2\Spice64\bin\ngspice_con.exe"
+pe-sim backend doctor --name ngspice
+pe-sim run examples/ngspice_buck_step/config.json --backend ngspice-buck --model-builder pyspice
+```
+
+To persist the path outside the repository:
+
+```powershell
+pe-sim backend setup --name ngspice --executable <path> --write-config
+```
+
+After that, `pe-sim run ... --backend ngspice-buck` needs no path argument.
+The full onboarding flow is in
+[docs/35_backend_onboarding_v0.md](docs/35_backend_onboarding_v0.md).
+
+The repository never bundles a simulator. Resolution order is explicit
+`--ngspice`, `PE_SIM_NGSPICE`, a user-level `backends.toml` outside the
+checkout, then `PATH`. Use `pe-sim backend config-path`, `pe-sim backend
+template`, and `pe-sim backend scan --root <dir>` to prepare the user-level
+configuration without committing machine-local paths. The extension contract
+for additional engines is in
+[docs/33_backend_plugin_contract_v1.md](docs/33_backend_plugin_contract_v1.md).
+
+The adapter generates a deterministic netlist, solves one zero-order-hold
+control window per invocation, records the executable version, SHA-256, and
+solver settings, and classifies timeout, process, and convergence failures.
+Real execution is opt-in; ordinary CI does not require ngspice. The supported
+surface, failure semantics, and acceptance matrix are defined in
+[docs/31_ngspice_backend_scope_v1.md](docs/31_ngspice_backend_scope_v1.md).
+The environment lock and installation policy are in
+[docs/32_ngspice_environment_lock_v0.md](docs/32_ngspice_environment_lock_v0.md).
+
+### PySpice circuit construction (reference path)
+
+PySpice 1.5 builds the reference circuit through its object API, but its native
+execution backends are not compatible with the locally verified ngspice 41.
+The reference path therefore uses PySpice only for circuit construction and
+keeps execution on the reviewed ngspice process adapter:
+
+```powershell
+# in an environment where PySpice is installed (construction verified with Python 3.10 and 3.13)
+pip install "PySpice==1.5"
+pip install -e .
+pe-sim run examples/ngspice_buck_step/config.json --backend ngspice-buck --model-builder pyspice
+```
+
+The builder records the PySpice version and explicitly marks that native
+PySpice execution is not used. PySpice is GPLv3 and is never a core
+dependency; the compatibility findings and license boundary are in
+[docs/34_pyspice_optional_backend_v0.md](docs/34_pyspice_optional_backend_v0.md).
+
+PySpice is not a dependency: ADR
+[docs/adr/0002-ngspice-process-boundary.md](docs/adr/0002-ngspice-process-boundary.md)
+records the license and maintenance reasons for using a process boundary.
+
+The ngspice result is reference-model evidence only. It does not establish
+device, thermal, hardware, product, cross-machine, or PSFB/LLC validity.
 
 Both paths use the standard deterministic timing, audit, safety, qualification,
 and artifact behavior. Advanced users can pass `RunOptions` with narrowly
@@ -123,6 +227,42 @@ Move to `run_experiment` when a simpler default is preferred; keep the legacy
 form when existing code relies on its keyword arguments. Do not add circuit
 equations, controller algorithms, plotting, or engineering conclusions to the
 Runner; those belong in adapters or later analysis layers.
+
+## Exporting results
+
+A published run can be projected into the three read-only visualization
+contracts without giving the consumer access to simulation objects:
+
+```powershell
+pe-sim export-workbench runs/ngspice-buck-reference derived/ngspice-buck-reference
+python examples/visualization_consumer/verify_contracts.py --directory derived/ngspice-buck-reference
+```
+
+The destination must be outside the immutable run directory. The exported
+`topology.json`, `trace.json`, and `outputs.json` carry the run identity and
+package hashes. The external consumer example uses only the Python standard
+library. The contract and compatibility rules are in
+[docs/26_stage11_external_consumer_extension_v1.md](docs/26_stage11_external_consumer_extension_v1.md).
+
+## End-user acceptance
+
+The repeatable acceptance harness simulates obtaining the project from GitHub:
+it exports a clean Git snapshot, creates an isolated virtual environment,
+installs the package, exercises both backend-onboarding scenarios, runs the
+switching Buck experiment, verifies the published package, and validates the
+exported contracts with the external consumer:
+
+```powershell
+python scripts/user_acceptance.py `
+  --ngspice "D:\tools\ngspice-44.2\Spice64\bin\ngspice_con.exe"
+```
+
+Without a simulator the scenario-A guidance is still checked, simulator-
+dependent steps are recorded as `skip`, and the report status is `partial`
+(never a false pass). Use `--install-mode wheel` to verify a non-editable
+install. The report is written to the acceptance workspace. Scope, evidence,
+and limitations are documented in
+[docs/36_user_acceptance_v0.md](docs/36_user_acceptance_v0.md).
 
 ## 基本约定
 

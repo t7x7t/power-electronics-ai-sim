@@ -38,7 +38,7 @@ incrementally.
 The default action policy is finite-only: it rejects NaN and infinity and
 otherwise preserves the controller value. The Runner does not assume that
 every actuator is a normalized duty ratio. A Plant may explicitly declare an
-`action_policy()` (the Buck and Boost reference plants declare duty in
+`action_policy()` (the averaged Buck and Boost test-fixture plants declare duty in
 `[0, 1]`), or an advanced caller may pass `RunOptions(action_policy=...)`.
 `BoundedActionPolicy` clamps to declared limits and records `lower`/`upper` in
 the sample when projection occurs. Custom policies implement

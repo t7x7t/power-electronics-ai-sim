@@ -128,11 +128,26 @@ def validate_experiment_document(value: Mapping[str, Any], schema_path: str | Pa
         import jsonschema
     except ImportError as exc:  # pragma: no cover - exercised in minimal installs
         raise RuntimeError("experiment schema validation requires the 'jsonschema' package") from exc
-    path = Path(schema_path) if schema_path is not None else Path(__file__).resolve().parents[2] / "schemas" / "experiment.schema.json"
+    if schema_path is not None:
+        path = Path(schema_path)
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise RuntimeError(f"experiment schema could not be loaded: {path}") from exc
+    else:
+        # Load the packaged copy so an installed wheel does not depend on the
+        # repository checkout layout.  The repository-level ``schemas/`` copy
+        # is kept byte-identical by ``tests/test_packaging.py``.
+        from importlib import resources
+
+        try:
+            text = resources.files("pe_sim.schemas").joinpath("experiment.schema.json").read_text(encoding="utf-8")
+        except (OSError, ModuleNotFoundError) as exc:
+            raise RuntimeError("packaged experiment schema could not be loaded") from exc
     try:
-        schema = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise RuntimeError(f"experiment schema could not be loaded: {path}") from exc
+        schema = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("experiment schema is not valid JSON") from exc
     validator = jsonschema.Draft202012Validator(schema)
     errors = sorted(validator.iter_errors(value), key=lambda item: list(item.absolute_path))
     if errors:

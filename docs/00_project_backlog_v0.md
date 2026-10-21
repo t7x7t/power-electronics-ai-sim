@@ -20,7 +20,7 @@ behavior only; it is not a hardware or product approval.
 | 1 | Requirements, scope, and responsibility boundaries | Partial | L0/L1 documents define the infrastructure boundary, user responsibility, and Agent limits. A named requirement owner and final approver still need to be recorded. |
 | 2 | Project and environment configuration | Partial (release preparation) | `pyproject.toml`, MIT license, Git baseline, tested-version record, exact Python/Node/npm release policy, and light CI exist. The local release gate and a clean tagged baseline are still required. |
 | 3 | Public data and interface contracts | Done (v1 incremental) | v0 contracts are extended with normalized capability negotiation, explicit event/multi-rate gates, schema compatibility checks, observation visibility/time-window checks, snapshot hash verification, and regression tests. A reusable Plant/Controller conformance harness is now available. Full event scheduling semantics and richer unit registries remain future work. |
-| 4 | Plant and Controller integration | Partial (L1 references) | Self-owned ideal averaged Buck and Boost Plants now implement the public lifecycle, units, external-input updates, snapshots, and fail-closed bounds. Fake Plant, Fake Load Plant, and Fake PI Controller remain compatibility fixtures. Real `D:\PySpice` code and PSFB/LLC migration are intentionally deferred pending review. |
+| 4 | Plant and Controller integration | Partial (Buck reference + test fixtures) | The Buck reference is the PySpice-constructed switching model executed by ngspice (`docs/31`). Ideal averaged Buck and Boost Plants remain deterministic test fixtures for lifecycle, units, external-input updates, snapshots, and fail-closed bounds. Fake Plant, Fake Load Plant, and Fake PI Controller remain compatibility fixtures. PSFB/LLC migration is intentionally deferred pending review. |
 | 5 | Generic Runner | Partial (modular audited lifecycle v1) | Low-friction `run_experiment` facade, pre-reset run-directory/identifier gates, formal-evidence admission, explicit CREATED/RUNNING/terminal state transitions, call-order audit, checkpoint/resume with full execution-spec identity, explicit Controller state protocols, interruption as INCOMPLETE, structured capability failures, policy-driven action handling, configured primary measurements, and endpoint-checked segmented plant timing are implemented and tested. Process-level recovery, full event scheduling, and richer timing semantics remain future work. |
 | 6 | Safety and qualification checks | Done (v1 extensible runtime checks) | `SafetyPlugin`, `ValidityPlugin`, and `QualificationPlugin` are composable through `RunOptions`; structured findings cover observation integrity (finite values, timestamps, age, required fields, units, ranges), qualification, and fail-closed execution error categories. Sensor fault injection and real-hardware sensor handling remain intentionally out of scope. |
 | 7 | Run artifacts and Manifest | Done (v1 provenance and package identity) | Atomic artifacts, JSON/NPZ samples, events, metrics, logs, complete runtime/environment/backend provenance, stable component hashes, non-self-referential Manifest digest, deterministic package digest, and dirty-worktree evidence linkage are implemented and tested. Dependency locking, real backend discovery, and release-level baseline reports remain later work. |
@@ -30,8 +30,8 @@ behavior only; it is not a hardware or product approval.
 | 11 | Data visualization | Partial (minimum release slice delivered) | Renderer-neutral `TopologyDescriptor`, `TraceDataset`/`SignalRegistry`, and `OutputDataset` contracts are implemented, explicitly published, validated, provenance-aware, immutable at the published boundary, and locally tested with Buck/Boost topology exporters. `pe_sim.workbench_export` is a constrained offline verified-run-to-fixture adapter, while `pe-sim visualization-serve` provides a versioned local read-only service for verified L1 Buck/Boost packages. `workbench/` is a separate TypeScript/Vite consumer providing SVG topology, selectable canvas traces, and scalar/series/table outputs; `examples/visualization_consumer/` demonstrates an independent consumer without simulation authority. Live delivery, a general remote API, a visualization CLI beyond the narrow exporter, and a general plugin runtime remain deferred. |
 | 12 | Evidence and conclusion levels | Partial (restricted v1 classification) | Stage 10 summaries/comparison reports can be classified as mechanism, functional, comparable, limited, or diagnostic_only with explicit limitations, blocked conclusions, and review records. Physical, research-safety, and hardware-readiness upgrades remain prohibited and domain conclusion templates remain later work. |
 | 13 | Optional learning/adaptation integration boundary | Optional (boundary only) | Learning and adaptation are not required for the core simulation infrastructure. The project defines an opt-in boundary for reviewed adapters: only eligible, qualified, provenance-complete evidence may be handed to an external learner. No built-in trainer, online-learning loop, model update, or automatic adaptation workflow is planned for the core. |
-| 14 | PySpice/Ngspice migration | Blocked by review | The source tree has not been migrated. PI/PID and model implementations require independent technical, provenance, and license review first. |
-| 15 | Testing and acceptance | Partial (L1 Buck/Boost slice) | The project-owned ideal averaged Buck/Boost adapters now have a dedicated acceptance matrix covering equations, boundaries, numerical step sensitivity, small sweeps/long runs, conformance, Runner lifecycle/recovery, deterministic repetition, CLI smoke, and the Stage 10/12 evidence chain. This is infrastructure acceptance only; real Ngspice/PSFB, switching, thermal, hardware, product, visualization, migration, and final full-project gates remain future work. A local release gate now records machine-readable evidence; browser interaction and human release review remain open. |
+| 14 | PySpice/Ngspice integration | Partial (PySpice construction + ngspice execution) | The referenced switching Buck circuit is constructed through the PySpice object API and executed by the reviewed ngspice subprocess adapter in `pe_sim.backends` (scoped by `docs/31`). PySpice native solver execution remains excluded for GPLv3 and compatibility reasons (ADR 0002); the native deterministic netlist builder remains a test/CI fallback. Real-executable acceptance is opt-in through `PE_SIM_NGSPICE`; cross-machine equivalence, PSFB/LLC, and device/thermal models remain open. |
+| 15 | Testing and acceptance | Partial (Buck reference + averaged fixtures) | The averaged Buck/Boost test fixtures have a dedicated deterministic acceptance matrix covering equations, boundaries, numerical step sensitivity, small sweeps/long runs, conformance, Runner lifecycle/recovery, deterministic repetition, CLI smoke, and the Stage 10/12 evidence chain. The Buck reference additionally requires PySpice construction plus real ngspice execution acceptance. This is infrastructure acceptance only; PSFB, thermal, hardware, product, and final full-project gates remain future work. A local release gate now records machine-readable evidence; browser interaction and human release review remain open. |
 | 16 | Agent collaboration governance | Partial | Agent policy and independent acceptance are documented. Task records, approval evidence, and automated hand-off gates are not yet standardized. |
 
 ## Completed governance additions
@@ -297,6 +297,72 @@ git diff --check
 
 This remains a Python-level runtime contract. It does not provide operating
 system crash recovery, external Ngspice supervision, or physical validation.
+
+### Stage 14 ngspice process-boundary increment (current)
+
+`docs/31_ngspice_backend_scope_v1.md` defines the first reviewed external
+simulator surface, and `docs/adr/0002-ngspice-process-boundary.md` records the
+process-boundary decision. The referenced Buck circuit is constructed through
+the PySpice object API; the native deterministic netlist builder remains a
+test/CI fallback. The implementation is isolated in `src/pe_sim/backends/`:
+
+- PySpice circuit construction and native deterministic netlist generation,
+  both with a stable digest;
+- a fail-closed ASCII parser for `wrdata` output;
+- a bounded ngspice subprocess runner with timeout, exit-code, log, and
+  convergence classification;
+- `NgspiceBuckPlant`, which solves one zero-order-hold control window per
+  invocation and interpolates segment endpoints;
+- an executable provenance adapter that records version, SHA-256, and explicit
+  solver settings;
+- CLI integration (`--backend ngspice-buck`, `--ngspice`) and the
+  `examples/ngspice_buck_step/` configuration;
+- restricted Stage 10 and Stage 11 admission for the `NgspiceBuckPlant`
+  family.
+
+Acceptance evidence:
+
+```text
+pytest -q --basetemp .tmp/pytest-stage14
+python -m compileall -q src tests
+git diff --check
+```
+
+Real-executable acceptance is opt-in:
+
+```text
+$env:PE_SIM_NGSPICE = "<path to ngspice console executable>"
+pytest -q tests/test_ngspice_real_backend.py --basetemp .tmp/pytest-stage14-real
+pe-sim run examples/ngspice_buck_step/config.json --backend ngspice-buck
+```
+
+The real-executable acceptance was verified locally on 2026-10-21 with
+ngspice 41 (console `ngspice_con.exe`, SHA-256
+`41a6bda700d9160089f2a39a14f94408172f7748215b68b81d39ea1bc26e300c`):
+5 real-backend tests passed, including contract, provenance, CCM equilibrium,
+determinism, and a published `QUALIFIED` CLI package. This remains reference
+infrastructure evidence, not a physical or hardware claim.
+
+This slice does not migrate `D:\PySpice` material, does not link PySpice, and
+does not claim device, thermal, hardware, product, cross-machine, or
+PSFB/LLC validity. The switching Buck model is one reviewed ideal reference
+circuit.
+
+An optional PySpice circuit frontend is available as a model builder: PySpice
+constructs the reviewed circuit, while execution stays on the verified ngspice
+process adapter. PySpice 1.5's native shared-library and subprocess-server modes
+were verified to be incompatible with local ngspice 41, so native PySpice
+execution is not claimed. See `docs/34_pyspice_optional_backend_v0.md`.
+
+The end-user acceptance harness (`scripts/user_acceptance.py`, scope in
+`docs/36_user_acceptance_v0.md`) starts from a clean Git snapshot and a fresh
+virtual environment. It covers the no-simulator onboarding path, persistent
+user configuration, a `QUALIFIED` ngspice run, parameter variation,
+determinism, `pe-sim export-workbench`, and the external visualization
+consumer. It verified both editable and wheel installations on 2026-10-21.
+Two packaging defects were found and fixed: `jsonschema` was not a declared
+runtime dependency, and the default experiment schema was not shipped in the
+wheel. Regression coverage is in `tests/test_packaging.py`.
 
 ### Stage 10 restricted post-processing increment (current)
 

@@ -29,7 +29,7 @@ is never the source of electrical truth.
 ## Reference exporters
 
 `BuckPlant.topology_descriptor()` and `BoostPlant.topology_descriptor()`
-export the project-owned ideal averaged L1 reference graphs. Their switch
+export the project-owned ideal averaged test-fixture graphs. Their switch
 symbols and parameters describe the averaged reference model; they do not
 claim switching-device, layout, thermal, or product schematic fidelity.
 
