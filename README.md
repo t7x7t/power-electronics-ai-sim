@@ -365,6 +365,29 @@ Three properties are machine checked rather than left to convention:
 See
 [docs/41_kernel_compatibility_surface_v1.md](docs/41_kernel_compatibility_surface_v1.md).
 
+## How adapters and agents plug in
+
+The kernel does not care which engine produced a window: a physical simulator
+plugs in by implementing `PlantAdapter` (`capabilities`, `reset`, `observe`,
+`advance`, `snapshot`, `restore`) and is passed to `Runner.run` or
+`run_experiment`. Agents are clients of the CLI/API, not kernel plug-ins.
+
+A `manifest_identity()` record is producer-declared, so since 0.5.2 the kernel
+recomputes it for any adapter that declares a `backend_id` and records the
+verdict at `plant.verification`:
+
+| Status | Meaning |
+| --- | --- |
+| `verified` | digest, review status, and declaring module all agree with the checkout |
+| `digest_mismatch` / `review_status_mismatch` | the claim contradicts the pin |
+| `module_outside_solve_path` | the running class is not covered by the pin |
+| `unverifiable` | no reviewed solve path is declared |
+
+Formal comparison rejects the contradicted statuses and `comparable` requires
+`verified`. This is a consistency check, not a sandbox. The design assessment,
+including why `EngineAdapter` and `AgentAdapter` are deliberately absent, is in
+[docs/42_kernel_interface_topology_v1.md](docs/42_kernel_interface_topology_v1.md).
+
 ## Browser workbench status
 
 The TypeScript/Vite browser workbench is temporarily withdrawn because its

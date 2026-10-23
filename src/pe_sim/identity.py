@@ -17,6 +17,7 @@ such a change visible in Git review.  See ``docs/38_kernel_review_v0.md``.
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 from importlib import resources
 from pathlib import Path, PurePosixPath
@@ -24,6 +25,13 @@ from typing import Any, Mapping
 
 
 REVIEW_IDENTITIES_SCHEMA = "pe-sim.reviewed-identities.v1"
+ADAPTER_VERIFICATION_SCHEMA = "pe-sim.adapter-verification.v1"
+
+# Statuses that mean the adapter's own claim is contradicted by what the
+# kernel can recompute.  They are never reported as `verified`.
+CONTRADICTED_VERIFICATION_STATUSES = frozenset(
+    {"digest_mismatch", "review_status_mismatch", "module_outside_solve_path"}
+)
 
 # Solve paths are declared relative to the ``pe_sim`` package root, so the
 # native reference models and the external-simulator adapter use one
@@ -128,10 +136,114 @@ def review_status(backend_id: str, digest: str | None = None) -> dict[str, Any]:
     }
 
 
+def verify_adapter_identity(component: Any, identity: Mapping[str, Any]) -> dict[str, Any]:
+    """Recompute a Plant adapter's implementation identity instead of trusting it.
+
+    ``manifest_identity()`` is *producer-declared*: whatever object is passed to
+    the Runner supplies its own ``implementation.sha256`` and review record.  A
+    kernel that only reads those fields cannot distinguish a reviewed adapter
+    from an object that merely claims to be one.
+
+    This function closes that gap for any adapter that declares ``backend_id``
+    and whose declaring module is covered by the reviewed solve path:
+
+    - ``verified``: the recorded digest equals the digest recomputed from the
+      files on disk, the recorded review status equals the kernel's own lookup,
+      and the adapter's class is defined inside the declared solve path.
+    - ``digest_mismatch`` / ``review_status_mismatch``: the claim contradicts
+      the checkout.
+    - ``module_outside_solve_path``: the adapter's module is not part of the
+      reviewed solve path, so the pin does not cover the code that runs.
+    - ``unverifiable``: no ``backend_id`` or no declared solve path; the kernel
+      says so instead of pretending the claim was checked.
+
+    The check is a consistency check, not a sandbox: a process that can rewrite
+    ``identity.py`` can also rewrite this function.
+    """
+
+    backend_id = getattr(component, "backend_id", None)
+    if not isinstance(backend_id, str) or not backend_id.strip():
+        return {
+            "schema_version": ADAPTER_VERIFICATION_SCHEMA,
+            "status": "unverifiable",
+            "backend_id": None,
+            "reasons": ["adapter does not declare backend_id"],
+        }
+
+    result: dict[str, Any] = {
+        "schema_version": ADAPTER_VERIFICATION_SCHEMA,
+        "status": "unverifiable",
+        "backend_id": backend_id,
+        "declared_module": type(component).__module__,
+        "declared_class": type(component).__qualname__,
+        "recorded_sha256": None,
+        "recomputed_sha256": None,
+        "recorded_review_status": None,
+        "recomputed_review_status": None,
+        "reasons": [],
+    }
+
+    implementation = identity.get("implementation") if isinstance(identity, Mapping) else None
+    implementation = implementation if isinstance(implementation, Mapping) else {}
+    recorded = implementation.get("sha256")
+    result["recorded_sha256"] = recorded if isinstance(recorded, str) else None
+    review = implementation.get("review")
+    review = review if isinstance(review, Mapping) else {}
+    recorded_status = review.get("status")
+    result["recorded_review_status"] = recorded_status if isinstance(recorded_status, str) else None
+
+    try:
+        sources = implementation_sources(backend_id)
+    except (KeyError, FileNotFoundError):
+        result["reasons"].append(f"no reviewed solve path is declared for backend {backend_id!r}")
+        return result
+
+    result["solve_path_modules"] = sorted(sources)
+    recomputed = implementation_digest(backend_id)
+    result["recomputed_sha256"] = recomputed
+    recomputed_review = review_status(backend_id, recomputed)
+    result["recomputed_review_status"] = recomputed_review.get("status")
+
+    if result["recorded_sha256"] is None:
+        result["reasons"].append("adapter does not record an implementation digest")
+        return result
+    if result["recorded_sha256"].lower() != recomputed.lower():
+        result["status"] = "digest_mismatch"
+        result["reasons"].append(
+            "the recorded implementation digest does not match the solve-path source on disk"
+        )
+        return result
+    if result["recorded_review_status"] != result["recomputed_review_status"]:
+        result["status"] = "review_status_mismatch"
+        result["reasons"].append(
+            "the recorded review status does not match the checked-in pin"
+        )
+        return result
+
+    try:
+        module_file = Path(inspect.getfile(type(component))).name
+    except (TypeError, OSError):  # pragma: no cover - builtins and frozen modules
+        module_file = None
+    result["module_file"] = module_file
+    if module_file is None or module_file not in sources:
+        result["status"] = "module_outside_solve_path"
+        result["reasons"].append(
+            "the adapter class is defined outside the declared solve path, "
+            "so the review pin does not cover the code that runs"
+        )
+        return result
+
+    result["status"] = "verified"
+    return result
+
+
 __all__ = [
+    "ADAPTER_VERIFICATION_SCHEMA",
+    "CONTRADICTED_VERIFICATION_STATUSES",
     "REVIEW_IDENTITIES_SCHEMA",
     "implementation_digest",
     "implementation_sources",
     "load_reviewed_identities",
     "review_status",
+    "verify_adapter_identity",
 ]

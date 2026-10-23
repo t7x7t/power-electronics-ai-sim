@@ -488,6 +488,36 @@ pytest -q tests/test_public_api.py tests/test_reference_plant_identity.py `
   tests/test_tolerance_policy.py --basetemp .tmp/pytest-stage17
 ```
 
+### Stage 18 kernel interface topology (0.5.2)
+
+`docs/42_kernel_interface_topology_v1.md` assesses whether the kernel is
+correctly shaped for interface-based plug-ins of agents and physical simulators.
+
+Conclusion: `PlantAdapter` already is the simulator interface and the Runner is
+pure injection, so the shape is right. `EngineAdapter` and `AgentAdapter` are
+deliberately **not** added because the kernel would only duplicate `PlantAdapter`
+or create a second, self-reported trust path.
+
+Three seam defects were fixed:
+
+- **CRED-10:** the formal gate trusted an adapter's self-declared
+  `review.status`. `identity.verify_adapter_identity` now recomputes the digest,
+  the pin lookup, and the declaring module, and records the verdict at
+  `plant.verification` outside the identity digest.
+- **Manifest contract:** `evidence_level` declared the old Stage 12 vocabulary,
+  so `comparable` and `limited` were rejected by the shipped schema and by
+  `scripts/user_acceptance.py`. The schema now declares the runtime vocabulary,
+  with a drift test.
+- **CLI wiring:** four parallel encodings of the built-in plant catalog
+  collapsed into one `_PlantBinding` table.
+
+Acceptance evidence:
+
+```text
+pytest -q tests/test_adapter_verification.py `
+  tests/test_manifest_evidence_level_contract.py --basetemp .tmp/pytest-stage18
+```
+
 ### Future compact diagnostic mechanism
 
 The current Stage 6 checks are intentionally a runtime integrity gate. A later

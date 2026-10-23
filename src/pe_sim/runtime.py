@@ -32,6 +32,7 @@ from .runner.audit import AuditRecorder
 from .runner.lifecycle import LifecycleStateMachine
 from .runner.policies import RunOptions
 from .applicability import ApplicabilityError, ApplicabilityPolicy, ModelEnvelopePlugin
+from .identity import CONTRADICTED_VERIFICATION_STATUSES, verify_adapter_identity
 from .jsonutil import json_safe
 from .checks import (
     CheckContext,
@@ -1179,6 +1180,9 @@ def _derive_evidence_level(
     review = implementation.get("review") if isinstance(implementation, Mapping) else None
     if not isinstance(review, Mapping) or review.get("status") != "reviewed":
         return "limited"
+    verification = plant.get("verification")
+    if not isinstance(verification, Mapping) or verification.get("status") != "verified":
+        return "limited"
     if qualification.get("level") == "failed":
         return "diagnostic_only"
     if qualification.get("level") == "limited":
@@ -1209,6 +1213,15 @@ def _require_formal_evidence(spec: ExperimentSpec, worktree: Any, git: Any, plan
         raise ValueError(
             "formal comparison requires a reviewed plant implementation; "
             "the solve path does not match its checked-in review pin"
+        )
+    verification = plant.get("verification")
+    if isinstance(verification, Mapping) and verification.get("status") in CONTRADICTED_VERIFICATION_STATUSES:
+        reasons = verification.get("reasons")
+        detail = "; ".join(str(item) for item in reasons) if isinstance(reasons, (list, tuple)) else ""
+        raise ValueError(
+            "formal comparison requires a kernel-verified plant implementation; "
+            f"adapter verification is {verification.get('status')!r}"
+            + (f": {detail}" if detail else "")
         )
     if str(environment.get("status")) != "known":
         raise ValueError("formal comparison requires known environment provenance")
@@ -1455,6 +1468,14 @@ def _component_manifest(component_id: str, component: Any, declared_capabilities
         evidence = evidence_fn()
         if isinstance(evidence, Mapping):
             manifest["evidence"] = dict(evidence)
+    # A self-declared implementation digest is not evidence that the declared
+    # code is the code that ran.  Recompute it when the adapter names a reviewed
+    # backend; keep the verdict outside the identity digest for the same reason
+    # as the execution evidence.
+    if callable(identity_fn) and isinstance(getattr(component, "backend_id", None), str):
+        verification = verify_adapter_identity(component, identity)
+        if verification.get("backend_id"):
+            manifest["verification"] = verification
     return manifest
 
 

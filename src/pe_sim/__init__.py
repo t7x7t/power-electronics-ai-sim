@@ -89,7 +89,7 @@ from .attestation import (
     verify_git_anchor,
 )
 from .inspection import RunInspection, RunInspectionError, inspect_run
-from .identity import implementation_digest, review_status
+from .identity import implementation_digest, review_status, verify_adapter_identity
 from .conformance import ConformanceReport, check_controller_adapter, check_plant_adapter
 from .provenance import (
     BackendProvenanceAdapter,

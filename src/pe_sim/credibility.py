@@ -283,12 +283,32 @@ def _implementation_review_factor(
     recorded_status = recorded.get("status")
     current_status = current_review.get("status") if isinstance(current_review, Mapping) else None
     effective = current_status or recorded_status
+    verification = _mapping(plant.get("verification"))
+    verification_status = verification.get("status")
     evidence = {
         "recorded_status": recorded_status,
         "recorded_sha256": implementation.get("sha256"),
         "current_checkout_status": current_status,
+        "kernel_verification": verification_status,
     }
+    if verification_status in {"digest_mismatch", "review_status_mismatch", "module_outside_solve_path"}:
+        # The adapter's own review claim is contradicted by what the kernel
+        # could recompute.  This outranks `reviewed`: a self-declared pass is
+        # not evidence once it has been falsified.
+        return _factor(
+            "implementation_review",
+            "fail",
+            evidence,
+            "the recorded implementation claim is contradicted by the kernel verification",
+        )
     if effective == "reviewed":
+        if verification_status == "unverifiable":
+            return _factor(
+                "implementation_review",
+                "limited",
+                evidence,
+                "the review claim could not be recomputed by the kernel",
+            )
         return _factor("implementation_review", "pass", evidence)
     if effective in {"unreviewed", "not_pinned"}:
         return _factor(

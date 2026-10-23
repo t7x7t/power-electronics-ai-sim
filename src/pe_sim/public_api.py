@@ -279,6 +279,7 @@ EXPERIMENTAL_API: frozenset[str] = frozenset(
         # identity: implementation pin queries, not an adapter contract.
         "implementation_digest",
         "review_status",
+        "verify_adapter_identity",
         # attestation: record internals below the verification verdict.
         "AnchorRecord",
         "AttestationDocument",

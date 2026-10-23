@@ -114,6 +114,7 @@ flowchart TD
 | COMPAT-01 | High for increments | No schema migration registry; `ensure_schema_compatible` only rejects newer minor versions. | `contracts.py`. | Open |
 | COMPAT-02 | Medium | No frozen public kernel surface or deprecation policy for plugins/UI. | `pe_sim/__init__.py` exports many names without a stability statement. | Addressed in 0.5.1: `public_api.py` classifies stable (81) versus experimental (141) names and a frozen baseline fixture fails on any stable-surface change. Deprecation schedule is still absent and is deferred to 1.0 (docs/41 §2). |
 | COMPAT-03 | Medium | No declared unit registry; units are checked only when a plugin is configured with expected units. | `ObservationValidityPlugin`. | Open |
+| CRED-10 | High | `manifest_identity()` is producer-declared, so the formal gate trusted an adapter's own `review.status`. An object that reported `reviewed` was treated as reviewed. | `runtime._derive_evidence_level` / `_require_formal_evidence` read the recorded review block. | Addressed in 0.5.2: `identity.verify_adapter_identity` recomputes the digest, the pin lookup, and the declaring module, records the verdict at `plant.verification`, and all three consumers act on it (docs/42 §4). Consistency check, not a sandbox. |
 
 ### Fixed during this review
 

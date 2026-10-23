@@ -117,6 +117,9 @@ class NgspiceBuckPlant:
     topology = "buck"
     model_kind = "ngspice_switching_reference"
     model_level = "L2"
+    # Declared so the kernel can recompute the reviewed solve-path identity
+    # instead of trusting this adapter's own manifest_identity() record.
+    backend_id = "ngspice-buck"
 
     def __init__(
         self,

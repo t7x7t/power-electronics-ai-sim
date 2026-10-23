@@ -2,7 +2,7 @@
   "schema": "pe-sim.reviewed-identities.v1",
   "backends": {
     "ngspice-buck": {
-      "implementation_sha256": "9e0e94c64ea375fe8e6a36ec523246ad12b1f99f99e8af5c1931537d32a7df39",
+      "implementation_sha256": "53c245ffbe2fa66fca2f81eb2a593296da4bb599a6176475636da3d0bbc854d3",
       "reviewed_at": "2026-10-24",
       "reviewer": "project maintainer",
       "acceptance_ids": [
@@ -15,7 +15,7 @@
         "docs/38_kernel_review_v0.md",
         "docs/40_validity_and_authenticity_v1.md"
       ],
-      "review_note": "Reviewed switching Buck reference solve path. Update only with an explicit model-review record; a changed digest means the numerical construction, execution, or parsing code changed. 0.5.1: the reviewed-identity module moved from pe_sim/backends/identity.py to pe_sim/identity.py and the adapters import it from the package root; digests were recomputed after that import-only change, no numerical code was modified."
+      "review_note": "Reviewed switching Buck reference solve path. Update only with an explicit model-review record; a changed digest means the numerical construction, execution, or parsing code changed. 0.5.1: the reviewed-identity module moved from pe_sim/backends/identity.py to pe_sim/identity.py and the adapters import it from the package root; digests were recomputed after that import-only change, no numerical code was modified. 0.5.2: the adapter now declares a class-level backend_id so the kernel can recompute its reviewed identity instead of trusting the self-reported record; the netlist template, solver settings, process invocation, and wrdata parsing are untouched."
     },
     "buck": {
       "implementation_sha256": "943b081eea21ecfd4ffd472c59d661dd34bb5c2aad2f95063aed61c4bf18bdaf",

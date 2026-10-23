@@ -1,5 +1,6 @@
 from __future__ import annotations
 import argparse
+from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path
@@ -75,13 +76,13 @@ def _cli_tolerance_policy(relative_tolerance: float, signal_tolerances: list[str
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Auditable power-electronics simulation runtime")
-    parser.add_argument("--version", action="version", version="0.5.1")
+    parser.add_argument("--version", action="version", version="0.5.2")
     sub = parser.add_subparsers(dest="command")
     run = sub.add_parser("run", help="run an experiment from JSON config")
     run.add_argument("config", type=Path)
     run.add_argument(
         "--backend",
-        choices=("fake", "fake-load", "buck", "boost", "ngspice-buck"),
+        choices=tuple(_PLANT_BINDINGS),
         default=None,
         help="backend adapter; defaults to the plant_id mapping and must match it",
     )
@@ -396,19 +397,54 @@ def main(argv: list[str] | None = None) -> int:
     return 0 if result.status in {"RUN_OK", "QUALIFIED"} else 1
 
 
-_PLANT_BACKENDS = {
-    "fake": "fake",
-    "fake-load": "fake-load",
-    "buck": "buck",
-    "boost": "boost",
-    "ngspice-buck": "ngspice-buck",
+_BASE_SCHEDULE_KEYS = frozenset({"time_s", "vref"})
+_EXTERNAL_INPUT_SCHEDULE_KEYS = frozenset(
+    {"vin_v", "input_voltage_v", "load_ohm", "load_resistance_ohm"}
+)
+_REFERENCE_PLANT_DEFAULTS: dict[str, object] = {
+    "input_voltage_v": 12.0,
+    "inductance_h": 100e-6,
+    "capacitance_f": 470e-6,
+    "load_resistance_ohm": 10.0,
+    "integration_step_s": 1e-6,
 }
-_BACKEND_CLASSES = {
-    "fake": "FakePlant",
-    "fake-load": "FakeLoadPlant",
-    "buck": "BuckPlant",
-    "boost": "BoostPlant",
-    "ngspice-buck": "NgspiceBuckPlant",
+
+
+@dataclass(frozen=True)
+class _PlantBinding:
+    """One built-in CLI plant and everything the CLI needs to know about it.
+
+    Single source of truth for the backend allow-list, the accepted
+    ``plant_config``/``input_schedule`` keys, and the class name the factory is
+    expected to build.  Keeping these in one table means a new built-in plant
+    cannot be half-registered (listed in one place and silently rejected in
+    another).
+
+    Third-party plants do not come through this table: they implement the
+    ``PlantAdapter`` protocol and are passed to ``Runner.run`` or
+    ``run_experiment`` directly.  Discovery and entry points are UD-04.
+    """
+
+    backend: str
+    class_name: str
+    schedule_keys: frozenset[str]
+    config_keys: frozenset[str] | None = None
+
+
+_PLANT_BINDINGS: dict[str, _PlantBinding] = {
+    "fake": _PlantBinding("fake", "FakePlant", _BASE_SCHEDULE_KEYS, frozenset({"gain", "tau_s"})),
+    "fake-load": _PlantBinding(
+        "fake-load", "FakeLoadPlant", _BASE_SCHEDULE_KEYS | {"load"}, frozenset({"gain", "tau_s"})
+    ),
+    "buck": _PlantBinding(
+        "buck", "BuckPlant", _BASE_SCHEDULE_KEYS | _EXTERNAL_INPUT_SCHEDULE_KEYS, frozenset(_REFERENCE_PLANT_DEFAULTS)
+    ),
+    "boost": _PlantBinding(
+        "boost", "BoostPlant", _BASE_SCHEDULE_KEYS | _EXTERNAL_INPUT_SCHEDULE_KEYS, frozenset(_REFERENCE_PLANT_DEFAULTS)
+    ),
+    "ngspice-buck": _PlantBinding(
+        "ngspice-buck", "NgspiceBuckPlant", _BASE_SCHEDULE_KEYS | _EXTERNAL_INPUT_SCHEDULE_KEYS, None
+    ),
 }
 
 
@@ -416,15 +452,15 @@ def _select_backend(document: dict[str, object], requested: str | None) -> str:
     """Map plant_id to a reviewed backend and fail closed on mismatch."""
 
     plant_id = str(document.get("plant_id", ""))
-    expected = _PLANT_BACKENDS.get(plant_id)
-    if expected is None:
+    binding = _PLANT_BINDINGS.get(plant_id)
+    if binding is None:
         raise ValueError(
-            f"plant_id {plant_id!r} has no reviewed CLI backend; supported: {sorted(_PLANT_BACKENDS)}"
+            f"plant_id {plant_id!r} has no reviewed CLI backend; supported: {sorted(_PLANT_BINDINGS)}"
         )
-    backend = requested or expected
-    if backend != expected:
+    backend = requested or binding.backend
+    if backend != binding.backend:
         raise ValueError(
-            f"plant_id {plant_id!r} requires --backend {expected!r}, not {backend!r}"
+            f"plant_id {plant_id!r} requires --backend {binding.backend!r}, not {backend!r}"
         )
     return backend
 
@@ -432,11 +468,10 @@ def _select_backend(document: dict[str, object], requested: str | None) -> str:
 def _validate_schedule_keys(document: dict[str, object], backend: str) -> None:
     """Reject schedule keys that the selected Plant would silently ignore."""
 
-    allowed = {"time_s", "vref"}
-    if backend == "fake-load":
-        allowed.add("load")
-    elif backend in {"buck", "boost", "ngspice-buck"}:
-        allowed.update({"vin_v", "input_voltage_v", "load_ohm", "load_resistance_ohm"})
+    binding = _PLANT_BINDINGS.get(backend)
+    if binding is None:
+        raise ValueError(f"unsupported backend {backend!r}")
+    allowed = set(binding.schedule_keys)
     schedule = document.get("input_schedule", [])
     if not isinstance(schedule, list):
         raise ValueError("input_schedule must be an array")
@@ -454,10 +489,10 @@ def _validate_schedule_keys(document: dict[str, object], backend: str) -> None:
 def _validate_plant_adapter(backend: str, plant: object) -> None:
     """Reject a runtime adapter that does not match the declared backend."""
 
-    expected = _BACKEND_CLASSES.get(backend)
+    binding = _PLANT_BINDINGS.get(backend)
     actual = type(plant).__name__
-    if expected is not None and actual != expected:
-        raise ValueError(f"backend {backend!r} built {actual!r}, expected {expected!r}")
+    if binding is not None and actual != binding.class_name:
+        raise ValueError(f"backend {backend!r} built {actual!r}, expected {binding.class_name!r}")
 
 
 def _build_controller(spec: ExperimentSpec):
@@ -472,27 +507,20 @@ def _build_controller(spec: ExperimentSpec):
 
 def _build_plant(backend: str, config: dict[str, object], timebase: Timebase | None = None, ngspice_executable: str | None = None, model_builder: str = "native"):
     """Instantiate a named backend from JSON-safe configuration values."""
-    if backend in {"fake", "fake-load"}:
-        allowed = {"gain", "tau_s"}
-        unknown = set(config) - allowed
-        if unknown:
-            raise ValueError(f"unsupported {backend} plant_config fields: {sorted(unknown)}")
-        values = dict(config)
-        plant_type = FakePlant if backend == "fake" else FakeLoadPlant
-        return plant_type(**values)
+    binding = _PLANT_BINDINGS.get(backend)
+    if binding is None:
+        raise ValueError(f"unsupported backend {backend!r}; supported: {sorted(_PLANT_BINDINGS)}")
     if backend == "ngspice-buck":
+        # The switching adapter has a dedicated builder because it derives
+        # solver settings from the timebase.
         return _build_ngspice_buck(config, timebase, ngspice_executable, model_builder)
-    defaults = {
-        "input_voltage_v": 12.0,
-        "inductance_h": 100e-6,
-        "capacitance_f": 470e-6,
-        "load_resistance_ohm": 10.0,
-        "integration_step_s": 1e-6,
-    }
-    values = dict(defaults)
-    unknown = set(config) - set(values)
+    unknown = set(config) - set(binding.config_keys or ())
     if unknown:
         raise ValueError(f"unsupported {backend} plant_config fields: {sorted(unknown)}")
+    if backend in {"fake", "fake-load"}:
+        plant_type = FakePlant if backend == "fake" else FakeLoadPlant
+        return plant_type(**dict(config))
+    values = dict(_REFERENCE_PLANT_DEFAULTS)
     values.update(config)
     plant_type = BuckPlant if backend == "buck" else BoostPlant
     return plant_type(**values)
