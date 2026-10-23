@@ -33,7 +33,59 @@ from .contracts import (
 from .runtime import Runner, RunResult, FakePlant, FakeLoadPlant, FakePIController
 from .runner import ActionPolicy, AuditPolicy, BoundedActionPolicy, FiniteActionPolicy, LifecycleTransitionError, RecoveryPolicy, RunOptions, TimingPolicy, run_experiment
 from .reference_plants import BuckPlant, BoostPlant
-from .qualification import BasicQualificationPlugin, qualify_samples
+from .applicability import (
+    ApplicabilityError,
+    ApplicabilityPolicy,
+    ApplicabilitySummary,
+    ModelEnvelopePlugin,
+)
+from .model_claim import (
+    ModelClaim,
+    NumericalLimit,
+    OperatingRange,
+    ParameterProvenance,
+    ParameterRecord,
+    collect_model_claim,
+    collect_parameter_provenance,
+)
+from .qualification import (
+    BasicQualificationPlugin,
+    QualificationOutcome,
+    qualification_document,
+    qualify_samples,
+)
+from .qualification_rules import (
+    AnalyticalEquilibriumRule,
+    EquilibriumTolerance,
+    NumericalHealthRule,
+    PlantOracle,
+    QualificationRulePack,
+    SteadyStateRule,
+    SteadyStateThresholds,
+)
+from .numerical_health import NumericalHealth, parse_log
+from .credibility import (
+    CredibilityAssessment,
+    CredibilityFactor,
+    CredibilityPolicy,
+    assess_credibility,
+    assess_manifest,
+)
+from .attestation import (
+    AnchorRecord,
+    AttestationDocument,
+    AttestationPayload,
+    AttestationVerification,
+    AttestationWriteResult,
+    GitAnchorStatus,
+    SignatureRecord,
+    attest_run,
+    build_payload,
+    payload_digest,
+    register_signature_verifier,
+    verify_attestation,
+    verify_git_anchor,
+)
 from .conformance import ConformanceReport, check_controller_adapter, check_plant_adapter
 from .provenance import (
     BackendProvenanceAdapter,
@@ -147,3 +199,9 @@ __all__ += ['BackendDescriptor','InstallRecipe','current_platform','get_backend'
 __all__ += ['NativeBuckNetlistBuilder','PyspiceBuckNetlistBuilder','PyspiceUnavailableError']
 __all__ += ['OUTPUT_SCHEMA_VERSION','OutputFieldDefinition','OutputDefinition','OutputRegistry','OutputEntry','OutputDataset','OutputCollector']
 __all__ += ['SERVICE_SCHEMA','VisualizationServiceError','create_server','serve']
+__all__ += ['ApplicabilityError','ApplicabilityPolicy','ApplicabilitySummary','ModelEnvelopePlugin']
+__all__ += ['ModelClaim','NumericalLimit','OperatingRange','ParameterProvenance','ParameterRecord','collect_model_claim','collect_parameter_provenance']
+__all__ += ['QualificationOutcome','qualification_document','AnalyticalEquilibriumRule','EquilibriumTolerance','NumericalHealthRule','PlantOracle','QualificationRulePack','SteadyStateRule','SteadyStateThresholds']
+__all__ += ['NumericalHealth','parse_log']
+__all__ += ['CredibilityAssessment','CredibilityFactor','CredibilityPolicy','assess_credibility','assess_manifest']
+__all__ += ['AnchorRecord','AttestationDocument','AttestationPayload','AttestationVerification','AttestationWriteResult','GitAnchorStatus','SignatureRecord','attest_run','build_payload','payload_digest','register_signature_verifier','verify_attestation','verify_git_anchor']

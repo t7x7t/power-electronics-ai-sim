@@ -1,10 +1,93 @@
 """Qualification is deliberately independent from performance metrics."""
 
 from __future__ import annotations
+from dataclasses import dataclass
 from typing import Iterable, Mapping, Any
 import math
 
 from .checks import CheckContext, CheckFinding, CheckReport, QualificationPlugin
+
+
+LEVELS = ("full", "limited", "failed")
+
+
+@dataclass(frozen=True)
+class QualificationOutcome:
+    """Qualification result with an explicit usability level.
+
+    ``passed`` keeps its historical meaning ("the sample set may be used").
+    ``level`` distinguishes a fully assessed run from one that is usable only
+    with declared limitations.
+    """
+
+    level: str
+    passed: bool
+    reasons: tuple[str, ...] = ()
+    limitations: tuple[str, ...] = ()
+    findings: tuple[CheckFinding, ...] = ()
+    rule_version: str = "qualification-v2"
+
+    def __post_init__(self) -> None:
+        if self.level not in LEVELS:
+            raise ValueError(f"unsupported qualification level: {self.level!r}")
+        if self.passed != (self.level != "failed"):
+            raise ValueError("qualification passed must match level != 'failed'")
+
+    @classmethod
+    def from_report(cls, report: CheckReport) -> "QualificationOutcome":
+        level = report.effective_level
+        return cls(
+            level=level,
+            passed=level != "failed",
+            reasons=tuple(report.reasons),
+            limitations=tuple(report.limitations),
+            findings=tuple(report.findings),
+            rule_version=report.rule_version,
+        )
+
+    def to_report(self) -> CheckReport:
+        return CheckReport(
+            self.passed,
+            self.findings,
+            None,
+            self.rule_version,
+            self.level,
+            self.limitations,
+        )
+
+    def to_document(self) -> dict[str, Any]:
+        return {
+            "schema_version": "qualification-v2",
+            "passed": self.passed,
+            "level": self.level,
+            "reasons": list(self.reasons),
+            "limitations": list(self.limitations),
+            "checks": self.to_report().to_dict(),
+        }
+
+
+def qualification_document(
+    report: CheckReport,
+    *,
+    level: str | None = None,
+    reasons: Iterable[str] | None = None,
+) -> dict[str, Any]:
+    """Build the additive qualification document used by the Runner."""
+
+    outcome = QualificationOutcome.from_report(report)
+    document = outcome.to_document()
+    if level is not None:
+        if level not in LEVELS:
+            raise ValueError(f"unsupported qualification level: {level!r}")
+        document["level"] = level
+        document["passed"] = level != "failed"
+        checks = document.get("checks")
+        if isinstance(checks, dict):
+            checks["level"] = level
+            checks["passed"] = level != "failed"
+    if reasons is not None:
+        document["reasons"] = [str(item) for item in reasons]
+    return document
 
 
 def qualify_samples(samples: Iterable[Mapping[str, Any]]) -> tuple[bool, list[str]]:
@@ -51,4 +134,11 @@ class BasicQualificationPlugin:
         return CheckReport(not findings, tuple(findings), self.plugin_id, "basic-qualification-v1")
 
 
-__all__ = ["qualify_samples", "BasicQualificationPlugin", "QualificationPlugin"]
+__all__ = [
+    "LEVELS",
+    "BasicQualificationPlugin",
+    "QualificationOutcome",
+    "QualificationPlugin",
+    "qualification_document",
+    "qualify_samples",
+]

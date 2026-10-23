@@ -1,8 +1,9 @@
-"""Export a published reference run into the Stage 11 workbench contracts.
+"""Export a published reference run into the Stage 11 visualization contracts.
 
 This deliberately narrow offline adapter reads an immutable run package,
 verifies its published integrity information, and writes derived JSON fixtures
-elsewhere. The browser still consumes only the three public contracts.
+elsewhere. It is a headless data exporter; the browser workbench is temporarily
+withdrawn. Consumers receive only the three public contracts.
 """
 
 from __future__ import annotations

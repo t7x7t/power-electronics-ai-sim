@@ -13,8 +13,8 @@ The verified reference combination below was checked locally on 2026-09-13.
 
 | Statement | Meaning | Current declaration |
 | --- | --- | --- |
-| Minimum compatibility | The lowest runtime range the project permits a user to try for this source release. It is not a claim that every version or platform in the range has passed release acceptance. | Python `>=3.10` in `pyproject.toml`; optional workbench Node `^18.0.0 || ^20.0.0 || >=22.0.0` and npm `>=8.0.0` in `workbench/package.json` (aligned with the Vite toolchain's admitted engines). |
-| Verified release toolchain | The exact versions on which the local release checks were run. A release gate must record the observed versions again rather than infer them from these files. | Python `3.12.7`; pytest `7.4.4`; jsonschema `4.23.0`; numpy `1.26.4`; Node `24.15.0`; npm `11.12.1`. |
+| Minimum compatibility | The lowest runtime range the project permits a user to try for this source release. It is not a claim that every version or platform in the range has passed release acceptance. | Python `>=3.10` in `pyproject.toml`. |
+| Verified release toolchain | The exact versions on which the local release checks were run. A release gate must record the observed versions again rather than infer them from these files. | Python `3.12.7`; pytest `7.4.4`; jsonschema `4.23.0`; numpy `1.26.4`. |
 
 The Python test dependency pins are recorded in
 `requirements-tested.txt`. They are a reference test environment. `jsonschema`
@@ -25,12 +25,9 @@ The source CI installs these pins while it exercises Python 3.10, 3.11, and
 unreviewed resolver update as a source regression. It is not a replacement for
 the exact release-gate record.
 
-The workbench is optional and source-distributed. Its `packageManager` and
-Volta metadata pin the verified npm/Node pair for tools that honor those
-fields, while `engines` states the broader admitted compatibility range. Vite
-and its locked transitive dependencies may have their own narrower platform
-requirements; an unsupported install or build is a failed local prerequisite,
-not a reason to weaken release evidence.
+The browser workbench is temporarily withdrawn. The project therefore has no
+Node/npm release-toolchain requirement; the headless visualization contract
+exporter and local read-only service remain Python-only surfaces.
 
 ## External simulator (ngspice)
 
@@ -46,21 +43,6 @@ settings policy are defined in `docs/32_ngspice_environment_lock_v0.md`.
 - An absent ngspice executable is recorded as `not_run`, never as a pass.
 
 ## Clean installation policy
-
-For a checked-out revision of the workbench, use the committed lockfile:
-
-```powershell
-cd workbench
-npm ci
-npm run build
-```
-
-`npm ci` removes an existing `node_modules` directory and installs exactly the
-dependency graph represented by `package-lock.json`. It fails if the lockfile
-does not match `package.json`; that failure must be resolved and reviewed
-before a release check. `npm install` is reserved for an intentional dependency
-change by a maintainer, after which the changed `package.json` and
-`package-lock.json` are reviewed together and `npm ci` is rerun.
 
 The Python base package remains small; `jsonschema` is its only required
 third-party runtime dependency:
@@ -96,12 +78,10 @@ Before producing release evidence, record at least:
 
 ```powershell
 python --version
-node --version
-npm --version
 python -m pip freeze
 ```
 
-It must also run `pe-sim environment-check`, `npm ci`, and `npm run build`.
+It must also run `pe-sim environment-check`.
 [`scripts/release_check.ps1`](../scripts/release_check.ps1) is the
 authoritative local automation for this record; its invocation and evidence
 format are documented in

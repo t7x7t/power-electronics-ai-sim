@@ -20,8 +20,6 @@ EXPECTED = {
     "pytest": "7.4.4",
     "jsonschema": "4.23.0",
     "numpy": "1.26.4",
-    "node": "v24.15.0",
-    "npm": "11.12.1",
 }
 
 
@@ -44,10 +42,6 @@ def _toolchain(cwd: Path) -> dict[str, str]:
             "pytest": metadata.version("pytest"),
             "jsonschema": metadata.version("jsonschema"),
             "numpy": metadata.version("numpy"),
-            "node": _run(["node", "--version"], cwd=cwd),
-            # npm is a .cmd shim on Windows and must be invoked explicitly
-            # when subprocess bypasses the shell.
-            "npm": _run(["npm.cmd" if sys.platform == "win32" else "npm", "--version"], cwd=cwd),
         }
     except metadata.PackageNotFoundError as exc:
         raise RuntimeError(f"verified Python package is not installed: {exc}") from exc

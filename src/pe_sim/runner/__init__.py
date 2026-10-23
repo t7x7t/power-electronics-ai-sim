@@ -3,6 +3,7 @@
 from .audit import AuditRecorder
 from .lifecycle import LifecycleStateMachine, LifecycleTransitionError
 from .policies import AuditPolicy, RecoveryPolicy, RunOptions, TimingPolicy
+from ..applicability import ApplicabilityError, ApplicabilityPolicy, ModelEnvelopePlugin
 from .coordinator import run_experiment
 from ..safety import ActionPolicy, BoundedActionPolicy, FiniteActionPolicy
 from ..checks import (
@@ -28,6 +29,9 @@ __all__ = [
     "RecoveryPolicy",
     "RunOptions",
     "TimingPolicy",
+    "ApplicabilityError",
+    "ApplicabilityPolicy",
+    "ModelEnvelopePlugin",
     "run_experiment",
     "ActionPolicy",
     "BoundedActionPolicy",

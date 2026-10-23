@@ -14,6 +14,13 @@ import json
 import math
 
 from .contracts import PlantObservation
+from .model_claim import (
+    ModelClaim,
+    NumericalLimit,
+    OperatingRange,
+    ParameterProvenance,
+    ParameterRecord,
+)
 from .safety import BoundedActionPolicy
 
 
@@ -109,6 +116,133 @@ class _AveragedConverter:
             json.dumps(identity, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
         ).hexdigest()
         return identity
+
+    def validity_envelope(self) -> ModelClaim:
+        """Declare the structural limits of the averaged reference model.
+
+        Only equation domains and numerical resolution are declared.  The
+        model has no switching frequency, so continuous conduction cannot be
+        machine-checked and is reported as an uncheckable rule instead of a
+        fabricated range.
+        """
+
+        tau_current = self.inductance_h / self.load_resistance_ohm
+        tau_voltage = self.load_resistance_ohm * self.capacitance_f
+        tau_lc = 2.0 * math.pi * math.sqrt(self.inductance_h * self.capacitance_f)
+        max_step = min(tau_current, tau_voltage, tau_lc / 2.0) / 10.0
+        boost = self.topology == "boost"
+        duty = OperatingRange(
+            "duty",
+            unit="1",
+            minimum=0.0,
+            maximum=1.0,
+            maximum_exclusive=boost,
+            basis="equation_singularity" if boost else "equation_domain",
+            note="the boost equilibrium is singular at duty=1",
+        )
+        assumptions = [
+            "continuous conduction mode (CCM) is assumed, not detected",
+            "ideal switch and diode",
+            "lossless inductor and capacitor (no ESR, ESL, or saturation)",
+            "averaged state-space model: switching ripple is not represented",
+            "no thermal state or temperature dependence",
+        ]
+        limitations = [
+            "averaged state-space model: switching ripple and peak inductor current are not represented",
+            "continuous conduction is assumed, not detected",
+            "ideal switch/diode and lossless L/C: no conduction, switching, ESR, or ESL losses",
+            "no thermal state, magnetic saturation, or control-loop stability claim",
+            "parameter values are constructor-declared, not measured or calibrated",
+        ]
+        if boost:
+            limitations.append("non-minimum-phase (right-half-plane zero) response in CCM")
+        return ModelClaim(
+            claim_level="L1-averaged-reference",
+            topology=self.topology,
+            model_form="state_space_average",
+            assumptions=tuple(assumptions),
+            operating_ranges=(
+                duty,
+                OperatingRange(
+                    "input_voltage_v",
+                    unit="V",
+                    minimum=0.0,
+                    minimum_exclusive=True,
+                    basis="equation_domain",
+                ),
+                OperatingRange(
+                    "load_resistance_ohm",
+                    unit="ohm",
+                    minimum=0.0,
+                    minimum_exclusive=True,
+                    basis="equation_domain",
+                ),
+            ),
+            numerical_limits=(
+                NumericalLimit(
+                    "integration_step_s.max",
+                    max_step,
+                    "s",
+                    strength="hard",
+                    basis="structural",
+                    note="one tenth of min(L/R, R*C, T_LC/2)",
+                ),
+                NumericalLimit(
+                    "control_period.min_integration_substeps",
+                    10.0,
+                    "1",
+                    strength="advisory",
+                    basis="structural",
+                ),
+            ),
+            limitations=tuple(limitations),
+            uncheckable_rules=(
+                {
+                    "rule_id": "envelope.ccm.boundary",
+                    "reason": "switching_frequency_unavailable",
+                },
+                {
+                    "rule_id": "envelope.samples_per_switching_period",
+                    "reason": "switching_frequency_unavailable",
+                },
+                {
+                    "rule_id": "envelope.duty.resolution",
+                    "reason": "switching_frequency_unavailable",
+                },
+            ),
+            actuator={"name": "duty", "unit": "normalized"},
+            static_parameters={
+                "input_voltage_v": self.input_voltage_v,
+                "inductance_h": self.inductance_h,
+                "capacitance_f": self.capacitance_f,
+                "load_resistance_ohm": self.load_resistance_ohm,
+                "integration_step_s": self.integration_step_s,
+            },
+        )
+
+    def parameter_provenance(self) -> ParameterProvenance:
+        """Declare that reference parameters are constructor assumptions."""
+
+        values = (
+            ("input_voltage_v", self.input_voltage_v, "V"),
+            ("inductance_h", self.inductance_h, "H"),
+            ("capacitance_f", self.capacitance_f, "F"),
+            ("load_resistance_ohm", self.load_resistance_ohm, "ohm"),
+            ("integration_step_s", self.integration_step_s, "s"),
+        )
+        records = tuple(
+            ParameterRecord(
+                name=name,
+                value=value,
+                unit=unit,
+                source="assumption",
+                reference="reference_plants.py constructor/default",
+                review_status="unreviewed",
+                note="reference-model value; not a measured or calibrated parameter",
+            )
+            for name, value, unit in values
+        )
+        return ParameterProvenance(records=records, status="declared")
 
     def topology_descriptor(self):
         from .topology import export_topology_descriptor

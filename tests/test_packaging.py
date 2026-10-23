@@ -35,6 +35,10 @@ def test_default_validation_loads_the_packaged_schema():
     validate_experiment_document(document)
 
 
+def test_reviewed_identities_are_packaged():
+    assert resources.files("pe_sim").joinpath("reviewed_identities.json").is_file()
+
+
 def test_environment_check_falls_back_to_the_working_checkout(tmp_path, monkeypatch):
     from pe_sim import environment
 

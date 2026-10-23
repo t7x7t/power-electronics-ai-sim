@@ -223,13 +223,32 @@ def _environment_identity(manifest: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _manifest_identity(manifest: Mapping[str, Any]) -> dict[str, Any]:
-    """Select run inputs whose equality is required before sample comparison."""
+def _component_identity(value: Any) -> Any:
+    """Keep only the model-defining fields of a component record."""
 
-    return {field: manifest.get(field) for field in (
-        "source_commit", "plant", "controller", "contracts", "timebase",
-        "initial_state", "random_seed", "action_policy",
-    )}
+    if not isinstance(value, Mapping):
+        return value
+    return {name: value.get(name) for name in ("id", "hash", "identity") if name in value}
+
+
+def _manifest_identity(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    """Select run inputs whose equality is required before sample comparison.
+
+    Execution evidence (solver-invocation counts, per-window digests, failure
+    excerpts) is deliberately excluded.  It describes how a run was executed,
+    not which model, parameters, and contracts are being compared.
+    """
+
+    return {
+        "source_commit": manifest.get("source_commit"),
+        "plant": _component_identity(manifest.get("plant")),
+        "controller": _component_identity(manifest.get("controller")),
+        "contracts": manifest.get("contracts"),
+        "timebase": manifest.get("timebase"),
+        "initial_state": manifest.get("initial_state"),
+        "random_seed": manifest.get("random_seed"),
+        "action_policy": manifest.get("action_policy"),
+    }
 
 
 def _sample_digest(samples: Sequence[Mapping[str, Any]]) -> str | None:

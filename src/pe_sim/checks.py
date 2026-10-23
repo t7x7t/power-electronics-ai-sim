@@ -65,6 +65,14 @@ class CheckFinding:
         return not self.passed and (self.stop_requested or self.severity in {"error", "fatal"})
 
 
+_LEVEL_ORDER = {"full": 0, "limited": 1, "failed": 2}
+
+
+def _worse_level(left: str | None, right: str | None) -> str | None:
+    values = [value for value in (left, right) if value in _LEVEL_ORDER]
+    return max(values, key=_LEVEL_ORDER.__getitem__) if values else None
+
+
 @dataclass(frozen=True)
 class CheckReport:
     """Aggregate result returned by one plugin or a plugin group."""
@@ -73,6 +81,10 @@ class CheckReport:
     findings: tuple[CheckFinding, ...] = ()
     plugin_id: str | None = None
     rule_version: str = "checks-v1"
+    # ``level`` is an optional explicit qualification level.  When omitted it
+    # is derived from the findings: blocking => failed, warning => limited.
+    level: str | None = None
+    limitations: tuple[str, ...] = ()
 
     @classmethod
     def ok(cls, *, plugin_id: str | None = None) -> "CheckReport":
@@ -106,10 +118,32 @@ class CheckReport:
             # ``passed`` means no finding requires runtime/qualification
             # rejection. Diagnostics remain in ``findings`` for warnings.
             "passed": not self.blocking,
+            "level": self.effective_level,
+            "limitations": list(self.limitations),
             "rule_version": self.rule_version,
             "plugin_id": self.plugin_id,
             "findings": [finding.to_dict() for finding in self.findings],
         }
+
+    @property
+    def effective_level(self) -> str:
+        """Return ``full``, ``limited``, or ``failed`` for this report."""
+
+        if self.level in _LEVEL_ORDER:
+            return str(self.level)
+        if self.blocking or not self.passed:
+            return "failed"
+        if any(finding.severity == "warning" for finding in self.findings):
+            return "limited"
+        return "full"
+
+    @property
+    def warning_categories(self) -> tuple[str, ...]:
+        return tuple(
+            finding.category
+            for finding in self.findings
+            if finding.severity == "warning"
+        )
 
     @property
     def reasons(self) -> list[str]:
@@ -126,6 +160,8 @@ class CheckReport:
             self.findings + other.findings,
             self.plugin_id,
             self.rule_version,
+            _worse_level(self.level, other.level),
+            tuple(dict.fromkeys(self.limitations + other.limitations)),
         )
 
 
@@ -138,6 +174,8 @@ class SafetyPlugin(Protocol):
     rule_version: str
 
     def check_observation(self, observation: Any, context: CheckContext) -> Any: ...
+
+    def check_action(self, subject: Any, context: CheckContext) -> Any: ...
 
 
 class ValidityPlugin(Protocol):
@@ -215,6 +253,8 @@ def normalise_check_result(result: Any, *, plugin_id: str | None = None) -> Chec
             findings,
             result.plugin_id or plugin_id,
             result.rule_version,
+            result.level,
+            result.limitations,
         )
         if bool(result.passed) != normalized.passed:
             raise ValueError("check report passed flag is inconsistent with its findings")

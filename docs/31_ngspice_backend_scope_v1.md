@@ -27,7 +27,7 @@ used only as the reference circuit-construction frontend.
 | Window execution | Deterministic | One zero-order-hold control window per ngspice invocation; segment endpoints are linearly interpolated inside the solved window. | Linear interpolation of a solved waveform is not a substitute for a solver step; see the timing note below. |
 | Provenance | Supported | Executable name, SHA-256, parsed version, solver settings, netlist/output/log digests, exit code, duration. | No claim of cross-machine numerical equivalence. |
 | Stage 10 metrics | Restricted | The published ngspice package may be read by the restricted metric registry. | Only the reference metric set and declared signal names, and only after the same clean-worktree, `PUBLISHED`, hash-complete, and `QUALIFIED` gates as every other family. |
-| Stage 11 visualization | Restricted | The switching Buck descriptor and the same `vout`/`inductor_current` trace names are exported through the existing workbench exporter. | Display only; no topology editing or solver control. |
+| Stage 11 visualization | Restricted | The switching Buck descriptor and the same `vout`/`inductor_current` trace names are exported through the headless visualization contract exporter. | Display only; no topology editing or solver control; the browser workbench is temporarily withdrawn. |
 
 ## Switching Buck reference definition
 
@@ -77,6 +77,13 @@ interpolates the remaining segment endpoints. The cache key is
 external input invalidates the cache and starts a new solve from the current
 state.
 
+The generated window restarts the PWM carrier at its own `t = 0`. The adapter
+therefore requires `control_period_s` to be an integer multiple of the
+switching period. A non-integer ratio is rejected before the run rather than
+silently changing the effective duty and ripple at each window boundary. A
+phase-continuous implementation for arbitrary ratios is future work
+(`docs/37` UD-05).
+
 Consequences that reviewers must keep in mind:
 
 - the internal waveform is sampled at `duration/1000` or `Tsw/200`, whichever
@@ -113,7 +120,24 @@ A run records at least:
 - `plant.identity`: model kind, level, parameters, netlist template version,
   solver settings, implementation source digests, and backend status/version;
 - each window's netlist digest, output digest, log digest, exit code, and
-  duration (available through the adapter's last result and the audit stream).
+  duration (available through the adapter's last result and the audit stream);
+- `plant.evidence.first_window` and `plant.evidence.last_window` with the
+  corresponding digests, plus `solver_invocations`;
+- `failure.backend_evidence` with a bounded solver log excerpt when a window
+  fails.
+
+## Human verification
+
+```powershell
+pe-sim preview-netlist examples/ngspice_buck_step/config.json --duty 0.5
+pe-sim inspect-run runs/ngspice-buck-reference
+```
+
+`preview-netlist` renders the same builder output without starting ngspice.
+`inspect-run` verifies package integrity and reports
+`plant.implementation.review.status`. The reviewed solve-path pin is
+`src/pe_sim/reviewed_identities.json`; update it only with an explicit
+model-review record.
 
 Local absolute executable paths are intentionally omitted from portable
 evidence.

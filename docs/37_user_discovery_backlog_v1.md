@@ -1,8 +1,9 @@
 # User-Discovery Backlog (v1)
 
 **Status:** backlog only. This document records follow-ups found by an
-independent new-user test on 2026-10-22. It does not change the release support
-matrix, and none of the items below are implicit release claims.
+independent new-user test on 2026-10-22 and updated after the 2026-10-23
+kernel review (`docs/38_kernel_review_v0.md`). It does not change the release
+support matrix, and none of the items below are implicit release claims.
 
 ## Fixed immediately
 
@@ -74,10 +75,89 @@ manual netlist/process call.
 **Acceptance:** a user can obtain a documented switching waveform with
 provenance, while the standard run package remains bounded and immutable.
 
+### UD-04: engine-neutral adapter protocol and plugin trust levels
+
+**Finding:** the process boundary and provenance are appropriate, but the code
+is still shaped around one engine. `NetlistBuilder` is typed to Buck
+parameters, `NgspiceBuckPlant` combines topology and engine invocation, and the
+CLI uses hardcoded allow-lists. `docs/33` describes entry points but they are
+not implemented.
+
+**Required work:**
+
+- define a minimal `EngineAdapter` protocol (`probe`, `capabilities`, `solve`)
+  and a generic `SimulationRequest`/`SimulationResult` pair;
+- parameterize the model builder by a reviewed topology IR rather than by
+  `BuckNetlistParameters`;
+- separate window semantics from engine invocation;
+- implement `importlib.metadata` entry-point discovery with three trust levels:
+  `reference`, `third-party`, and `fixture`;
+- forbid third-party adapters from being classified as reference evidence;
+- add a `pe-sim backend verify-plugin` conformance entry point.
+
+**Acceptance:** a second engine and a second topology can be added without
+editing the Runner, the artifact rules, or the CLI allow-list; the reference
+Buck behavior stays pinned.
+
+### UD-05: phase-continuous PWM for arbitrary control ratios
+
+**Finding:** the window netlist restarts the PWM carrier at `t=0`. The adapter
+now rejects control periods that are not an integer multiple of the switching
+period, because the alternative is a silent effective-duty change.
+
+**Required work:** carry the carrier phase across window boundaries (for
+example a `PWM phase` parameter and an explicit wrap-capable waveform), or
+split the solve at carrier boundaries. Update the netlist template version and
+all reviewed identities with a model-review record.
+
+**Acceptance:** a non-integer control/switching ratio produces the same
+carrier phase and ripple as a continuously running solver within a declared
+tolerance.
+
+### UD-06: agent and release attestation
+
+**Finding:** `QUALIFIED` and the manifest are automated local evidence. There
+is no actor identity, signed release, or package signature. The review pin in
+`reviewed_identities.json` makes code changes visible but can itself be edited.
+
+**Implemented in 0.5.0 (Level 1):** a detached attestation records the
+manifest/package/artifact-index identity outside the package, and an
+append-only `attestations/anchor-index.jsonl` is verified against a reachable
+Git commit. `verify-attestation` reports `L1_anchored` only when the record and
+the attestation are both committed. The payload/signatures split keeps Level 2
+signatures append-only. See `docs/40_validity_and_authenticity_v1.md`.
+
+**Remaining work:** signed tags or package signatures (L2), optional
+actor/agent recording, and an SBOM/source inventory gate. Do not describe
+self-reported actor fields as a security control, and do not describe L1 as
+protection against a local administrator.
+
+**Acceptance:** a reviewer can distinguish a locally built exploratory package
+from a release package whose source and build identity were signed.
+
+### UD-07: per-window netlist persistence
+
+**Finding:** `plant.evidence` records the first/last window netlist digests and
+solver invocation count, but not the netlist text. `preview-netlist` reproduces
+the template from the configuration.
+
+**Required work:** optionally retain a bounded set of exact window netlists in
+a derived inspection directory, not in the immutable run package, or provide a
+documented deterministic reconstruction command using the recorded state and
+action sequence.
+
+**Acceptance:** a reviewer can reproduce the exact netlist for any recorded
+window without relying on private adapter internals.
+
 ## Priority
 
 1. UD-01 (largest user-facing control gap).
-2. UD-03 (needed for switching-level analysis).
-3. UD-02 (new topology scope, one reviewed slice at a time).
+2. UD-04 (required before claiming multi-engine support).
+3. UD-03 (needed for switching-level analysis).
+4. UD-02 (new topology scope, one reviewed slice at a time).
+5. UD-05 and UD-07 (model and verification refinements).
+6. UD-06 (release attestation, when distribution justifies it).
 
-UD-F1 and UD-F2 are fixed and covered by tests.
+UD-F1 and UD-F2 are fixed and covered by tests. The 2026-10-23 kernel review
+fixed the implementation-pin, package-inspection, and failure-log gaps; its
+residual findings are recorded above.

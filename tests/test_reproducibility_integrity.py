@@ -47,6 +47,20 @@ def _published(path, *, status="QUALIFIED", machine="host-a"):
     (path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
 
 
+def test_manifest_identity_excludes_execution_evidence():
+    from pe_sim.reproducibility import _manifest_identity
+
+    first = _manifest()
+    second = _manifest()
+    first["plant"]["evidence"] = {"solver_invocations": 1, "last_failure": {"log_excerpt": "x"}}
+    second["plant"]["evidence"] = {"solver_invocations": 2}
+
+    assert _manifest_identity(first) == _manifest_identity(second)
+
+    second["plant"]["hash"] = "q" * 64
+    assert _manifest_identity(first) != _manifest_identity(second)
+
+
 def test_compare_rejects_failed_and_incomplete_statuses(tmp_path):
     _published(tmp_path / "left", status="RUN_FAILED")
     _published(tmp_path / "right")

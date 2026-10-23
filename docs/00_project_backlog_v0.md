@@ -18,7 +18,7 @@ behavior only; it is not a hardware or product approval.
 | # | Stage | Status | Current evidence and remaining work |
 |---|---|---|---|
 | 1 | Requirements, scope, and responsibility boundaries | Partial | L0/L1 documents define the infrastructure boundary, user responsibility, and Agent limits. A named requirement owner and final approver still need to be recorded. |
-| 2 | Project and environment configuration | Partial (release preparation) | `pyproject.toml`, MIT license, Git baseline, tested-version record, exact Python/Node/npm release policy, and light CI exist. The local release gate and a clean tagged baseline are still required. |
+| 2 | Project and environment configuration | Partial (release preparation) | `pyproject.toml`, MIT license, Git baseline, tested-version record, exact Python release policy, and light CI exist. The local release gate and a clean tagged baseline are still required. |
 | 3 | Public data and interface contracts | Done (v1 incremental) | v0 contracts are extended with normalized capability negotiation, explicit event/multi-rate gates, schema compatibility checks, observation visibility/time-window checks, snapshot hash verification, and regression tests. A reusable Plant/Controller conformance harness is now available. Full event scheduling semantics and richer unit registries remain future work. |
 | 4 | Plant and Controller integration | Partial (Buck reference + test fixtures) | The Buck reference is the PySpice-constructed switching model executed by ngspice (`docs/31`). Ideal averaged Buck and Boost Plants remain deterministic test fixtures for lifecycle, units, external-input updates, snapshots, and fail-closed bounds. Fake Plant, Fake Load Plant, and Fake PI Controller remain compatibility fixtures. PSFB/LLC migration is intentionally deferred pending review. |
 | 5 | Generic Runner | Partial (modular audited lifecycle v1) | Low-friction `run_experiment` facade, pre-reset run-directory/identifier gates, formal-evidence admission, explicit CREATED/RUNNING/terminal state transitions, call-order audit, checkpoint/resume with full execution-spec identity, explicit Controller state protocols, interruption as INCOMPLETE, structured capability failures, policy-driven action handling, configured primary measurements, and endpoint-checked segmented plant timing are implemented and tested. Process-level recovery, full event scheduling, and richer timing semantics remain future work. |
@@ -27,7 +27,7 @@ behavior only; it is not a hardware or product approval.
 | 8 | Failure and recovery behavior | Done (v1 Python/file transaction boundary) | Public lifecycle matrix rejects illegal transitions; interrupted/cancelled runs are `INCOMPLETE`, backend failures remain `RUN_FAILED`, checkpoints are validated, resume provenance is recorded, and abandoned temporary directories are scanned without publication. Automatic retention/deletion policy remains an operator-approved follow-up; OS-level crash recovery and physical-model recovery remain out of scope. |
 | 9 | Reproducibility | Partial (preparatory v1) | Recommended-environment checks, deterministic Fake/Buck/Boost comparison, and explicit exact/tolerance/unknown outcomes are implemented. Cross-machine and real Ngspice reproducibility is not verified. |
 | 10 | Metrics and data export | Partial (restricted v1 slice) | Published qualified Fake/FakeLoad/Buck/Boost packages now support a versioned metric registry, explicit input-data version/fingerprint records, machine-checkable output schemas, numeric multi-run comparison, and source-linked JSON evidence reports. Domain metric registries, richer units/statistics, visualization, and physical conclusions remain later work. |
-| 11 | Data visualization | Partial (minimum release slice delivered) | Renderer-neutral `TopologyDescriptor`, `TraceDataset`/`SignalRegistry`, and `OutputDataset` contracts are implemented, explicitly published, validated, provenance-aware, immutable at the published boundary, and locally tested with Buck/Boost topology exporters. `pe_sim.workbench_export` is a constrained offline verified-run-to-fixture adapter, while `pe-sim visualization-serve` provides a versioned local read-only service for verified L1 Buck/Boost packages. `workbench/` is a separate TypeScript/Vite consumer providing SVG topology, selectable canvas traces, and scalar/series/table outputs; `examples/visualization_consumer/` demonstrates an independent consumer without simulation authority. Live delivery, a general remote API, a visualization CLI beyond the narrow exporter, and a general plugin runtime remain deferred. |
+| 11 | Data visualization | Partial (headless slice; browser UI withdrawn) | Renderer-neutral `TopologyDescriptor`, `TraceDataset`/`SignalRegistry`, and `OutputDataset` contracts are implemented, explicitly published, validated, provenance-aware, immutable at the published boundary, and locally tested with Buck/Boost topology exporters. `pe_sim.workbench_export` is a constrained offline verified-run-to-fixture adapter, while `pe-sim visualization-serve` provides a versioned local read-only service for verified L1 Buck/Boost packages. The TypeScript/Vite browser workbench was temporarily withdrawn on 2026-10-23; `examples/visualization_consumer/` remains an independent headless consumer without simulation authority. Live delivery, a general remote API, and a general plugin runtime remain deferred. |
 | 12 | Evidence and conclusion levels | Partial (restricted v1 classification) | Stage 10 summaries/comparison reports can be classified as mechanism, functional, comparable, limited, or diagnostic_only with explicit limitations, blocked conclusions, and review records. Physical, research-safety, and hardware-readiness upgrades remain prohibited and domain conclusion templates remain later work. |
 | 13 | Optional learning/adaptation integration boundary | Optional (boundary only) | Learning and adaptation are not required for the core simulation infrastructure. The project defines an opt-in boundary for reviewed adapters: only eligible, qualified, provenance-complete evidence may be handed to an external learner. No built-in trainer, online-learning loop, model update, or automatic adaptation workflow is planned for the core. |
 | 14 | PySpice/Ngspice integration | Partial (PySpice construction + ngspice execution) | The referenced switching Buck circuit is constructed through the PySpice object API and executed by the reviewed ngspice subprocess adapter in `pe_sim.backends` (scoped by `docs/31`). PySpice native solver execution remains excluded for GPLv3 and compatibility reasons (ADR 0002); the native deterministic netlist builder remains a test/CI fallback. Real-executable acceptance is opt-in through `PE_SIM_NGSPICE`; cross-machine equivalence, PSFB/LLC, and device/thermal models remain open. |
@@ -421,7 +421,37 @@ Acceptance evidence:
 pytest -q tests/test_stage12_evidence.py --basetemp .tmp/pytest-stage12
 ```
 
-The Stage 6 increment adds composable Safety/Validity/Qualification plugins,
+### Stage 16 applicability and authenticity L1 (0.5.0)
+
+`docs/40_validity_and_authenticity_v1.md` defines the first implementation of
+the two remaining credibility questions:
+
+- **Applicability:** adapters may declare a `ModelClaim` and
+  `ParameterProvenance`; the Runner records or enforces the declared envelope
+  according to `RunOptions.applicability`. Qualification now distinguishes
+  `full`, `limited`, and `failed`. A standard rule pack adds steady-state,
+  analytical-equilibrium, and numerical-health checks. Successful solver logs
+  are classified into bounded numerical-health evidence.
+- **Credibility:** `inspect-run` now calculates a read-only factor assessment
+  (`credible`, `limited`, `unknown`, `not_credible`) and exposes
+  `qualification.level`. It never changes the integrity-only `status`.
+- **Authenticity L1:** `attest-run` writes a detached attestation outside the
+  run package and appends an anchor record to a Git-tracked
+  `attestations/anchor-index.jsonl`. `verify-attestation` reports
+  `L1_anchored` only when the exact record and attestation are in a reachable
+  Git commit. The payload/signatures split reserves Level 2 signatures without
+  changing the Level 1 payload.
+
+Acceptance evidence:
+
+```text
+pytest -q tests/test_applicability.py tests/test_qualification_rules.py `
+  tests/test_credibility.py tests/test_attestation.py --basetemp .tmp/pytest-stage16
+```
+
+L1 is a visibility anchor, not a security boundary. `TolerancePolicy`, run
+lineage, conformance-report hashing, schema migration, and L2 signing remain
+open. The Stage 6 increment adds composable Safety/Validity/Qualification plugins,
 structured observation findings, and stable execution-failure categories. It
 was locally verified with `pytest -q --basetemp .tmp/pytest-stage6`,
 `python -m compileall -q src tests`, and `git diff --check`.
@@ -753,54 +783,23 @@ The immediate acceptance sequence is:
 The three data-plane contracts, explicit publication rules, immutable-package
 boundary, provenance handling, and focused minimum-core verification are
 implemented. `docs/24_stage11_visualization_scope_v1.md` is the authoritative
-scope and non-goal record for this phase. The next possible increment is a
-separate review of a small consumer workbench; it is not part of the core
-simulation authority.
+scope and non-goal record for this phase. The browser workbench was withdrawn
+because its rendered content was not usable; the headless exporter and local
+read-only service remain as data interfaces.
 
-After the minimum core is accepted, a small reference workbench and a versioned
-local read-only HTTP adapter may consume only these three contracts.  Live
-streaming, a general remote API, a visualization CLI beyond the constrained
-exporter, reusable UI/plugin runtime, or AI-assisted custom-symbol workflow
-remain future work.  Any future AI-produced symbol remains display-only and
-must bind to already declared component ports; it may never create, remove, or
-rewire a net.
+After the minimum core is accepted, a versioned local read-only HTTP adapter
+may consume only these three contracts. Live streaming, a general remote API, a
+reusable UI/plugin runtime, or AI-assisted custom-symbol workflow remain future
+work. Any future AI-produced symbol remains display-only and must bind to
+already declared component ports; it may never create, remove, or rewire a net.
 
-### Stage 11 fixture workbench increment (current)
+### Stage 11 headless surface (current)
 
-`workbench/` is an optional TypeScript/Vite reference consumer, not a new
-simulation subsystem. It loads only local JSON fixtures through
-`src/adapters/fixture-loader.ts`, whose input types are the three Stage 11
-contracts. Its three isolated panels provide a read-only deterministic SVG
-topology canvas, selectable multi-signal Canvas waveforms with declared units,
-zoom and click cursor, and scalar/series/table output presentation.
-
-The workbench does not import Python or inspect Plant, Controller, Runner,
-Manifest, or run-package internals. It cannot edit a topology, rerun a model,
-claim evidence validity, stream a run, or mutate a package. Contract display
-values are escaped before they enter HTML; generated `symbol_id` values remain
-display-only.
-
-Acceptance entry point:
-
-```text
-cd workbench
-npm run build
-npm run dev
-```
-
-The workbench can also explicitly consume the local service routes after an
-operator starts `pe-sim visualization-serve`; it never receives Runner or
-Plant authority. The remaining Stage 11 increments are explicitly scoped live
-delivery (SSE or WebSocket) only if a real consumer need justifies it. A
-complete MATLAB-style IDE, topology editor, arbitrary browser plugin execution,
-and UI marketplace are intentionally out of scope.
-
-The workbench also includes a restricted offline proof path for the reference
-Buck/Boost artifacts: `python -m pe_sim.workbench_export <published-run>
-<fixture-directory>`. It recomputes the recorded package integrity data before
-writing three derived contract files outside the immutable package. It is not
-a general visualization CLI, server, live stream, or formal-comparison path;
-the generated provenance retains the run mode and dirty-worktree status.
+The TypeScript/Vite reference workbench was removed on 2026-10-23 because its
+rendered content was not usable. The renderer-neutral contracts, the offline
+`export-workbench` adapter, and the loopback read-only service remain. They are
+headless data interfaces and make no UI claim. A future UI must consume only
+these contracts and must not gain Runner or Plant authority.
 
 ### Stage 11 minimum-release residual work
 
@@ -816,16 +815,13 @@ The following items are release work, not a reason to expand the visualization
 scope:
 
 1. add an install-and-clean-checkout acceptance job that starts the local
-   service, runs the independent consumer, and builds the workbench on the
-   documented recommended Python and Node versions;
+   service and runs the independent consumer on the documented recommended
+   Python versions;
 2. publish an explicit support matrix for the constrained exporter/service
-   (`BuckPlant` and `BoostPlant` L1 only) and retain the hard rejection of
-   unreviewed models such as Ngspice/LLC until their own model review closes;
-3. add browser-level interaction coverage for the workbench's service mode
-   when a supported headless-browser tool is adopted;
-4. define release packaging/versioning for the optional `workbench/` directory
-   and decide whether it is distributed as source only or as a separately
-   versioned static asset.
+   and retain the hard rejection of unreviewed models until their own model
+   review closes;
+3. define release packaging/versioning for the headless contracts if they are
+   later distributed as a separately versioned artifact.
 
 Live traces, arbitrary browser plugin execution, topology editing, remote
 multi-user hosting, and a MATLAB-scale IDE are deliberately not minimum-release

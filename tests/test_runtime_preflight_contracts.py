@@ -96,6 +96,38 @@ def test_formal_comparison_rejects_unseeded_or_placeholder_contracts(tmp_path, m
         )
 
 
+def test_formal_comparison_rejects_an_unreviewed_pinned_implementation():
+    from types import SimpleNamespace
+
+    from pe_sim.default_contracts import default_contract_refs
+    from pe_sim.runtime import _require_formal_evidence
+
+    spec = ExperimentSpec(
+        "formal",
+        "review",
+        "fake",
+        "pi",
+        Timebase(duration_s=0.001),
+        seed=0,
+        output_dir="runs",
+        contracts=default_contract_refs(),
+    )
+    worktree = SimpleNamespace(status="clean")
+    git = SimpleNamespace(source_commit="a" * 40, working_tree_status="clean")
+    controller = {"hash": "b" * 64, "identity": {"kind": "controller"}}
+    environment = {"status": "known", "backends": []}
+    unreviewed = {
+        "hash": "c" * 64,
+        "identity": {"implementation": {"review": {"status": "unreviewed"}}},
+    }
+
+    with pytest.raises(ValueError, match="reviewed plant implementation"):
+        _require_formal_evidence(spec, worktree, git, unreviewed, controller, environment)
+
+    unreviewed["identity"]["implementation"]["review"]["status"] = "reviewed"
+    _require_formal_evidence(spec, worktree, git, unreviewed, controller, environment)
+
+
 def test_checkpoint_is_bound_to_execution_spec(tmp_path):
     source = Runner().run(_spec(tmp_path, "source"), FakePlant(), FakePIController(), checkpoint_interval_steps=1, interrupt_after_steps=1)
     changed = ExperimentSpec(

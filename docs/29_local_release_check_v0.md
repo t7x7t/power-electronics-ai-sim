@@ -29,11 +29,9 @@ path and their installed toolchain is still checked by the release gates.
 The generated evidence records the interpreter path and isolated-environment
 mode, making accidental use of a global Conda environment visible.
 
-The release environment installs `requirements-release.txt`, which extends the
-verified test pins with the fixed Python Playwright package. It also installs
-the Chromium browser into Playwright's managed cache. Playwright and Chromium
-are release/browser-test dependencies only; they are not runtime dependencies
-of the Python package or the workbench.
+The release environment installs `requirements-release.txt`, which is the
+verified Python test pin set. The browser workbench is temporarily withdrawn,
+so no Node/npm or browser-automation dependency is part of the release gate.
 
 It writes a new evidence directory by default under
 `.tmp/release-evidence/<timestamp>-<commit>/`, which is intentionally ignored
@@ -46,7 +44,7 @@ pwsh -File scripts/release_check.ps1 -EvidenceDirectory D:\release-evidence\v0.2
 
 The resulting `release-evidence.json` has schema
 `pe-sim.local-release-evidence.v1`.  It records the exact source commit, Git
-diagnostic, observed Python/Node/npm versions, pip freeze log, each gate's
+diagnostic, observed Python versions, pip freeze log, each gate's
 status/exit code/log path, and the non-claim limitations.  A non-zero script
 exit, `outcome: "fail"`, or any skipped gate is release-blocking.
 
@@ -56,19 +54,13 @@ to the lightweight CI configuration without claiming that the local script ran
 a hosted CI service.
 
 The gate checks a clean Git worktree, Python environment policy, the complete
-pytest suite, an isolated-copy `npm ci`, and `npm run build`.  It does not
-create official Buck/Boost demonstrations: pass their already-reviewed,
+pytest suite, and the headless visualization contract service/consumer path.
+It does not create official Buck/Boost demonstrations: pass their already-reviewed,
 clean-commit run root with `-FormalDemoRunsRoot` to verify and record its
 integrity, source commit, and `formal_comparison` mode.  It starts the
 loopback read-only visualization service against a checked-in contract fixture
 and uses the independent standard-library consumer against that route.  It
 stops only the service process it created before exit.
-
-`npm ci` intentionally replaces `workbench/node_modules` according to the
-committed lockfile.  If Windows reports a locked file, close Vite/dev servers,
-Explorer windows, antivirus/scanner handles, and other Node processes that
-touch `workbench/node_modules`, then rerun.  The script records this as a
-failure; it does not substitute `npm install` or claim success.
 
 The script does not commit, stash, reset, tag, publish, create, or modify a
 source run package.  It will preserve its diagnostics even when the working

@@ -143,3 +143,18 @@ def test_executable_adapter_reports_unavailable_for_missing_binary():
     assert evidence["status"] == "unavailable"
     assert evidence["version"] is None
     assert evidence["limitations"]
+
+
+def test_convergence_failure_preserves_bounded_log_evidence(tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_NGSPICE_MODE", "convergence")
+    process = NgspiceProcess(_wrapper(tmp_path), timeout_s=10.0)
+
+    with pytest.raises(NumericalNonconvergenceError) as caught:
+        process.run("* test\n.end\n")
+
+    evidence = caught.value.evidence
+    assert evidence["netlist_sha256"]
+    assert evidence["executable_name"] in {"fake_ngspice.cmd", "fake_ngspice.sh"}
+    assert evidence["arguments"] == ["-b", "-o", "<log>", "<netlist>"]
+    assert "timestep too small" in evidence["log_excerpt"]
+    assert evidence["log_truncated"] is False

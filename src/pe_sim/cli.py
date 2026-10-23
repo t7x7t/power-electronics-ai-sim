@@ -1,9 +1,14 @@
 from __future__ import annotations
 import argparse
+import hashlib
 import json
 from pathlib import Path
 
+from .applicability import ApplicabilityPolicy
+from .attestation import attest_run, verify_attestation
 from .contracts import ExperimentSpec, Timebase, validate_experiment_document
+from .qualification_rules import QualificationRulePack
+from .runner import RunOptions
 from .runtime import FakeLoadPlant, FakePIController, FakePlant, Runner
 from .reference_plants import BuckPlant, BoostPlant
 from .backends import (
@@ -28,6 +33,7 @@ from .backends import (
 )
 from .dirty import FormalComparisonError, analyze_git_worktree
 from .environment import check_recommended_environment
+from .inspection import RunInspectionError, inspect_run
 from .provenance import ExecutableBackendAdapter
 from .reproducibility import audit_repeated_runs, compare_runs, cross_machine_evidence
 from .baseline import build_baseline_report
@@ -37,7 +43,7 @@ from .workbench_export import export_run_to_workbench_fixture
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Auditable power-electronics simulation runtime")
-    parser.add_argument("--version", action="version", version="0.3.3")
+    parser.add_argument("--version", action="version", version="0.5.0")
     sub = parser.add_subparsers(dest="command")
     run = sub.add_parser("run", help="run an experiment from JSON config")
     run.add_argument("config", type=Path)
@@ -48,6 +54,17 @@ def main(argv: list[str] | None = None) -> int:
         help="backend adapter; defaults to the plant_id mapping and must match it",
     )
     run.add_argument("--mode", choices=("exploratory", "formal_comparison"), default="exploratory")
+    run.add_argument(
+        "--applicability",
+        choices=("default", "record", "warn", "enforce", "off"),
+        default="default",
+        help="model-envelope policy; default records exploratory runs and enforces formal comparisons",
+    )
+    run.add_argument(
+        "--no-standard-qualification",
+        action="store_true",
+        help="use only the baseline structural qualification checks",
+    )
     run.add_argument(
         "--ngspice",
         default=None,
@@ -112,9 +129,39 @@ def main(argv: list[str] | None = None) -> int:
     baseline = sub.add_parser("baseline-report", help="build a release/baseline evidence template")
     baseline.add_argument("manifest", type=Path)
     baseline.add_argument("--output", type=Path, default=None)
+    inspect = sub.add_parser("inspect-run", help="verify and summarize a published run package")
+    inspect.add_argument("run_dir", type=Path)
+    inspect.add_argument("--compact", action="store_true", help="emit single-line JSON")
+    inspect.add_argument("--attestation", type=Path, default=None, help="optional detached attestation to verify")
+    inspect.add_argument("--repo", type=Path, default=None, help="Git repository used for anchor verification")
+    inspect.add_argument("--require-anchored", action="store_true", help="require trust level L1_anchored")
+    attest = sub.add_parser("attest-run", help="write a detached attestation and Git anchor record")
+    attest.add_argument("run_dir", type=Path)
+    attest.add_argument("--repo", type=Path, default=None)
+    attest.add_argument("--attestations-dir", type=Path, default=None)
+    attest.add_argument("--no-anchor", action="store_true", help="write the attestation without a Git anchor")
+    attest.add_argument("--replace", action="store_true", dest="replace_existing", help="supersede a different existing attestation")
+    attest.add_argument("--compact", action="store_true", help="emit single-line JSON")
+    verify_att = sub.add_parser("verify-attestation", help="verify a detached attestation and its Git anchor")
+    verify_att.add_argument("run_dir", type=Path)
+    verify_att.add_argument("--attestation", type=Path, required=True)
+    verify_att.add_argument("--repo", type=Path, default=None)
+    verify_att.add_argument("--no-git", action="store_true", help="skip the Git anchor check")
+    verify_att.add_argument("--compact", action="store_true", help="emit single-line JSON")
+    preview = sub.add_parser(
+        "preview-netlist",
+        help="render the reviewed circuit netlist without executing a simulation",
+    )
+    preview.add_argument("config", type=Path)
+    preview.add_argument("--duty", type=float, default=0.5)
+    preview.add_argument("--duration", type=float, default=None)
+    preview.add_argument("--model-builder", choices=("native", "pyspice"), default="native")
+    preview.add_argument("--ngspice", default=None)
+    preview.add_argument("--output", type=Path, default=None)
+    preview.add_argument("--json", action="store_true", dest="as_json")
     export = sub.add_parser(
         "export-workbench",
-        help="export a verified run as the three read-only workbench contracts",
+        help="export a verified run as the three read-only visualization contracts",
     )
     export.add_argument("run_dir", type=Path, help="published run-package directory")
     export.add_argument("destination", type=Path, help="derived fixture directory outside the run package")
@@ -139,7 +186,17 @@ def main(argv: list[str] | None = None) -> int:
             plant = _build_plant(backend, spec.plant_config, spec.timebase, args.ngspice, args.model_builder)
             _validate_plant_adapter(backend, plant)
             controller = _build_controller(spec)
-            result = Runner().run(spec, plant, controller, mode=args.mode)
+            qualification_plugins = (
+                ()
+                if args.no_standard_qualification
+                else (QualificationRulePack.standard(plant=plant),)
+            )
+            options = RunOptions(
+                mode=args.mode,
+                applicability=ApplicabilityPolicy(mode=args.applicability),
+                qualification_plugins=qualification_plugins,
+            )
+            result = Runner().run(spec, plant, controller, options=options)
         elif args.command == "git-status":
             print(json.dumps(analyze_git_worktree(args.path).to_dict(), sort_keys=True))
             return 0
@@ -175,6 +232,66 @@ def main(argv: list[str] | None = None) -> int:
                 args.output.write_text(payload, encoding="utf-8")
                 print(json.dumps({"status": "written", "path": str(args.output)}, sort_keys=True))
             return 0
+        elif args.command == "inspect-run":
+            if args.require_anchored and args.attestation is None:
+                raise ValueError("--require-anchored requires --attestation")
+            inspection = inspect_run(
+                args.run_dir,
+                attestation_path=args.attestation,
+                repo_root=args.repo,
+                verify_anchor=not args.no_git if hasattr(args, "no_git") else True,
+            )
+            print(
+                json.dumps(
+                    inspection.to_dict(),
+                    sort_keys=True,
+                    indent=None if args.compact else 2,
+                )
+            )
+            if inspection.status != "ok":
+                return 2
+            if args.attestation is not None:
+                attestation = inspection.summary.get("attestation") or {}
+                if attestation.get("status") != "ok":
+                    return 2
+                if args.require_anchored and attestation.get("trust_level") != "L1_anchored":
+                    return 2
+            return 0
+        elif args.command == "attest-run":
+            result = attest_run(
+                args.run_dir,
+                repo_root=args.repo,
+                attestations_dir=args.attestations_dir,
+                anchor=not args.no_anchor,
+                replace_existing=args.replace_existing,
+            )
+            print(
+                json.dumps(
+                    result.to_dict(),
+                    sort_keys=True,
+                    indent=None if args.compact else 2,
+                )
+            )
+            return 0 if result.status == "ATTESTED" else 2
+        elif args.command == "verify-attestation":
+            verification = verify_attestation(
+                args.run_dir,
+                args.attestation,
+                repo_root=args.repo,
+                check_git=not args.no_git,
+            )
+            print(
+                json.dumps(
+                    verification.to_dict(),
+                    sort_keys=True,
+                    indent=None if args.compact else 2,
+                )
+            )
+            if verification.status != "ok":
+                return 2
+            return 0 if verification.trust_level == "L1_anchored" else 1
+        elif args.command == "preview-netlist":
+            return _run_preview_netlist(args)
         elif args.command == "export-workbench":
             exported = export_run_to_workbench_fixture(
                 args.run_dir,
@@ -189,6 +306,9 @@ def main(argv: list[str] | None = None) -> int:
         else:
             parser.print_help()
             return 0
+    except RunInspectionError as exc:
+        print(json.dumps({"status": "RUN_INSPECTION_REJECTED", "error": str(exc)}, sort_keys=True))
+        return 2
     except FormalComparisonError as exc:
         print(json.dumps({"status": "FORMAL_COMPARISON_REJECTED", "error": str(exc), "worktree_analysis": exc.analysis.to_dict()}, sort_keys=True))
         return 2
@@ -319,7 +439,14 @@ def _build_plant(backend: str, config: dict[str, object], timebase: Timebase | N
     return plant_type(**values)
 
 
-def _build_ngspice_buck(config: dict[str, object], timebase: Timebase | None, ngspice_executable: str | None, model_builder: str = "native"):
+def _build_ngspice_buck(
+    config: dict[str, object],
+    timebase: Timebase | None,
+    ngspice_executable: str | None,
+    model_builder: str = "native",
+    *,
+    require_executable: bool = True,
+):
     """Build the reviewed switching-level Buck adapter with explicit evidence."""
     defaults = {
         "input_voltage_v": 12.0,
@@ -346,10 +473,16 @@ def _build_ngspice_buck(config: dict[str, object], timebase: Timebase | None, ng
         if timebase is None:
             raise ValueError("ngspice-buck requires control_period_s in plant_config or timebase")
         control_period = timebase.control_period_s
-    try:
-        resolution = resolve_ngspice_executable(ngspice_executable)
-    except (BackendNotFoundError, BackendConfigError) as exc:
-        raise ValueError(str(exc)) from exc
+    if require_executable:
+        try:
+            resolution = resolve_ngspice_executable(ngspice_executable)
+        except (BackendNotFoundError, BackendConfigError) as exc:
+            raise ValueError(str(exc)) from exc
+        executable = resolution.executable
+    else:
+        # Preview and offline inspection do not execute the solver, so a
+        # missing installation must not prevent reading the circuit template.
+        executable = str(ngspice_executable or "ngspice")
     if model_builder == "pyspice":
         builder = PyspiceBuckNetlistBuilder()
         try:
@@ -360,10 +493,52 @@ def _build_ngspice_buck(config: dict[str, object], timebase: Timebase | None, ng
         builder = NativeBuckNetlistBuilder()
     return NgspiceBuckPlant(
         control_period_s=float(control_period),
-        ngspice_executable=resolution.executable,
+        ngspice_executable=executable,
         netlist_builder=builder,
         **values,
     )
+
+
+def _run_preview_netlist(args) -> int:
+    """Render the reviewed netlist without starting a simulator."""
+
+    document = json.loads(args.config.read_text(encoding="utf-8"))
+    validate_experiment_document(document)
+    backend = _select_backend(document, None)
+    if backend != "ngspice-buck":
+        raise ValueError("preview-netlist is available only for the ngspice-buck backend")
+    _validate_schedule_keys(document, backend)
+    spec = ExperimentSpec.from_dict(document)
+    plant = _build_ngspice_buck(
+        spec.plant_config,
+        spec.timebase,
+        args.ngspice,
+        args.model_builder,
+        require_executable=False,
+    )
+    plant.reset(spec.initial_state.to_dict())
+    netlist = plant.preview_netlist(duty=args.duty, duration_s=args.duration)
+    digest = hashlib.sha256(netlist.encode("utf-8")).hexdigest()
+    duration_s = plant.control_period_s if args.duration is None else float(args.duration)
+    summary = {
+        "status": "rendered",
+        "backend": backend,
+        "plant_id": spec.plant_id,
+        "duty": float(args.duty),
+        "duration_s": duration_s,
+        "model_builder": args.model_builder,
+        "netlist_sha256": digest,
+    }
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(netlist, encoding="utf-8")
+        print(json.dumps({**summary, "output": str(args.output)}, sort_keys=True))
+        return 0
+    if args.as_json:
+        print(json.dumps({**summary, "netlist": netlist}, sort_keys=True, indent=2))
+    else:
+        print(netlist, end="" if netlist.endswith("\n") else "\n")
+    return 0
 
 
 def _run_backend_command(args) -> int:

@@ -19,7 +19,13 @@ import tempfile
 import time
 from typing import Any, Mapping
 
-from ..contracts import BackendProcessError, BackendTimeoutError, NumericalNonconvergenceError
+from ..contracts import (
+    BackendProcessError,
+    BackendTimeoutError,
+    NumericalNonconvergenceError,
+    SimulationExecutionError,
+)
+from ..numerical_health import NumericalHealth, parse_log
 from .discovery import BackendNotFoundError, resolve_ngspice_executable
 from .settings import NgspiceSolverSettings
 from .wrdata import TraceTable, WrdataParseError, parse_wrdata
@@ -101,6 +107,7 @@ class NgspiceRunResult:
     duration_s: float
     command: tuple[str, ...]
     timed_out: bool = False
+    numerical_health: NumericalHealth | None = None
 
     @property
     def time_s(self) -> tuple[float, ...]:
@@ -109,6 +116,29 @@ class NgspiceRunResult:
     @property
     def signals(self) -> Mapping[str, tuple[float, ...]]:
         return self.table.signals
+
+
+_MAX_LOG_EXCERPT = 8192
+
+
+def _log_evidence(log_text: str, workdir: Path | None = None) -> dict[str, Any]:
+    """Return a bounded, portable, JSON-safe summary of one solver log.
+
+    The digest covers the original text.  The excerpt is a convenience for
+    diagnosis and replaces the temporary work directory so a Manifest never
+    publishes a machine-local absolute path.
+    """
+
+    encoded = log_text.encode("utf-8", errors="replace")
+    excerpt = log_text[-_MAX_LOG_EXCERPT:]
+    if workdir is not None:
+        for candidate in (str(workdir), workdir.as_posix()):
+            excerpt = excerpt.replace(candidate, "<workdir>")
+    return {
+        "log_sha256": hashlib.sha256(encoded).hexdigest(),
+        "log_excerpt": excerpt,
+        "log_truncated": len(log_text) > _MAX_LOG_EXCERPT,
+    }
 
 
 def _classify_failure(log: str, stdout: str, stderr: str, returncode: int) -> None:
@@ -168,21 +198,28 @@ class NgspiceProcess:
 
         if not isinstance(netlist, str) or not netlist.strip():
             raise ValueError("netlist text must be a non-empty string")
-        executable = self.resolve_executable()
         netlist_bytes = netlist.encode("utf-8")
         netlist_sha256 = hashlib.sha256(netlist_bytes).hexdigest()
+        evidence: dict[str, Any] = {"netlist_sha256": netlist_sha256}
+        try:
+            executable = self.resolve_executable()
+        except SimulationExecutionError as exc:
+            exc.evidence = dict(evidence)
+            raise
 
         safe_label = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(label)) or "window"
         parent = self.work_root
         if parent is not None:
             parent.mkdir(parents=True, exist_ok=True)
         workdir = Path(tempfile.mkdtemp(prefix=f"pe-sim-ngspice-{safe_label}-", dir=str(parent) if parent else None))
+        log_path = workdir / "ngspice.log"
         try:
             netlist_path = workdir / "netlist.cir"
             netlist_path.write_text(netlist, encoding="utf-8", newline="\n")
-            log_path = workdir / "ngspice.log"
             output_path = workdir / "output.dat"
             command = [executable, "-b", "-o", str(log_path), str(netlist_path)]
+            evidence["executable_name"] = Path(executable).name
+            evidence["arguments"] = ["-b", "-o", "<log>", "<netlist>"]
 
             started = time.perf_counter()
             try:
@@ -207,6 +244,7 @@ class NgspiceProcess:
             duration_s = time.perf_counter() - started
 
             log_text = log_path.read_text(encoding="utf-8", errors="replace") if log_path.is_file() else ""
+            evidence.update(_log_evidence(log_text, workdir))
             stdout = completed.stdout or ""
             stderr = completed.stderr or ""
 
@@ -222,6 +260,16 @@ class NgspiceProcess:
                 raise BackendProcessError(f"ngspice output could not be parsed: {exc}") from exc
 
             _classify_failure(log_text, stdout, stderr, completed.returncode)
+            output_sha256 = hashlib.sha256(output_bytes).hexdigest()
+            numerical_health = parse_log(log_text, workdir=str(workdir))
+            evidence.update(
+                {
+                    "returncode": completed.returncode,
+                    "output_sha256": output_sha256,
+                    "duration_s": duration_s,
+                    "numerical_health": numerical_health.to_dict(),
+                }
+            )
 
             return NgspiceRunResult(
                 returncode=completed.returncode,
@@ -230,11 +278,17 @@ class NgspiceProcess:
                 log=log_text,
                 table=table,
                 netlist_sha256=netlist_sha256,
-                output_sha256=hashlib.sha256(output_bytes).hexdigest(),
+                output_sha256=output_sha256,
                 log_sha256=hashlib.sha256(log_text.encode("utf-8", errors="replace")).hexdigest(),
                 duration_s=duration_s,
                 command=tuple(command),
+                numerical_health=numerical_health,
             )
+        except SimulationExecutionError as exc:
+            if "log_excerpt" not in evidence and log_path.is_file():
+                evidence.update(_log_evidence(log_path.read_text(encoding="utf-8", errors="replace"), workdir))
+            exc.evidence = dict(evidence)
+            raise
         finally:
             if not self.keep_artifacts:
                 shutil.rmtree(workdir, ignore_errors=True)

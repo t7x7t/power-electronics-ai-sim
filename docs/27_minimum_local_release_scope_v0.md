@@ -43,8 +43,7 @@ not a claim that the model represents a physical circuit accurately.
 | Controller examples | Reference integration only | The included PI reference controller has explicit `kp`/`ki`, output limits, integral-clamping anti-windup, checkpoint/restore, and strict configuration validation. | No controller quality, tuning suitability, stability margin, or deployment claim is made. |
 | Stage 10/12 post-processing | Restricted local utility | Versioned metrics, comparison evidence, and bounded evidence classification for eligible packages. | It reports the limits of recorded evidence; it cannot validate physics, controller quality, or product conclusions. |
 | Visualization contracts | Supported public data boundary | Versioned `TopologyDescriptor`, `TraceDataset`, and `OutputDataset` JSON documents with explicit publication and provenance rules. | A descriptor or rendering is not electrical truth and cannot alter a run, topology, or model. |
-| Workbench exporter and local service | Constrained local adapter | Export or read-only HTTP display of integrity-checked, published project-owned Buck/Boost packages, including the reviewed switching-level ngspice Buck package, through the three visualization contracts. | No simulation control, package writes, arbitrary model export, credentials, multi-user operation, or remote deployment is part of this release. The local service is intended to bind only to loopback. |
-| `workbench/` | Source-distributed reference consumer | A minimal TypeScript/Vite workbench for read-only topology, waveform, and output display, built locally from source. | It is not a product UI, topology editor, plugin host, or separately versioned/distributed static application. |
+| Headless visualization contract exporter and local service | Constrained local adapter | Export or read-only HTTP display of integrity-checked, published project-owned Buck/Boost packages, including the reviewed switching-level ngspice Buck package, through the three visualization contracts. | No simulation control, package writes, arbitrary model export, credentials, multi-user operation, or remote deployment is part of this release. The local service is intended to bind only to loopback. The browser workbench is temporarily withdrawn. |
 | External visualization consumers | Supported extension boundary | A user or AI Agent may build a separate consumer against the three versioned JSON contracts or local service. | Consumers receive no Runner, Plant, Controller, mutation, reflection, or arbitrary browser-plugin authority. |
 
 ## Explicitly excluded from the v0 release claim
@@ -99,16 +98,14 @@ A tagged minimum local release requires all of the following for the exact
 release commit:
 
 1. this scope matrix and the supported-version policy identify the release
-   surface and the verified Python/Node toolchain;
-2. a local release check runs the full required Python checks, Node dependency
-   installation/build, local service/consumer verification, and emits a
-   machine-readable evidence record;
+   surface and the verified Python toolchain;
+2. a local release check runs the full required Python checks, the headless
+   local service/consumer verification, and emits a machine-readable evidence
+   record;
 3. clean-worktree, formal-mode Buck and Boost demonstration packages are
    generated from the release commit, checked for integrity, and retained as
-   release evidence outside normal transient output;
-4. browser-level local interaction checks cover the workbench consuming the
-   local service; and
-5. a human reviewer examines the evidence, records the exact commit, versions,
+   release evidence outside normal transient output; and
+4. a human reviewer examines the evidence, records the exact commit, versions,
    test result, package hashes, date, scope, and non-claims, then creates the
    version tag.
 

@@ -22,10 +22,20 @@ import sys
 from typing import Any, Callable, Mapping
 
 from ..contracts import BackendProcessError, PlantObservation
+from ..model_claim import (
+    ModelClaim,
+    NumericalLimit,
+    OperatingRange,
+    ParameterProvenance,
+    ParameterRecord,
+)
+from ..numerical_health import NumericalHealth
 from ..safety import BoundedActionPolicy
+from .identity import implementation_digest, implementation_sources, review_status
 from .netlist import (
     NETLIST_TEMPLATE_VERSION,
     BuckNetlistParameters,
+    default_sample_step_s,
 )
 from .netlist_builder import NativeBuckNetlistBuilder, NetlistBuilder
 from .process import NgspiceExecutableAdapter, NgspiceProcess, NgspiceRunResult
@@ -136,6 +146,18 @@ class NgspiceBuckPlant:
         self.load_resistance_ohm = _positive("load_resistance_ohm", load_resistance_ohm)
         self.switching_frequency_hz = _positive("switching_frequency_hz", switching_frequency_hz)
         self.control_period_s = _positive("control_period_s", control_period_s)
+        # The generated window restarts the PWM carrier at its own t=0.  That
+        # is only phase-continuous when the control window is an integer
+        # number of switching periods; otherwise the effective duty/ripple
+        # would silently change at every window boundary.
+        periods_per_window = self.control_period_s * self.switching_frequency_hz
+        nearest = round(periods_per_window)
+        ratio_tolerance = 1e-9 * max(1.0, abs(periods_per_window))
+        if nearest < 1 or abs(periods_per_window - nearest) > ratio_tolerance:
+            raise ValueError(
+                "control_period_s must be an integer multiple of the switching "
+                f"period for phase-continuous window solves; got {periods_per_window:g} periods"
+            )
         self.switch_on_resistance_ohm = _positive("switch_on_resistance_ohm", switch_on_resistance_ohm)
         self.switch_off_resistance_ohm = _positive("switch_off_resistance_ohm", switch_off_resistance_ohm)
         self.diode_saturation_current_a = _positive("diode_saturation_current_a", diode_saturation_current_a)
@@ -150,7 +172,11 @@ class NgspiceBuckPlant:
         self.switch_node_voltage_v = 0.0
         self.last_duty = 0.0
         self._cache: _WindowCache | None = None
+        self._first_result: NgspiceRunResult | None = None
         self._last_result: NgspiceRunResult | None = None
+        self._solver_invocations = 0
+        self._last_failure_evidence: dict[str, Any] | None = None
+        self._numerical_health: NumericalHealth | None = None
         command = ngspice_executable if ngspice_executable is not None else "ngspice"
         self._provenance_adapter = (
             None if solver_callable is not None else NgspiceExecutableAdapter(command, solver=self.solver)
@@ -196,7 +222,11 @@ class NgspiceBuckPlant:
         if not math.isfinite(self.last_duty) or not 0.0 <= self.last_duty <= 1.0:
             raise ValueError("last_duty must be finite and in [0, 1]")
         self._cache = None
+        self._first_result = None
         self._last_result = None
+        self._solver_invocations = 0
+        self._last_failure_evidence = None
+        self._numerical_health = None
         self._validate_state()
         return self._state_dict()
 
@@ -312,6 +342,176 @@ class NgspiceBuckPlant:
         voltage = duty_value * self.input_voltage_v
         return {"output_voltage_v": voltage, "inductor_current_a": voltage / self.load_resistance_ohm}
 
+    def validity_envelope(self) -> ModelClaim:
+        """Declare the reviewed switching-reference model limits.
+
+        The netlist represents the switch and diode explicitly, so CCM/DCM is
+        a reported regime rather than a validity requirement.  The hard limit
+        is the carrier-restart rule: one control window must contain an
+        integer number of switching periods.
+        """
+
+        parameters = self._parameters()
+        switching_period_s = 1.0 / self.switching_frequency_hz
+        effective_step_s = (
+            self.sample_step_s
+            if self.sample_step_s is not None
+            else default_sample_step_s(parameters, self.control_period_s)
+        )
+        samples_per_switching_period = switching_period_s / effective_step_s
+        switching_periods_per_control_period = self.control_period_s * self.switching_frequency_hz
+        pulse_edge_s = 1e-9
+        return ModelClaim(
+            claim_level="L2-switching-reference",
+            topology=self.topology,
+            model_form="switching_netlist",
+            assumptions=(
+                "ideal voltage-controlled switch with explicit on/off resistance",
+                "Shockley diode with the declared saturation current and emission coefficient",
+                "linear inductor and capacitor (no saturation, ESR, or ESL)",
+                "no thermal state or temperature-dependent device parameters",
+                "constant duty ratio within each solved control window",
+            ),
+            operating_ranges=(
+                OperatingRange(
+                    "duty",
+                    unit="1",
+                    minimum=0.0,
+                    maximum=1.0,
+                    basis="template_domain",
+                ),
+                OperatingRange(
+                    "input_voltage_v",
+                    unit="V",
+                    minimum=0.0,
+                    minimum_exclusive=True,
+                    basis="equation_domain",
+                ),
+                OperatingRange(
+                    "load_resistance_ohm",
+                    unit="ohm",
+                    minimum=0.0,
+                    minimum_exclusive=True,
+                    basis="equation_domain",
+                ),
+            ),
+            numerical_limits=(
+                NumericalLimit(
+                    "control_period.min_switching_periods",
+                    1.0,
+                    "1",
+                    strength="hard",
+                    basis="structural",
+                    note="the window netlist restarts the PWM carrier",
+                ),
+                NumericalLimit(
+                    "samples_per_switching_period.min",
+                    20.0,
+                    "1",
+                    strength="advisory",
+                    basis="resolution",
+                    note="printed wrdata resolution, not solver accuracy",
+                ),
+                NumericalLimit(
+                    "load.min_off_resistance_ratio",
+                    1e3,
+                    "1",
+                    strength="advisory",
+                    basis="structural",
+                    note="load resistance should stay well below the switch off resistance",
+                ),
+                NumericalLimit(
+                    "duty.min_edge_ratio",
+                    pulse_edge_s,
+                    "s",
+                    strength="advisory",
+                    basis="resolution",
+                    note="PULSE rise/fall edge in the netlist template",
+                ),
+            ),
+            limitations=(
+                "ideal voltage-controlled switch (Ron/Roff) and Shockley diode with the declared emission coefficient",
+                "no thermal model and no temperature coefficients",
+                "no ESR/ESL, magnetic saturation, or device self-heating",
+                "the window netlist restarts the PWM carrier, so phase continuity requires integer switching periods per control window",
+                "restore is state-equivalent, not bit-identical",
+                "waveform values between printed wrdata points are linearly interpolated",
+            ),
+            uncheckable_rules=(
+                {
+                    "rule_id": "envelope.numerical.max_step",
+                    "reason": "solver_option_not_applied_by_netlist_template",
+                },
+                {
+                    "rule_id": "envelope.thermal.state",
+                    "reason": "no_thermal_state_modelled",
+                },
+                {
+                    "rule_id": "envelope.restore.bit_identical",
+                    "reason": "ngspice_solver_state_not_persisted",
+                },
+            ),
+            actuator={"name": "duty", "unit": "normalized"},
+            static_parameters={
+                "input_voltage_v": self.input_voltage_v,
+                "inductance_h": self.inductance_h,
+                "capacitance_f": self.capacitance_f,
+                "load_resistance_ohm": self.load_resistance_ohm,
+                "switching_frequency_hz": self.switching_frequency_hz,
+                "control_period_s": self.control_period_s,
+                "switch_on_resistance_ohm": self.switch_on_resistance_ohm,
+                "switch_off_resistance_ohm": self.switch_off_resistance_ohm,
+                "diode_saturation_current_a": self.diode_saturation_current_a,
+                "diode_emission_coefficient": self.diode_emission_coefficient,
+                "switching_period_s": switching_period_s,
+                "switching_periods_per_control_period": switching_periods_per_control_period,
+                "samples_per_switching_period": samples_per_switching_period,
+                "pulse_edge_s": pulse_edge_s,
+                "load_off_resistance_ratio": self.switch_off_resistance_ohm / self.load_resistance_ohm,
+            },
+        )
+
+    def parameter_provenance(self) -> ParameterProvenance:
+        """Declare the reference netlist parameters and their review state."""
+
+        values = (
+            ("input_voltage_v", self.input_voltage_v, "V"),
+            ("inductance_h", self.inductance_h, "H"),
+            ("capacitance_f", self.capacitance_f, "F"),
+            ("load_resistance_ohm", self.load_resistance_ohm, "ohm"),
+            ("switching_frequency_hz", self.switching_frequency_hz, "Hz"),
+            ("control_period_s", self.control_period_s, "s"),
+            ("switch_on_resistance_ohm", self.switch_on_resistance_ohm, "ohm"),
+            ("switch_off_resistance_ohm", self.switch_off_resistance_ohm, "ohm"),
+            ("diode_saturation_current_a", self.diode_saturation_current_a, "A"),
+            ("diode_emission_coefficient", self.diode_emission_coefficient, "1"),
+        )
+        records = tuple(
+            ParameterRecord(
+                name=name,
+                value=value,
+                unit=unit,
+                source="assumption",
+                reference="ngspice_plants.py constructor/default",
+                review_status="unreviewed",
+                note="reference-model value; not a device, thermal, or calibrated parameter",
+            )
+            for name, value, unit in values
+        )
+        if self.sample_step_s is not None:
+            records = records + (
+                ParameterRecord(
+                    name="sample_step_s",
+                    value=self.sample_step_s,
+                    unit="s",
+                    source="assumption",
+                    reference="ngspice_plants.py constructor",
+                    review_status="unreviewed",
+                    note="printed waveform resolution, not solver accuracy",
+                ),
+            )
+        return ParameterProvenance(records=records, status="declared")
+
     def backend_provenance(self) -> Mapping[str, Any]:
         if self._provenance_cache is None:
             if self._provenance_adapter is None:
@@ -332,11 +532,16 @@ class NgspiceBuckPlant:
         if self._identity_cache is None:
             module = sys.modules[type(self).__module__]
             netlist_module = sys.modules["pe_sim.backends.netlist"]
+            solve_path_sources = implementation_sources("ngspice-buck")
+            solve_path_sha256 = implementation_digest("ngspice-buck")
             implementation = {
                 "module": type(self).__module__,
                 "class": type(self).__qualname__,
                 "source_sha256": hashlib.sha256(inspect.getsource(module).encode("utf-8")).hexdigest(),
                 "netlist_source_sha256": hashlib.sha256(inspect.getsource(netlist_module).encode("utf-8")).hexdigest(),
+                "solve_path_modules": solve_path_sources,
+                "sha256": solve_path_sha256,
+                "review": review_status("ngspice-buck", solve_path_sha256),
             }
             backend = self.backend_provenance()
             identity: dict[str, Any] = {
@@ -371,6 +576,54 @@ class NgspiceBuckPlant:
             ).hexdigest()
             self._identity_cache = identity
         return dict(self._identity_cache)
+
+    def backend_evidence(self) -> dict[str, Any]:
+        """Return bounded execution evidence for the run Manifest.
+
+        Only digests, counts, and a bounded failure-log excerpt are recorded;
+        complete waveforms and temporary paths are deliberately excluded.
+        """
+
+        evidence: dict[str, Any] = {"solver_invocations": self._solver_invocations}
+        if self._first_result is not None:
+            evidence["first_window"] = self._window_evidence(self._first_result)
+        if self._last_result is not None:
+            evidence["last_window"] = self._window_evidence(self._last_result)
+        if self._numerical_health is not None:
+            evidence["numerical_health"] = self._numerical_health.to_dict()
+        if self._last_failure_evidence:
+            evidence["last_failure"] = dict(self._last_failure_evidence)
+        return evidence
+
+    @staticmethod
+    def _window_evidence(result: NgspiceRunResult) -> dict[str, Any]:
+        return {
+            "netlist_sha256": result.netlist_sha256,
+            "output_sha256": result.output_sha256,
+            "log_sha256": result.log_sha256,
+            "returncode": result.returncode,
+            "duration_s": result.duration_s,
+        }
+
+    def preview_netlist(self, *, duty: float = 0.5, duration_s: float | None = None) -> str:
+        """Render the reviewed netlist without executing a simulator.
+
+        This is the human-verification path for the circuit definition.  It
+        uses the same builder, solver settings, and initial state as a real
+        window, but performs no process call and writes no artifact.
+        """
+
+        self._validate_state()
+        horizon = self.control_period_s if duration_s is None else float(duration_s)
+        if not math.isfinite(horizon) or horizon <= 0:
+            raise ValueError("duration_s must be finite and positive")
+        return self._netlist_builder.render(
+            self._parameters(),
+            duty=float(duty),
+            duration_s=horizon,
+            solver=self.solver,
+            sample_step_s=self.sample_step_s,
+        )
 
     def topology_descriptor(self):
         from ..topology import export_topology_descriptor
@@ -425,11 +678,29 @@ class NgspiceBuckPlant:
         )
 
     def _run_netlist(self, netlist: str) -> NgspiceRunResult:
-        if self._solver_callable is not None:
-            return self._solver_callable(netlist)
-        if self._process is None:
-            raise BackendProcessError("no ngspice execution path is configured")
-        return self._process.run(netlist, label=f"t{self.time_s:.9g}")
+        self._solver_invocations += 1
+        try:
+            if self._solver_callable is not None:
+                result = self._solver_callable(netlist)
+            elif self._process is None:
+                raise BackendProcessError("no ngspice execution path is configured")
+            else:
+                result = self._process.run(netlist, label=f"t{self.time_s:.9g}")
+        except Exception as exc:
+            evidence = getattr(exc, "evidence", None)
+            if isinstance(evidence, Mapping):
+                self._last_failure_evidence = dict(evidence)
+            raise
+        health = getattr(result, "numerical_health", None)
+        if isinstance(health, NumericalHealth):
+            self._numerical_health = (
+                health
+                if self._numerical_health is None
+                else self._numerical_health.merged(health)
+            )
+        if self._first_result is None:
+            self._first_result = result
+        return result
 
     def _apply_external_input(self, external_input: Mapping[str, Any] | None) -> None:
         values = dict(external_input or {})

@@ -20,13 +20,19 @@ from .artifacts import (
     validate_run_location,
 )
 from .contracts import ActionRequest, ExperimentSpec, PlantObservation, SimulationCancelledError, negotiate_capabilities, snapshot_file_hash, validate_observation_visibility
-from .qualification import qualify_samples, BasicQualificationPlugin
+from .qualification import (
+    BasicQualificationPlugin,
+    qualification_document,
+    qualify_samples,
+)
 from .provenance import collect_environment_provenance, collect_git_provenance
 from .dirty import analyze_git_worktree, require_formal_comparison
 from .safety import ActionPolicy, FiniteActionPolicy, check_observation, project_action
 from .runner.audit import AuditRecorder
 from .runner.lifecycle import LifecycleStateMachine
 from .runner.policies import RunOptions
+from .applicability import ApplicabilityError, ApplicabilityPolicy, ModelEnvelopePlugin
+from .jsonutil import json_safe
 from .checks import (
     CheckContext,
     CheckFailureError,
@@ -37,7 +43,9 @@ from .checks import (
     normalise_check_result,
     plugin_identity,
     run_plugin,
+    run_plugins,
 )
+from .model_claim import collect_model_claim, collect_parameter_provenance
 
 
 @dataclass(frozen=True)
@@ -400,6 +408,9 @@ class Runner:
                 selected_action_policy = FiniteActionPolicy()
         if not callable(getattr(selected_action_policy, "project", None)):
             raise TypeError("selected action policy must provide project(value)")
+        applicability_policy = (
+            options.applicability if options is not None else ApplicabilityPolicy()
+        ).resolve(mode)
         worktree = analyze_git_worktree()
         if mode == "formal_comparison":
             require_formal_comparison(worktree)
@@ -413,15 +424,61 @@ class Runner:
         controller_state_protocol = _controller_state_protocol(controller)
         if mode == "formal_comparison":
             _require_formal_evidence(spec, worktree, git, plant_manifest_preflight, controller_manifest_preflight, environment_preflight)
+        applicability_claim = collect_model_claim(plant)
+        applicability_provenance = collect_parameter_provenance(plant)
+        applicability_plugin = (
+            ModelEnvelopePlugin(
+                applicability_claim,
+                applicability_policy,
+                provenance=applicability_provenance,
+                actuator_bounds=_action_policy_bounds(selected_action_policy),
+            )
+            if applicability_policy.enabled
+            else None
+        )
+        applicability_chain: tuple[Any, ...] = (
+            (applicability_plugin,) if applicability_plugin is not None else ()
+        )
+        applicability_report = CheckReport.ok()
+        if applicability_plugin is not None:
+            applicability_report = run_plugins(
+                applicability_chain,
+                "check_preflight",
+                spec,
+                CheckContext(spec=spec, phase="preflight", metadata={"run_mode": mode}),
+            )
+            if not applicability_report.passed:
+                raise ApplicabilityError(
+                    "model envelope rejected the run preflight",
+                    applicability_report,
+                    phase="preflight",
+                )
         abandoned_runs = scan_abandoned_runs(spec.output_dir)
         writer = ArtifactWriter(spec.output_dir, spec.run_id)
+        preflight_document = _preflight_document(
+            spec,
+            mode=mode,
+            claim=applicability_claim,
+            provenance=applicability_provenance,
+            plugin=applicability_plugin,
+            report=applicability_report,
+            environment=environment_preflight,
+            git=git,
+            worktree=worktree,
+        )
+        writer.write_json("preflight.json", preflight_document)
         audit, machine = _Audit(enabled=options.audit.enabled if options is not None else True), _StateMachine()
         machine.transition("RUNNING", "run_started")
         samples: list[dict[str, Any]] = []
         events: list[dict[str, Any]] = []
         error: str | None = None
         failure: dict[str, Any] | None = None
-        qualification: dict[str, Any] = {"passed": False, "reasons": ["not_run"]}
+        qualification: dict[str, Any] = {
+            "passed": False,
+            "level": "failed",
+            "reasons": ["not_run"],
+            "limitations": [],
+        }
         safety_report = CheckReport.ok()
         validity_report = CheckReport.ok()
         qualification_report = CheckReport.ok()
@@ -578,6 +635,19 @@ class Runner:
                 validity_report = validity_report.merge(initial_validity)
                 if not initial_validity.passed:
                     raise DataValidityError("initial observation validity check failed", initial_validity, phase="initial_observation")
+                initial_applicability = run_plugins(
+                    applicability_chain,
+                    "check_observation",
+                    initial_observation,
+                    initial_context,
+                )
+                applicability_report = applicability_report.merge(initial_applicability)
+                if not initial_applicability.passed:
+                    raise ApplicabilityError(
+                        "model envelope rejected the initial observation",
+                        initial_applicability,
+                        phase="initial_observation",
+                    )
                 initial_safety = _run_plugins_audited(
                     safety_chain,
                     "check_observation",
@@ -638,6 +708,19 @@ class Runner:
                 validity_report = validity_report.merge(current_validity)
                 if not current_validity.passed:
                     raise DataValidityError("observation validity check failed", current_validity, phase="observation")
+                current_applicability = run_plugins(
+                    applicability_chain,
+                    "check_observation",
+                    obs,
+                    validity_context,
+                )
+                applicability_report = applicability_report.merge(current_applicability)
+                if not current_applicability.passed:
+                    raise ApplicabilityError(
+                        "model envelope rejected an observation",
+                        current_applicability,
+                        phase="observation",
+                    )
                 current_safety = _run_plugins_audited(safety_chain, "check_observation", obs, validity_context, audit, step_index=index, time_s=current_time)
                 safety_report = safety_report.merge(current_safety)
                 if not current_safety.passed:
@@ -664,6 +747,26 @@ class Runner:
                 safety_report = safety_report.merge(action_safety)
                 if not action_safety.passed:
                     raise SafetyCheckError("safety plugin rejected action", action_safety, phase="action")
+                action_applicability = run_plugins(
+                    applicability_chain,
+                    "check_action",
+                    {"request": request, "action": action, "measurement": obs.measurement},
+                    CheckContext(
+                        spec=spec,
+                        step_index=index,
+                        current_time_s=current_time,
+                        previous_observation_time_s=previous_observation_time,
+                        primary_measurement=primary_key_for_checks,
+                        phase="action",
+                    ),
+                )
+                applicability_report = applicability_report.merge(action_applicability)
+                if not action_applicability.passed:
+                    raise ApplicabilityError(
+                        "model envelope rejected an action",
+                        action_applicability,
+                        phase="action",
+                    )
                 target = min(max(float(request.target_time_s), current_time), endpoint)
                 hold = max(0.0, target - current_time)
                 if hold > tolerance:
@@ -725,21 +828,28 @@ class Runner:
             qualification_fn = qualification_checker or qualify_samples
             legacy_qualification = audit.call("qualification", "check", lambda: qualification_fn(samples), step_index=n_steps, time_s=current_time)
             qualification_report = qualification_report.merge(normalise_check_result(legacy_qualification, plugin_id="legacy-qualification"))
+            postrun_metadata: dict[str, Any] = {}
+            evidence_fn = getattr(plant, "backend_evidence", None)
+            if callable(evidence_fn):
+                try:
+                    backend_evidence = evidence_fn()
+                except Exception:
+                    backend_evidence = None
+                if isinstance(backend_evidence, Mapping):
+                    health = backend_evidence.get("numerical_health")
+                    if isinstance(health, Mapping):
+                        postrun_metadata["backend_numerical_health"] = json_safe(health)
             plugin_qualification = _run_plugins_audited(
                 qualification_chain,
                 "check_samples",
                 samples,
-                CheckContext(spec=spec, step_index=n_steps, current_time_s=current_time, primary_measurement=primary_key_for_checks, phase="postrun"),
+                CheckContext(spec=spec, step_index=n_steps, current_time_s=current_time, primary_measurement=primary_key_for_checks, phase="postrun", metadata=postrun_metadata),
                 audit,
                 step_index=n_steps,
                 time_s=current_time,
             )
             qualification_report = qualification_report.merge(plugin_qualification)
-            qualification = {
-                "passed": bool(qualification_report.passed),
-                "reasons": qualification_report.reasons,
-                "checks": qualification_report.to_dict(),
-            }
+            qualification = qualification_document(qualification_report)
             machine.transition("RUN_OK", "completed", step_index=n_steps, time_s=current_time)
             if qualification_report.passed:
                 machine.transition("QUALIFIED", "qualification_passed", step_index=n_steps, time_s=current_time)
@@ -754,7 +864,11 @@ class Runner:
             except Exception as checkpoint_exc:
                 failure.update({"checkpoint_available": False, "checkpoint_error": f"{type(checkpoint_exc).__name__}: {checkpoint_exc}"})
                 events.append({"event": "checkpoint_failure", "error": failure["checkpoint_error"], "step_index": len(samples), "time_s": current_time})
-            qualification = {"passed": False, "reasons": ["incomplete", "interrupted"], "checks": qualification_report.to_dict()}
+            qualification = qualification_document(
+                qualification_report,
+                level="failed",
+                reasons=["incomplete", "interrupted"],
+            )
         except SimulationCancelledError as exc:
             error, failure = f"{type(exc).__name__}: {exc}", {"category": "cancelled", "exception_type": type(exc).__name__, "message": str(exc), "recoverable": True, "checkpoint_available": callable(getattr(plant, "snapshot", None))}
             events.append({"event": "failure", **failure, "step_index": len(samples), "time_s": current_time})
@@ -764,7 +878,11 @@ class Runner:
             except Exception as checkpoint_exc:
                 failure.update({"checkpoint_available": False, "checkpoint_error": f"{type(checkpoint_exc).__name__}: {checkpoint_exc}"})
                 events.append({"event": "checkpoint_failure", "error": failure["checkpoint_error"], "step_index": len(samples), "time_s": current_time})
-            qualification = {"passed": False, "reasons": ["incomplete", "cancelled"], "checks": qualification_report.to_dict()}
+            qualification = qualification_document(
+                qualification_report,
+                level="failed",
+                reasons=["incomplete", "cancelled"],
+            )
         except Exception as exc:
             error = f"{type(exc).__name__}: {exc}"
             failure = _failure_record(exc, audit, step_index=len(samples), time_s=current_time)
@@ -799,7 +917,11 @@ class Runner:
                 reasons.append("runtime_error")
             failure.setdefault("recoverable", False)
             failure.setdefault("checkpoint_available", (writer.tmp / "checkpoint.json").exists())
-            qualification = {"passed": False, "reasons": reasons, "checks": qualification_report.to_dict()}
+            qualification = qualification_document(
+                qualification_report,
+                level="failed",
+                reasons=reasons,
+            )
         status = machine.status
         writer.write_json("config.snapshot.json", spec.to_dict())
         plant_manifest = _component_manifest(spec.plant_id, plant, capabilities[0] if capabilities else None, spec.plant_config)
@@ -812,8 +934,17 @@ class Runner:
         }
         writer.write_json("environment.json", environment)
         writer.write_json("qualification.json", qualification)
-        safety_passed = error is None and safety_report.passed and validity_report.passed
-        writer.write_json("safety.json", {"passed": safety_passed, "error": error, "checks": safety_report.to_dict(), "validity": validity_report.to_dict()})
+        safety_passed = error is None and safety_report.passed and validity_report.passed and applicability_report.passed
+        writer.write_json(
+            "safety.json",
+            {
+                "passed": safety_passed,
+                "error": error,
+                "checks": safety_report.to_dict(),
+                "validity": validity_report.to_dict(),
+                "applicability": _applicability_manifest(applicability_plugin, applicability_report),
+            },
+        )
         writer.write_json(
             "metrics.json",
             {
@@ -848,7 +979,7 @@ class Runner:
                 "environment_status": environment["status"],
             }
         )
-        manifest = {"schema_version": spec.schema_version, "experiment_id": spec.experiment_id, "run_id": spec.run_id, "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), **git_fields, "provenance": provenance, "worktree_analysis": worktree_manifest, "worktree_analysis_sha256": worktree_evidence_sha256, "run_mode": mode, "environment": environment, "plant": plant_manifest, "controller": controller_manifest, "action_policy": _action_policy_manifest(selected_action_policy), "contracts": {k: v["hash"] for k, v in spec.contracts.items()}, "timebase": spec.timebase.to_dict(), "initial_state": spec.initial_state.to_dict(), "random_seed": spec.seed, "artifacts": {}, "status": status, "qualification": qualification, "safety": {"passed": safety_passed, "checks": safety_report.to_dict(), "validity": validity_report.to_dict()}, "evidence_level": "functional", "error": error, "failure": failure, "recovery": recovery_provenance, "abandoned_runs": abandoned_runs, "capabilities": {"plant": capabilities[0].to_dict(), "controller": capabilities[1].to_dict()} if capabilities else {}, "checks": {"safety": safety_report.to_dict(), "validity": validity_report.to_dict(), "qualification": qualification_report.to_dict(), "plugins": {"safety": [plugin_identity(item) for item in safety_chain], "validity": [plugin_identity(item) for item in validity_chain], "qualification": [plugin_identity(item) for item in qualification_chain]}}, "audit": {"call_count": len(audit.calls)}, "state_transition_matrix": machine.allowed_transitions(), "state_transitions": machine.transitions}
+        manifest = {"schema_version": spec.schema_version, "experiment_id": spec.experiment_id, "run_id": spec.run_id, "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), **git_fields, "provenance": provenance, "worktree_analysis": worktree_manifest, "worktree_analysis_sha256": worktree_evidence_sha256, "run_mode": mode, "applicability": _applicability_manifest(applicability_plugin, applicability_report), "environment": environment, "plant": plant_manifest, "controller": controller_manifest, "action_policy": _action_policy_manifest(selected_action_policy), "contracts": {k: v["hash"] for k, v in spec.contracts.items()}, "timebase": spec.timebase.to_dict(), "initial_state": spec.initial_state.to_dict(), "random_seed": spec.seed, "artifacts": {}, "status": status, "qualification": qualification, "safety": {"passed": safety_passed, "checks": safety_report.to_dict(), "validity": validity_report.to_dict(), "applicability": _applicability_manifest(applicability_plugin, applicability_report)}, "evidence_level": _derive_evidence_level(status, mode, worktree, environment, plant_manifest, qualification), "error": error, "failure": failure, "recovery": recovery_provenance, "abandoned_runs": abandoned_runs, "capabilities": {"plant": capabilities[0].to_dict(), "controller": capabilities[1].to_dict()} if capabilities else {}, "checks": {"safety": safety_report.to_dict(), "validity": validity_report.to_dict(), "qualification": qualification_report.to_dict(), "applicability": applicability_report.to_dict(), "plugins": {"safety": [plugin_identity(item) for item in safety_chain], "validity": [plugin_identity(item) for item in validity_chain], "qualification": [plugin_identity(item) for item in qualification_chain], "applicability": [plugin_identity(item) for item in applicability_chain]}}, "audit": {"call_count": len(audit.calls)}, "state_transition_matrix": machine.allowed_transitions(), "state_transitions": machine.transitions}
         writer.write_json("logs/run.json", {"status": status, "error": error, "sample_count": len(samples)})
         # Complete the immutable publication summary while the run is still
         # hidden in the writer's temporary directory.  Publication then moves
@@ -891,6 +1022,170 @@ def _experiment_spec_hash(spec: ExperimentSpec) -> str:
     return sha256_bytes(canonical_json(value))
 
 
+def _action_policy_bounds(policy: Any) -> tuple[float, float] | None:
+    """Return explicit bounds only when the selected policy declares them."""
+
+    minimum = getattr(policy, "minimum", None)
+    maximum = getattr(policy, "maximum", None)
+    if (
+        isinstance(minimum, (int, float))
+        and not isinstance(minimum, bool)
+        and isinstance(maximum, (int, float))
+        and not isinstance(maximum, bool)
+        and math.isfinite(float(minimum))
+        and math.isfinite(float(maximum))
+        and float(minimum) < float(maximum)
+    ):
+        return (float(minimum), float(maximum))
+    return None
+
+
+def _applicability_manifest(plugin: Any, report: CheckReport) -> dict[str, Any] | None:
+    """Serialize applicability evidence without mixing it into model identity."""
+
+    if plugin is None:
+        return None
+    return {
+        **plugin.summary().to_dict(),
+        "declaration": plugin.declaration(),
+        "counts": plugin.counts(),
+        "checks": report.to_dict(),
+    }
+
+
+def _preflight_document(
+    spec: ExperimentSpec,
+    *,
+    mode: str,
+    claim: Any,
+    provenance: Any,
+    plugin: Any,
+    report: CheckReport,
+    environment: Mapping[str, Any],
+    git: Any,
+    worktree: Any,
+) -> dict[str, Any]:
+    """Build the optional, additive preflight evidence artifact."""
+
+    backends = environment.get("backends", ())
+    backend_status = "pass"
+    if not isinstance(backends, (list, tuple)) or not backends:
+        backend_status = "limited"
+    elif any(
+        not isinstance(item, Mapping) or str(item.get("status")) != "known"
+        for item in backends
+    ):
+        backend_status = "limited"
+    environment_status = "pass" if str(environment.get("status")) == "known" else "limited"
+    worktree_status = "pass" if str(getattr(worktree, "status", "unknown")) == "clean" else "limited"
+    gates = [
+        {
+            "gate_id": "experiment_spec",
+            "status": "pass",
+            "rule_version": "preflight-v1",
+            "evidence": {"schema_version": spec.schema_version, "run_id": spec.run_id},
+        },
+        {
+            "gate_id": "run_location",
+            "status": "pass",
+            "rule_version": "preflight-v1",
+            "evidence": {"run_id": spec.run_id, "validated": True},
+        },
+        {
+            "gate_id": "source_state",
+            "status": worktree_status,
+            "rule_version": "preflight-v1",
+            "evidence": {
+                "source_commit": getattr(git, "source_commit", "unavailable"),
+                "working_tree_status": getattr(git, "working_tree_status", "unknown"),
+            },
+        },
+        {
+            "gate_id": "environment_provenance",
+            "status": environment_status,
+            "rule_version": "preflight-v1",
+            "evidence": {"status": environment.get("status")},
+        },
+        {
+            "gate_id": "backend_provenance",
+            "status": backend_status,
+            "rule_version": "preflight-v1",
+            "evidence": {"backends": backends},
+        },
+        {
+            "gate_id": "formal_evidence",
+            "status": "pass" if mode == "formal_comparison" else "not_applicable",
+            "rule_version": "preflight-v1",
+            "evidence": {"run_mode": mode},
+        },
+    ]
+    applicability: dict[str, Any] | None = None
+    if plugin is not None:
+        applicability = {
+            **plugin.declaration(),
+            "checks": report.to_dict(),
+            "summary": plugin.summary().to_dict(),
+        }
+    else:
+        applicability = {
+            "mode": "off",
+            "claim": {
+                "status": claim.status,
+                "claim_level": claim.claim_level,
+                "envelope_sha256": claim.sha256(),
+            },
+            "parameter_provenance": {
+                "status": provenance.status,
+                "sha256": provenance.sha256(),
+            },
+            "checks": report.to_dict(),
+        }
+    return {
+        "schema_version": "preflight-v1",
+        "run_id": spec.run_id,
+        "experiment_id": spec.experiment_id,
+        "run_mode": mode,
+        "gates": gates,
+        "applicability": applicability,
+    }
+
+
+def _derive_evidence_level(
+    status: str,
+    mode: str,
+    worktree: Any,
+    environment: Mapping[str, Any],
+    plant: Mapping[str, Any],
+    qualification: Mapping[str, Any],
+) -> str:
+    """Derive the recorded evidence level from the actual run evidence."""
+
+    if status not in {"RUN_OK", "QUALIFIED"}:
+        return "diagnostic_only"
+    if mode != "formal_comparison":
+        return "functional"
+    if str(getattr(worktree, "status", "unknown")) != "clean":
+        return "limited"
+    if str(environment.get("status")) != "known":
+        return "limited"
+    backends = environment.get("backends", ())
+    if not isinstance(backends, (list, tuple)) or any(
+        not isinstance(item, Mapping) or str(item.get("status")) != "known"
+        for item in backends
+    ):
+        return "limited"
+    identity = plant.get("identity")
+    implementation = identity.get("implementation") if isinstance(identity, Mapping) else None
+    review = implementation.get("review") if isinstance(implementation, Mapping) else None
+    if not isinstance(review, Mapping) or review.get("status") != "reviewed":
+        return "limited"
+    if qualification.get("level") == "failed":
+        return "diagnostic_only"
+    if qualification.get("level") == "limited":
+        return "limited"
+    return "comparable"
+
+
 def _require_formal_evidence(spec: ExperimentSpec, worktree: Any, git: Any, plant: Mapping[str, Any], controller: Mapping[str, Any], environment: Mapping[str, Any]) -> None:
     """Reject formal comparison unless all portable identity evidence exists."""
 
@@ -907,6 +1202,14 @@ def _require_formal_evidence(spec: ExperimentSpec, worktree: Any, git: Any, plan
         digest = component.get("hash")
         if not isinstance(identity, Mapping) or not identity or not isinstance(digest, str) or len(digest) != 64 or set(digest) == {"0"}:
             raise ValueError(f"formal comparison requires complete {label} identity evidence")
+    plant_identity = plant.get("identity")
+    implementation = plant_identity.get("implementation") if isinstance(plant_identity, Mapping) else None
+    review = implementation.get("review") if isinstance(implementation, Mapping) else None
+    if isinstance(review, Mapping) and review.get("status") == "unreviewed":
+        raise ValueError(
+            "formal comparison requires a reviewed plant implementation; "
+            "the solve path does not match its checked-in review pin"
+        )
     if str(environment.get("status")) != "known":
         raise ValueError("formal comparison requires known environment provenance")
     backends = environment.get("backends", ())
@@ -988,6 +1291,11 @@ def _failure_record(exc: BaseException, audit: _Audit, *, step_index: int, time_
     if finding is not None:
         result["rule_id"] = finding.rule_id
         result["evidence"] = dict(finding.evidence)
+    backend_evidence = getattr(exc, "evidence", None)
+    if isinstance(backend_evidence, Mapping):
+        # Bounded solver log excerpt and process identity for diagnosis.  The
+        # full temporary directory is intentionally not published.
+        result["backend_evidence"] = dict(backend_evidence)
     return result
 
 
@@ -1135,7 +1443,19 @@ def _component_manifest(component_id: str, component: Any, declared_capabilities
         # no arguments and obtains settings from the run specification.
         identity["run_configuration"] = configuration
     identity = _hashable_value(identity)
-    return {"id": component_id, "hash": sha256_bytes(canonical_json(identity)), "identity": identity}
+    manifest: dict[str, Any] = {
+        "id": component_id,
+        "hash": sha256_bytes(canonical_json(identity)),
+        "identity": identity,
+    }
+    # Execution evidence is deliberately kept outside the identity digest:
+    # changing the number of solved windows must not look like a model change.
+    evidence_fn = getattr(component, "backend_evidence", None)
+    if callable(evidence_fn):
+        evidence = evidence_fn()
+        if isinstance(evidence, Mapping):
+            manifest["evidence"] = dict(evidence)
+    return manifest
 
 
 def _action_policy_manifest(policy: ActionPolicy) -> dict[str, Any]:

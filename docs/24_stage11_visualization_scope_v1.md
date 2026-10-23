@@ -94,12 +94,12 @@ not ship or support:
 - topology editing, netlist authoring, an icon catalog, automatic layout, or
   direct AI changes to circuit semantics.
 
-The repository does include `workbench/`, a small read-only TypeScript/Vite
-fixture consumer.  It loads only local JSON contract fixtures and demonstrates
-the topology canvas, selectable multi-signal waveform view, and scalar/series/
-table output view.  It is not a simulation authority and does not replace the
-separate scope and acceptance review required for connected or editable
-workbenches.
+The repository previously included `workbench/`, a small read-only
+TypeScript/Vite fixture consumer.  That browser surface was withdrawn on
+2026-10-23 because its rendered content was not usable.  The renderer-neutral
+contracts, the headless exporter, and the loopback read-only service remain;
+they are data interfaces, not a UI claim.  A future browser or desktop
+workbench still requires its own scope and acceptance review.
 
 `pe_sim.workbench_export` is a separate, constrained offline fixture exporter.
 It verifies the recorded publication state, artifact index, Manifest digest,

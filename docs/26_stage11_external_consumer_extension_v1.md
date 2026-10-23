@@ -68,8 +68,10 @@ boundary and authentication design.
 
 ## Minimal external consumer
 
-`examples/visualization_consumer/` is intentionally independent from both
-`workbench/` and `src/pe_sim/`:
+The browser workbench that previously shipped under `workbench/` is
+temporarily withdrawn. The three contracts, the headless exporter, the local
+read-only service, and the external consumer example remain. The example is
+intentionally independent from `src/pe_sim/`:
 
 - `index.html` is a dependency-free browser display plugin.  It loads either
   the three derived JSON files or the three local service routes and shows the
@@ -82,20 +84,20 @@ boundary and authentication design.
 For derived files, first produce data outside the immutable run package:
 
 ```powershell
-python -m pe_sim.workbench_export runs/workbench-buck-demo-20260913 .tmp/visualization-demo
+pe-sim export-workbench runs/ngspice-buck-reference .tmp/visualization-demo
 python examples/visualization_consumer/verify_contracts.py --directory .tmp/visualization-demo
 ```
 
 For the local service, use:
 
 ```powershell
-python examples/visualization_consumer/verify_contracts.py --service http://127.0.0.1:8765 --run workbench-buck-demo-20260913
+python examples/visualization_consumer/verify_contracts.py --service http://127.0.0.1:8765 --run ngspice-buck-reference
 ```
 
 Open `examples/visualization_consumer/index.html` through a small static file
 server, for example `python -m http.server 8000 --directory examples/visualization_consumer`.
 Give it `?directory=../../.tmp/visualization-demo` for files, or
-`?service=http://127.0.0.1:8765&run=workbench-buck-demo-20260913` for the
+`?service=http://127.0.0.1:8765&run=ngspice-buck-reference` for the
 local service.  Service mode needs normal browser CORS permission if its origin
 differs from the static server.
 
@@ -116,10 +118,11 @@ plugin runtime.
 ## Minimum verification
 
 ```powershell
-python -m pytest -q tests/test_external_visualization_consumer.py
-python examples/visualization_consumer/verify_contracts.py --directory workbench/public/fixtures/run-demo
+python -m pytest -q tests/test_visualization_service.py tests/test_workbench_export.py
+pe-sim export-workbench runs/ngspice-buck-reference .tmp/visualization-demo
+python examples/visualization_consumer/verify_contracts.py --directory .tmp/visualization-demo
 ```
 
-The automated check confirms the example runs without importing `pe_sim`,
-accepts the three published v1 JSON documents, prints provenance, and rejects
-a mismatched run identity.
+The automated checks and the example confirm that the headless exporter/service
+produce the three published v1 JSON documents, the example runs without
+importing `pe_sim`, prints provenance, and rejects a mismatched run identity.

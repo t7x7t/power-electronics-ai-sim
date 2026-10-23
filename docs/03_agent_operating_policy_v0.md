@@ -22,6 +22,23 @@
 - 使用未来样本生成当前动作；
 - 通过删除失败日志、放宽阈值或覆盖 Manifest 使运行变为成功。
 
+### 1.1 机器可检查的控制
+
+以下控制由代码执行，不依赖 Agent 自觉遵守：
+
+- `--mode formal_comparison` 在创建运行目录前拒绝 dirty/unknown 工作树，并拒绝
+  `implementation.review.status == "unreviewed"` 的参考适配器；
+- `reviewed_identities.json` 固定已评审的求解路径指纹。任何电路构建、进程执行、
+  求解设置或波形解析代码变更都会改变指纹，并由测试强制要求更新评审记录；
+- `pe-sim inspect-run` 重新校验 Manifest/包摘要、产物索引、发布标记、采样单调性
+  与非有限值，并报告 `implementation.review.status`；
+- `pe-sim preview-netlist` 在不启动仿真器的情况下渲染网表，供人工核对电路；
+- 后端失败时保留有界日志摘要（`failure.backend_evidence`）。
+
+这些措施让改动“可见、可复核”，不是不可绕过的安全边界。Runner、产物写入和资格
+判定代码目前只由 Git 提交与工作树状态保护；签名发布和 SBOM 属于后续工作
+（`docs/37` UD-06）。提示词规则不能替代上述检查。
+
 ## 2. 命令策略
 
 命令分为三类：

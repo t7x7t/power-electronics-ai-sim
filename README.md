@@ -24,15 +24,15 @@ relicensed by this repository.
 The first shareable release is a deliberately narrow, local, source-distributed
 simulation-infrastructure slice. Its supported Python orchestration, the
 PySpice-constructed and ngspice-executed Buck reference, deterministic averaged
-test fixtures, read-only visualization contracts, constrained
-local visualization service, reference workbench, exclusions, run-status
-meanings, and release gates are defined in
+test fixtures, read-only visualization contracts, the constrained headless
+local visualization service, exclusions, run-status meanings, and release gates
+are defined in
 [docs/27_minimum_local_release_scope_v0.md](docs/27_minimum_local_release_scope_v0.md).
 In particular, `QUALIFIED` is only an automated per-run qualification state; it
 does not establish physical correctness, hardware safety, product readiness, or
 maintainer approval.
-The admitted version ranges, exact locally verified Python/Node/npm toolchain,
-and clean-install policy are defined separately in
+The admitted version ranges, exact locally verified Python toolchain, and
+clean-install policy are defined separately in
 [docs/28_release_toolchain_policy_v0.md](docs/28_release_toolchain_policy_v0.md).
 
 ## Generic Runner entry point
@@ -264,8 +264,84 @@ python examples/visualization_consumer/verify_contracts.py --directory derived/n
 The destination must be outside the immutable run directory. The exported
 `topology.json`, `trace.json`, and `outputs.json` carry the run identity and
 package hashes. The external consumer example uses only the Python standard
-library. The contract and compatibility rules are in
+library. The browser workbench is temporarily withdrawn; this export and the
+loopback read-only service are headless data interfaces, not a UI claim. The
+contract and compatibility rules are in
 [docs/26_stage11_external_consumer_extension_v1.md](docs/26_stage11_external_consumer_extension_v1.md).
+
+## Verifying a run
+
+Two read-only commands support circuit and evidence review:
+
+```powershell
+# Render the reviewed netlist without starting ngspice.
+pe-sim preview-netlist examples/ngspice_buck_step/config.json --duty 0.5
+
+# Re-verify a published package and summarize its samples and identity.
+pe-sim inspect-run runs/ngspice-buck-reference
+```
+
+`inspect-run` recomputes the Manifest digest, package digest, artifact index,
+publication marker, and sample monotonicity. It reports the backend, plant
+identity, `implementation.review.status`, first/last window digests, and any
+recorded failure evidence. A package can be intact while its run failed:
+`status` reports package integrity, while `run_status` and `run_ok` report the
+execution outcome separately. It also reports a read-only `credibility`
+assessment and the `qualification.level` (`full`, `limited`, or `failed`).
+
+## Applicability and authenticity
+
+Runs now record what the model is declared to apply to, not only that the
+numbers were finite:
+
+```powershell
+# Exploratory runs record envelope findings; formal comparison enforces them.
+pe-sim run examples/buck_pi_step/config.json --backend buck --applicability default
+
+# Keep only the baseline structural qualification checks.
+pe-sim run examples/buck_pi_step/config.json --backend buck --no-standard-qualification
+```
+
+The `buck`/`boost` averaged fixtures declare equation domains, an integration
+stability limit, and an explicit `uncheckable_rules` list (for example CCM
+cannot be checked without a switching frequency). The `ngspice-buck` adapter
+declares switching-period, sample-resolution, and pulse-width limits. Parameter
+sources are recorded separately; an `assumption` parameter is visible as
+`unreviewed` rather than silently treated as calibrated.
+
+Authenticity Level 1 records the package identity outside the package and
+anchors it in Git history:
+
+```powershell
+pe-sim attest-run runs/ngspice-buck-reference --repo .
+# commit attestations/ with review, then:
+pe-sim verify-attestation runs/ngspice-buck-reference `
+  --attestation attestations/ngspice-buck-reference.attestation.json --repo .
+```
+
+`L1_anchored` means the exact attestation and anchor record were found in a
+reachable Git commit. It proves visibility of the package identity in history;
+it does not prove who produced the package, that a reviewer approved it, or
+that a local administrator could not rewrite history. Signatures (Level 2) are
+append-only and do not change the Level 1 payload. See
+[docs/40_validity_and_authenticity_v1.md](docs/40_validity_and_authenticity_v1.md).
+
+The reviewed solve path is pinned in `src/pe_sim/reviewed_identities.json` and
+checked by the test suite. Any change to the circuit builder, process boundary,
+solver settings, or waveform parser changes the digest and requires an explicit
+review update. The pin is a review tripwire, not a signature. The review
+findings and residual risks are in
+[docs/38_kernel_review_v0.md](docs/38_kernel_review_v0.md).
+The applicability/authenticity design, acceptance matrix, and non-claims are in
+[docs/40_validity_and_authenticity_v1.md](docs/40_validity_and_authenticity_v1.md).
+
+## Browser workbench status
+
+The TypeScript/Vite browser workbench is temporarily withdrawn because its
+rendered content was unusable. The three visualization contracts, the headless
+exporter, the loopback read-only service, and the standard-library consumer
+example remain. A future UI must consume only those contracts and receives no
+Runner, Plant, Controller, or mutation authority.
 
 ## End-user acceptance
 

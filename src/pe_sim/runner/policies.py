@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+from ..applicability import ApplicabilityPolicy
 from ..safety import ActionPolicy
 
 
@@ -82,6 +83,7 @@ class RunOptions:
     safety_plugins: tuple[Any, ...] = ()
     validity_plugins: tuple[Any, ...] = ()
     qualification_plugins: tuple[Any, ...] = ()
+    applicability: ApplicabilityPolicy = ApplicabilityPolicy()
 
     def validate(self, spec: Any) -> None:
         if self.mode not in {"exploratory", "formal_comparison"}:
@@ -98,6 +100,9 @@ class RunOptions:
                 iter(value)
             except TypeError as exc:
                 raise TypeError(f"{name} must be an iterable of plugin objects") from exc
+        if not isinstance(self.applicability, ApplicabilityPolicy):
+            raise TypeError("applicability must be an ApplicabilityPolicy")
+        self.applicability.validate()
         self.timing.validate(spec)
         self.recovery.validate()
         self.audit.validate(self.mode)

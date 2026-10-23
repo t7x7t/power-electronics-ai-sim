@@ -25,7 +25,7 @@ Python 3.10 is supported through the small conditional `tomli` dependency,
 which supplies the standard-library `tomllib` interface used by environment
 metadata parsing on that interpreter version.
 
-The optional workbench has a separate Node/npm compatibility range and an exact
-locally verified Node/npm pair. The distinction between admitted ranges and
-the release-gate toolchain is defined in
+The browser workbench is temporarily withdrawn, so CI and the release gate no
+longer require a Node/npm toolchain. The distinction between admitted Python
+ranges and the release-gate toolchain is defined in
 [`docs/28_release_toolchain_policy_v0.md`](28_release_toolchain_policy_v0.md).

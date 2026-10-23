@@ -229,3 +229,17 @@ def test_runner_publishes_a_qualified_package_with_the_switching_identity(tmp_pa
     assert manifest["plant"]["identity"]["level"] == "L2"
     assert manifest["plant"]["hash"]
     assert manifest["environment"]["backends"][0]["status"] == "not_declared"
+    assert manifest["plant"]["evidence"]["solver_invocations"] == 2
+
+
+def test_backend_evidence_records_first_and_last_window_digests():
+    solver = FakeSolver()
+    plant = _plant(solver)
+    plant.reset({})
+
+    plant.advance(0.5, 10e-6)
+
+    evidence = plant.backend_evidence()
+    assert evidence["solver_invocations"] == 1
+    assert evidence["first_window"]["netlist_sha256"] == "a" * 64
+    assert evidence["last_window"]["output_sha256"] == "b" * 64

@@ -22,8 +22,6 @@ $ExpectedToolchain = [ordered]@{
     pytest = "7.4.4"
     jsonschema = "4.23.0"
     numpy = "1.26.4"
-    node = "v24.15.0"
-    npm = "11.12.1"
 }
 
 $RepositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
@@ -71,7 +69,6 @@ function Initialize-ReleasePython {
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $python)) { throw "unable to create isolated Python venv at $venv" }
         & $python -m pip install --upgrade pip setuptools *>&1 | Tee-Object -FilePath (Join-Path $EvidenceDirectory "python-venv-bootstrap.log") | Out-Host
         & $python -m pip install -r (Join-Path $RepositoryRoot "requirements-release.txt") *>&1 | Tee-Object -FilePath (Join-Path $EvidenceDirectory "python-venv-requirements.log") | Out-Host
-        & $python -m playwright install chromium *>&1 | Tee-Object -FilePath (Join-Path $EvidenceDirectory "python-playwright-browser.log") | Out-Host
         & $python -m pip install -e (Join-Path $RepositoryRoot ".[test]") *>&1 | Tee-Object -FilePath (Join-Path $EvidenceDirectory "python-venv-project.log") | Out-Host
         $pythonEnvironment.created = $true
     } else { $pythonEnvironment.reused = $true }
@@ -160,14 +157,12 @@ function Record-InputDigests {
         "requirements-tested.txt",
         "requirements-release.txt",
         ".github/workflows/ci.yml",
-        "workbench/package.json",
-        "workbench/package-lock.json",
         "docs/27_minimum_local_release_scope_v0.md",
         "docs/28_release_toolchain_policy_v0.md",
         "docs/29_local_release_check_v0.md",
-        "docs/30_stage11_browser_e2e_v0.md",
         "docs/31_ngspice_backend_scope_v1.md",
         "docs/32_ngspice_environment_lock_v0.md",
+        "docs/40_validity_and_authenticity_v1.md",
         "docs/adr/0002-ngspice-process-boundary.md",
         "scripts/release_check.ps1",
         "scripts/generate_formal_demos.py",
@@ -183,18 +178,6 @@ function Record-InputDigests {
         ForEach-Object {
             $relative = $_.FullName.Substring($RepositoryRoot.Length).TrimStart([char[]]"\/").Replace('\', '/')
             $inputDigests.Add([ordered]@{ path = $relative; sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant() })
-        }
-    # Bind every shipped workbench source file to the evidence as well as its
-    # dependency manifests. Generated dependencies and build output are
-    # intentionally excluded because the gate recreates them with npm ci/build.
-    Get-ChildItem -LiteralPath (Join-Path $RepositoryRoot "workbench") -Recurse -File |
-        Where-Object { $_.FullName -notmatch '[\\/]node_modules[\\/]' -and $_.FullName -notmatch '[\\/]dist[\\/]' } |
-        Sort-Object FullName |
-        ForEach-Object {
-            $relative = $_.FullName.Substring($RepositoryRoot.Length).TrimStart([char[]]"/\\").Replace('\\', '/')
-            if (-not ($inputDigests | Where-Object { $_.path -eq $relative })) {
-                $inputDigests.Add([ordered]@{ path = $relative; sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant() })
-            }
         }
 }
 
@@ -220,47 +203,24 @@ function Test-ExactToolchain {
     }
     try {
         $observed = (Get-Content -LiteralPath (Join-Path $EvidenceDirectory "python-toolchain-probe.log") -Raw | ConvertFrom-Json)
-        $node = (& node --version 2>&1 | Out-String).Trim()
-        $npm = (& npm --version 2>&1 | Out-String).Trim()
         $mismatches = @()
         foreach ($name in @("python", "pytest", "jsonschema", "numpy")) {
             if ($observed.$name -ne $ExpectedToolchain[$name]) { $mismatches += "$name expected $($ExpectedToolchain[$name]), observed $($observed.$name)" }
         }
-        if ($node -ne $ExpectedToolchain.node) { $mismatches += "node expected $($ExpectedToolchain.node), observed $node" }
-        if ($npm -ne $ExpectedToolchain.npm) { $mismatches += "npm expected $($ExpectedToolchain.npm), observed $npm" }
         $toolchainJson = [ordered]@{
             expected = $ExpectedToolchain
-            observed = [ordered]@{ python = $observed.python; pytest = $observed.pytest; jsonschema = $observed.jsonschema; numpy = $observed.numpy; node = $node; npm = $npm }
+            observed = [ordered]@{ python = $observed.python; pytest = $observed.pytest; jsonschema = $observed.jsonschema; numpy = $observed.numpy }
         } | ConvertTo-Json -Depth 4
         [System.IO.File]::WriteAllText((Join-Path $EvidenceDirectory "toolchain-observed.json"), $toolchainJson + [Environment]::NewLine, $Utf8NoBom)
         if ($mismatches.Count -gt 0) {
-            Add-Record "toolchain-exact" "fail" 1 ($mismatches -join "; ") "python/node/npm version probe" (Join-Path $EvidenceDirectory "toolchain-observed.json") | Out-Null
+            Add-Record "toolchain-exact" "fail" 1 ($mismatches -join "; ") "python version probe" (Join-Path $EvidenceDirectory "toolchain-observed.json") | Out-Null
             return $false
         }
-        Add-Record "toolchain-exact" "pass" 0 "exact verified Python/Node/npm versions observed" "python/node/npm version probe" (Join-Path $EvidenceDirectory "toolchain-observed.json") | Out-Null
+        Add-Record "toolchain-exact" "pass" 0 "exact verified Python versions observed" "python version probe" (Join-Path $EvidenceDirectory "toolchain-observed.json") | Out-Null
         return $true
     } catch {
-        Add-Record "toolchain-exact" "fail" 1 $_.Exception.Message "python/node/npm version probe" "" | Out-Null
+        Add-Record "toolchain-exact" "fail" 1 $_.Exception.Message "python version probe" "" | Out-Null
         return $false
-    }
-}
-
-function Copy-IsolatedWorkbench {
-    $source = Join-Path $RepositoryRoot "workbench"
-    $destination = Join-Path $EvidenceDirectory "workbench-source"
-    if (-not (Test-Path -LiteralPath $source -PathType Container)) {
-        Add-Record "workbench-copy" "fail" 1 "workbench directory is missing" "" "" | Out-Null
-        return $null
-    }
-    New-Item -ItemType Directory -Path $destination | Out-Null
-    try {
-        Get-ChildItem -LiteralPath $source -Force | Where-Object { $_.Name -notin @("node_modules", "dist") } |
-            ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $destination -Recurse -Force }
-        Add-Record "workbench-copy" "pass" 0 "npm runs only in the evidence-directory copy; source workbench/node_modules is untouched" "Copy-Item workbench -> evidence/workbench-source (excluding node_modules, dist)" "" | Out-Null
-        return $destination
-    } catch {
-        Add-Record "workbench-copy" "fail" 1 $_.Exception.Message "Copy-Item workbench -> evidence/workbench-source" "" | Out-Null
-        return $null
     }
 }
 
@@ -332,7 +292,7 @@ function Write-Evidence {
             "This script does not create, modify, or approve official Buck/Boost release demonstrations; item 4 supplies them through -FormalDemoRunsRoot.",
             "The source-controlled visualization contract fixture proves only the local read-only service and independent consumer path. It is not release demonstration evidence.",
             "A passing local gate is not human approval, a version tag, model validation, or an engineering or hardware claim.",
-            "The browser acceptance suite uses an isolated workbench copy and Python Playwright locally; it is not an npm runtime dependency or a hosted-browser claim."
+            "The browser workbench is temporarily withdrawn; the headless visualization contract exporter and local read-only service are the only shipped data-plane surfaces."
         )
         human_review_required = $true
     }
@@ -361,12 +321,11 @@ try {
     $pipOk = Invoke-NativeGate "python-pip-check" $PythonPath @("-m", "pip", "check")
     $environmentOk = Invoke-NativeGate "python-environment-check" $PythonPath @("-m", "pe_sim.cli", "environment-check", "--requirements", "requirements-tested.txt", "--pyproject", "pyproject.toml")
     if ($PreflightOnly) {
-        Add-NotRunRecord "full-local-gate" "preflight only: tests, npm ci, build, service, consumer, and formal-demo evidence checks were intentionally not run"
+        Add-NotRunRecord "full-local-gate" "preflight only: tests, service, consumer, and formal-demo evidence checks were intentionally not run"
         return
     }
     if (-not ($toolchainOk -and $pipFreezeOk -and $pipOk -and $environmentOk)) {
         Add-NotRunRecord "python-pytest" "blocked by exact toolchain, pip freeze, or Python environment failure"
-        Add-NotRunRecord "workbench-npm-ci" "blocked by exact toolchain or Python environment failure"
         Add-NotRunRecord "visualization-service" "blocked by exact toolchain or Python environment failure"
         Add-NotRunRecord "external-consumer-service" "blocked by exact toolchain or Python environment failure"
         return
@@ -374,22 +333,9 @@ try {
 
     $pytestBase = Join-Path $EvidenceDirectory "pytest-basetemp"
     $pythonTestsOk = Invoke-NativeGate "python-pytest" $PythonPath @("-m", "pytest", "-q", "--basetemp", $pytestBase, "-o", "cache_dir=$EvidenceDirectory\\pytest-cache")
-    $workbenchCopy = Copy-IsolatedWorkbench
-    $nodeOk = $false
-    if ($null -ne $workbenchCopy) {
-        $npmInstallOk = Invoke-NativeGate "workbench-npm-ci" "npm" @("ci") $workbenchCopy
-        if ($npmInstallOk) {
-            $nodeOk = Invoke-NativeGate "workbench-build" "npm" @("run", "build") $workbenchCopy
-        } else {
-            Add-NotRunRecord "workbench-build" "isolated npm ci failed; source workbench was not modified"
-        }
-    } else {
-        Add-NotRunRecord "workbench-npm-ci" "isolated workbench copy could not be prepared"
-        Add-NotRunRecord "workbench-build" "isolated workbench copy could not be prepared"
-    }
-    if (-not ($pythonTestsOk -and $nodeOk)) {
-        Add-NotRunRecord "visualization-service" "blocked by test or workbench build failure"
-        Add-NotRunRecord "external-consumer-service" "blocked by test or workbench build failure"
+    if (-not $pythonTestsOk) {
+        Add-NotRunRecord "visualization-service" "blocked by test failure"
+        Add-NotRunRecord "external-consumer-service" "blocked by test failure"
         return
     }
 
@@ -431,23 +377,10 @@ try {
     if ($ready) {
         Add-Record "visualization-service" "pass" 0 "process_id=$($serviceProcess.Id); loopback read-only health endpoint responded" $serviceCommand $serviceStdout | Out-Null
         Invoke-NativeGate "external-consumer-service" $PythonPath @("examples/visualization_consumer/verify_contracts.py", "--service", $baseUrl, "--run", "buck-contract-fixture") | Out-Null
-        # The test starts Vite only from the isolated npm-ci copy.  The service
-        # remains the loopback process started above, exercising CORS and the
-        # actual service-mode contract load without modifying workbench/.
-        $env:PE_SIM_RUN_BROWSER_E2E = "1"
-        $env:PE_SIM_WORKBENCH_DIR = $workbenchCopy
-        $env:PE_SIM_BROWSER_SERVICE_URL = $baseUrl
-        $env:PE_SIM_BROWSER_RUN_ID = "buck-contract-fixture"
-        Invoke-NativeGate "workbench-browser-e2e" $PythonPath @("-m", "pytest", "-q", "tests/test_workbench_browser_e2e.py", "--basetemp", (Join-Path $EvidenceDirectory "browser-e2e-basetemp"), "-o", "cache_dir=$EvidenceDirectory\\browser-e2e-cache") | Out-Null
-        Remove-Item Env:PE_SIM_RUN_BROWSER_E2E -ErrorAction SilentlyContinue
-        Remove-Item Env:PE_SIM_WORKBENCH_DIR -ErrorAction SilentlyContinue
-        Remove-Item Env:PE_SIM_BROWSER_SERVICE_URL -ErrorAction SilentlyContinue
-        Remove-Item Env:PE_SIM_BROWSER_RUN_ID -ErrorAction SilentlyContinue
     } else {
         $detail = "service did not become ready on loopback port $ServicePort; only the process started by this script will be stopped"
         Add-Record "visualization-service" "fail" 1 $detail $serviceCommand $serviceStdout | Out-Null
         Add-NotRunRecord "external-consumer-service" "visualization service did not become ready"
-        Add-NotRunRecord "workbench-browser-e2e" "visualization service did not become ready"
     }
 
     Test-GitClean "git-clean-after-checks" | Out-Null
