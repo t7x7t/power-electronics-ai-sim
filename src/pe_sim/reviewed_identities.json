@@ -2,7 +2,7 @@
   "schema": "pe-sim.reviewed-identities.v1",
   "backends": {
     "ngspice-buck": {
-      "implementation_sha256": "acde217e64f39a4a0f89e17b9505ceda9c838b6bcd6db95474c2a8c74704a3b4",
+      "implementation_sha256": "9e0e94c64ea375fe8e6a36ec523246ad12b1f99f99e8af5c1931537d32a7df39",
       "reviewed_at": "2026-10-24",
       "reviewer": "project maintainer",
       "acceptance_ids": [
@@ -15,7 +15,39 @@
         "docs/38_kernel_review_v0.md",
         "docs/40_validity_and_authenticity_v1.md"
       ],
-      "review_note": "Reviewed switching Buck reference solve path. Update only with an explicit model-review record; a changed digest means the numerical construction, execution, or parsing code changed."
+      "review_note": "Reviewed switching Buck reference solve path. Update only with an explicit model-review record; a changed digest means the numerical construction, execution, or parsing code changed. 0.5.1: the reviewed-identity module moved from pe_sim/backends/identity.py to pe_sim/identity.py and the adapters import it from the package root; digests were recomputed after that import-only change, no numerical code was modified."
+    },
+    "buck": {
+      "implementation_sha256": "943b081eea21ecfd4ffd472c59d661dd34bb5c2aad2f95063aed61c4bf18bdaf",
+      "reviewed_at": "2026-10-24",
+      "reviewer": "project maintainer",
+      "acceptance_ids": [
+        "stage4-reference-plants",
+        "stage15-buck-boost-acceptance",
+        "applicability-envelope-v1"
+      ],
+      "evidence_refs": [
+        "docs/13_stage4_reference_plants_v0.md",
+        "docs/23_stage15_l1_buck_boost_acceptance_v1.md",
+        "docs/38_kernel_review_v0.md"
+      ],
+      "review_note": "Reviewed native averaged Buck reference solve path (reference_plants.py: averaged equations, RK4 integrator, analytical equilibrium). The run loop in runtime.py is intentionally outside this pin; the review covers the model implementation only, and the enclosure declares that boundary as an uncheckable rule. 0.5.1: the reviewed-identity module moved from pe_sim/backends/identity.py to pe_sim/identity.py and the adapters import it from the package root; digests were recomputed after that import-only change, no numerical code was modified."
+    },
+    "boost": {
+      "implementation_sha256": "943b081eea21ecfd4ffd472c59d661dd34bb5c2aad2f95063aed61c4bf18bdaf",
+      "reviewed_at": "2026-10-24",
+      "reviewer": "project maintainer",
+      "acceptance_ids": [
+        "stage4-reference-plants",
+        "stage15-buck-boost-acceptance",
+        "applicability-envelope-v1"
+      ],
+      "evidence_refs": [
+        "docs/13_stage4_reference_plants_v0.md",
+        "docs/23_stage15_l1_buck_boost_acceptance_v1.md",
+        "docs/38_kernel_review_v0.md"
+      ],
+      "review_note": "Reviewed native averaged Boost reference solve path (reference_plants.py: averaged equations, RK4 integrator, analytical equilibrium, duty=1 singularity). The run loop in runtime.py is intentionally outside this pin; the review covers the model implementation only, and the enclosure declares that boundary as an uncheckable rule. 0.5.1: the reviewed-identity module moved from pe_sim/backends/identity.py to pe_sim/identity.py and the adapters import it from the package root; digests were recomputed after that import-only change, no numerical code was modified."
     }
   }
 }

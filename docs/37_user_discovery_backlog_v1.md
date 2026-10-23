@@ -99,6 +99,13 @@ not implemented.
 editing the Runner, the artifact rules, or the CLI allow-list; the reference
 Buck behavior stays pinned.
 
+**Prerequisite status (0.5.1):** the tolerance half of comparison is closed
+(`ToleranceSpec`, docs/41 §4) and the public surface is now tiered, so adapter
+authors have a declared contract to program against. Sample grid alignment is
+still positional; a second engine with a different time grid will not compare
+against the ngspice windows until a resampling policy is reviewed. Treat that
+as the first task of UD-04, not as a leftover of the tolerance work.
+
 ### UD-05: phase-continuous PWM for arbitrary control ratios
 
 **Finding:** the window netlist restarts the PWM carrier at `t=0`. The adapter

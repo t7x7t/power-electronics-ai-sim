@@ -163,6 +163,7 @@ function Record-InputDigests {
         "docs/31_ngspice_backend_scope_v1.md",
         "docs/32_ngspice_environment_lock_v0.md",
         "docs/40_validity_and_authenticity_v1.md",
+        "docs/41_kernel_compatibility_surface_v1.md",
         "docs/adr/0002-ngspice-process-boundary.md",
         "scripts/release_check.ps1",
         "scripts/generate_formal_demos.py",

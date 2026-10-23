@@ -209,7 +209,7 @@ def inspect_run(
         try:
             # Compare against the current checkout's pin, not only the
             # status that the producing process recorded at run time.
-            from .backends.identity import review_status
+            from .identity import review_status
 
             current_review = review_status(backend_id, recorded_implementation)
         except (KeyError, ValueError, FileNotFoundError):

@@ -50,7 +50,7 @@ def test_inspect_run_detects_a_tampered_package(tmp_path):
 
 
 def test_inspect_run_rechecks_the_recorded_implementation_against_the_current_pin(tmp_path):
-    from pe_sim.backends.identity import implementation_digest
+    from pe_sim.identity import implementation_digest
 
     run_dir, _, manifest = _published_buck_run(tmp_path)
     digest = implementation_digest("ngspice-buck")

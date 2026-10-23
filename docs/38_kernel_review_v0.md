@@ -50,7 +50,7 @@ The review found two concrete gaps and fixed them:
    (`settings.py`), and waveform parser (`wrdata.py`) were not covered. An agent
    could change circuit construction or result parsing without changing the
    recorded implementation hash.
-   **Fix:** `pe_sim.backends.identity` hashes the six solve-path modules and
+   **Fix:** `pe_sim.identity` hashes the six solve-path modules and
    exposes `implementation.sha256` plus a `review` record. The checked-in
    `src/pe_sim/reviewed_identities.json` pins the reviewed value. A test fails
    when the code changes without updating the pin.

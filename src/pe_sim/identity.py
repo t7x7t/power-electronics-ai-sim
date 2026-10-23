@@ -1,9 +1,13 @@
-"""Reviewed implementation identity for the shipped external-simulator path.
+"""Reviewed implementation identity for the shipped solve paths.
 
 The digest covers the source files that determine how a reviewed window is
 constructed, executed, and parsed.  It is intentionally narrower than a package
 digest: it answers "did the numerical solve path change?" rather than "did any
 file in the repository change?".
+
+The same mechanism covers the external-simulator adapter (``ngspice-buck``)
+and the project-owned averaged reference plants (``buck``/``boost``), so the
+default example path is reviewed with the same strength as the simulator path.
 
 ``reviewed_identities.json`` is a review pin, not a security boundary.  A local
 process with write access can change both the code and the pin; the pin makes
@@ -15,25 +19,43 @@ from __future__ import annotations
 import hashlib
 import json
 from importlib import resources
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
 
 
 REVIEW_IDENTITIES_SCHEMA = "pe-sim.reviewed-identities.v1"
 
+# Solve paths are declared relative to the ``pe_sim`` package root, so the
+# native reference models and the external-simulator adapter use one
+# declaration shape.  The returned mapping is still keyed by the plain module
+# file name: those keys are part of the aggregate digest that was already
+# reviewed, and renaming them would silently invalidate existing pins.
+#
+# This module lives at the package root on purpose.  It is a general review
+# mechanism, not an adapter detail: core modules (``reference_plants``,
+# ``inspection``) need it, and they must not depend on the external-simulator
+# package to get it.
+_PACKAGE_ROOT = Path(__file__).resolve().parent
+
 # Adding or removing a module here is a model-review decision: it changes the
 # implementation digest for every backend that uses this solve path.
 _NGSPICE_SOLVE_PATH = (
-    "ngspice_plants.py",
-    "netlist.py",
-    "netlist_builder.py",
-    "process.py",
-    "settings.py",
-    "wrdata.py",
+    "backends/ngspice_plants.py",
+    "backends/netlist.py",
+    "backends/netlist_builder.py",
+    "backends/process.py",
+    "backends/settings.py",
+    "backends/wrdata.py",
 )
+
+# The native averaged reference plants are the default example and test path.
+# Both directions share one module, so they intentionally share one digest.
+_REFERENCE_PLANT_SOLVE_PATH = ("reference_plants.py",)
 
 _SOLVE_PATHS: dict[str, tuple[str, ...]] = {
     "ngspice-buck": _NGSPICE_SOLVE_PATH,
+    "buck": _REFERENCE_PLANT_SOLVE_PATH,
+    "boost": _REFERENCE_PLANT_SOLVE_PATH,
 }
 
 
@@ -43,12 +65,14 @@ def implementation_sources(backend_id: str) -> dict[str, str]:
     modules = _SOLVE_PATHS.get(backend_id)
     if modules is None:
         raise KeyError(f"no reviewed solve path is declared for backend {backend_id!r}")
-    directory = Path(__file__).resolve().parent
     result: dict[str, str] = {}
-    for name in modules:
-        path = directory / name
+    for relative in modules:
+        path = _PACKAGE_ROOT / relative
         if not path.is_file():
             raise FileNotFoundError(f"declared solve-path module is missing: {path}")
+        name = PurePosixPath(relative).name
+        if name in result:
+            raise ValueError(f"duplicate solve-path module name in backend {backend_id!r}: {name}")
         # A Git checkout may use CRLF on Windows.  The identity is a source
         # identity, not a checkout-format identity.
         content = path.read_bytes().replace(b"\r\n", b"\n")

@@ -1,5 +1,7 @@
 """Minimal auditable simulation runtime."""
 
+import sys
+
 from .contracts import (
     ActionRequest,
     CapabilityNegotiationError,
@@ -86,6 +88,8 @@ from .attestation import (
     verify_attestation,
     verify_git_anchor,
 )
+from .inspection import RunInspection, RunInspectionError, inspect_run
+from .identity import implementation_digest, review_status
 from .conformance import ConformanceReport, check_controller_adapter, check_plant_adapter
 from .provenance import (
     BackendProvenanceAdapter,
@@ -113,7 +117,7 @@ from .checks import (
     ObservationValidityPlugin,
 )
 from .environment import EnvironmentCheck, check_recommended_environment, environment_check_to_dict
-from .reproducibility import ReproducibilityReport, RepetitionAudit, audit_repeated_runs, audit_same_machine_runs, build_cross_machine_evidence, compare_runs, cross_machine_evidence
+from .reproducibility import ReproducibilityReport, RepetitionAudit, ToleranceSpec, audit_repeated_runs, audit_same_machine_runs, build_cross_machine_evidence, compare_runs, cross_machine_evidence
 from .baseline import build_baseline_report, write_baseline_report
 from .postprocess import (
     MetricDefinition,
@@ -190,18 +194,10 @@ from .backends import (
     write_user_config,
 )
 
-__all__ = ["ActionRequest", "CapabilitySet", "CapabilityNegotiationError", "MissingCapabilityError", "UnsupportedCapabilityError", "CapabilityConfigurationMismatchError", "CapabilityRuntimeUnavailableError", "SimulationExecutionError", "NumericalNonconvergenceError", "BackendTimeoutError", "BackendProcessError", "SimulationCancelledError", "PlantAdvanceError", "ModelNumericalError", "ConvergenceError", "BackendTimeout", "BackendProcessFailure", "PlantExecutionError", "ExperimentSpec", "PlantObservation", "Runner", "RunResult", "RunOptions", "TimingPolicy", "RecoveryPolicy", "AuditPolicy", "ActionPolicy", "BoundedActionPolicy", "FiniteActionPolicy", "LifecycleTransitionError", "run_experiment", "Timebase", "FakePlant", "FakeLoadPlant", "FakePIController", "BuckPlant", "BoostPlant", "BasicQualificationPlugin", "qualify_samples", "ConformanceReport", "check_controller_adapter", "check_plant_adapter", "BackendProvenanceAdapter", "ExecutableBackendAdapter", "GitProvenance", "collect_backend_provenance", "collect_git_provenance", "collect_environment_provenance", "not_assessed_backend", "artifact_index", "canonical_json", "manifest_digest", "package_digest", "scan_abandoned_runs", "recover_abandoned_runs", "sha256_bytes", "validate_run_location", "DirtyAnalysis", "FormalComparisonError", "analyze_git_worktree", "require_formal_comparison", "ensure_schema_compatible", "validate_experiment_document", "validate_safe_identifier", "negotiate_capabilities", "snapshot_digest", "snapshot_file_hash", "validate_observation_visibility", "CheckContext", "CheckFailureError", "CheckFinding", "CheckReport", "CheckResult", "DataValidityError", "QualificationCheckError", "SafetyCheckError", "SafetyPlugin", "ValidityPlugin", "QualificationPlugin", "ObservationValidityPlugin", "EnvironmentCheck", "check_recommended_environment", "environment_check_to_dict", "ReproducibilityReport", "RepetitionAudit", "compare_runs", "audit_repeated_runs", "audit_same_machine_runs", "cross_machine_evidence", "build_cross_machine_evidence", "build_baseline_report", "write_baseline_report", "PostprocessEligibilityError", "UnknownMetricError", "MetricDefinition", "MetricRegistry", "default_metric_registry", "RunEvidence", "load_run_evidence", "summarize_run", "export_metrics", "compare_metric_runs", "build_evidence_report", "write_evidence_report", "EvidenceClassificationError", "classify_summary", "classify_report", "classify_stage10", "TRACE_SCHEMA_VERSION", "SignalDefinition", "Signal", "SignalRegistry", "SamplingPolicy", "TraceProvenance", "TraceSample", "TracePoint", "TraceDataset", "TraceCollector", "ObservationSink", "DEFAULT_CONTRACT_DEFINITIONS", "default_contract_ref", "default_contract_refs"]
+from .public_api import EXPERIMENTAL_API, STABLE_API
 
-__all__ += ['TOPOLOGY_SCHEMA','TopologyNet','TopologyPort','TopologyComponent','TopologyDescriptor','buck_topology_descriptor','boost_topology_descriptor','ngspice_buck_topology_descriptor','export_topology_descriptor','topology_to_dot','topology_to_adjacency']
-__all__ += ['NETLIST_TEMPLATE_VERSION','BuckNetlistParameters','NgspiceBuckPlant','NgspiceExecutableAdapter','NgspiceProcess','NgspiceRunResult','NgspiceSolverSettings','TraceTable','WrdataParseError','netlist_digest','parse_ngspice_version','parse_wrdata','render_buck_netlist']
-__all__ += ['BackendConfigError','BackendNotFoundError','BackendResolution','config_template','load_backend_config','resolve_ngspice_executable','scan_for_ngspice','user_config_path']
-__all__ += ['BackendDescriptor','InstallRecipe','current_platform','get_backend','list_backends','resolve_backend_executable','scan_for_backend','write_user_config']
-__all__ += ['NativeBuckNetlistBuilder','PyspiceBuckNetlistBuilder','PyspiceUnavailableError']
-__all__ += ['OUTPUT_SCHEMA_VERSION','OutputFieldDefinition','OutputDefinition','OutputRegistry','OutputEntry','OutputDataset','OutputCollector']
-__all__ += ['SERVICE_SCHEMA','VisualizationServiceError','create_server','serve']
-__all__ += ['ApplicabilityError','ApplicabilityPolicy','ApplicabilitySummary','ModelEnvelopePlugin']
-__all__ += ['ModelClaim','NumericalLimit','OperatingRange','ParameterProvenance','ParameterRecord','collect_model_claim','collect_parameter_provenance']
-__all__ += ['QualificationOutcome','qualification_document','AnalyticalEquilibriumRule','EquilibriumTolerance','NumericalHealthRule','PlantOracle','QualificationRulePack','SteadyStateRule','SteadyStateThresholds']
-__all__ += ['NumericalHealth','parse_log']
-__all__ += ['CredibilityAssessment','CredibilityFactor','CredibilityPolicy','assess_credibility','assess_manifest']
-__all__ += ['AnchorRecord','AttestationDocument','AttestationPayload','AttestationVerification','AttestationWriteResult','GitAnchorStatus','SignatureRecord','attest_run','build_payload','payload_digest','register_signature_verifier','verify_attestation','verify_git_anchor']
+__all__ = sorted(STABLE_API | EXPERIMENTAL_API)
+
+_missing = [name for name in __all__ if not hasattr(sys.modules[__name__], name)]
+if _missing:
+    raise RuntimeError(f"public API names are not defined: {_missing}")

@@ -105,14 +105,14 @@ flowchart TD
 | CRED-01 | High | No model validity envelope; a finite but physically inapplicable run can be `QUALIFIED`. | `checks.py` has finite/unit/range checks only; `reference_plants.py` declares no operating envelope. | Addressed in 0.5.0 (`model_claim.py`, `applicability.py`, docs/40 §2) |
 | CRED-02 | High | Qualification is structural only. | `BasicQualificationPlugin` checks empty/non-finite samples; no steady-state, energy, or analytical rule. | Addressed as an opt-in standard pack (`qualification_rules.py`); CLI enables it by default |
 | CRED-03 | Medium-High | Credibility factors are scattered and `manifest.evidence_level` is hardcoded `"functional"`. | `runtime.py` Manifest assembly. | Addressed: explicit `level`, `credibility.py`, derived `evidence_level` |
-| CRED-04 | Medium | Comparison uses one absolute tolerance and index-based row alignment. | `reproducibility._numeric_differences`. | Open |
+| CRED-04 | Medium | Comparison uses one absolute tolerance and index-based row alignment. | `reproducibility._numeric_differences`. | Addressed in 0.5.1 for the tolerance component (`ToleranceSpec`: absolute + relative + per-signal, digest recorded in the report, docs/41 §4). Index/time alignment remains open and is a prerequisite for UD-04. |
 | CRED-05 | Medium | Successful solver warnings are not classified as numerical health. | `process.py` classifies fatal tokens only; successful logs are stored as a digest. | Addressed (`numerical_health.py`, bounded evidence in `plant.evidence`) |
 | CRED-06 | Medium | Conformance evidence is not linked to a run or a review pin. | `conformance.py` exists; `reviewed_identities.json` has no acceptance IDs. | Partially addressed: review metadata added to the pin; conformance report hashing remains open |
 | CRED-07 | Medium | No unified run lineage for resume, comparison, and derived products. | `recovery_provenance` is local; derived artifacts do not share a lineage record. | Open |
 | CRED-08 | Medium | Integrity is not authenticity; a writer can recompute hashes. | `manifest_digest`/`package_digest` are public deterministic functions. | Addressed at L1 only (`attestation.py`); L2 signing is future work |
 | CRED-09 | Low-Medium | `SafetyPlugin` Protocol declares only `check_observation`, while the Runner also calls `check_action`. | `checks.py` Protocol vs `runtime.py` action safety call. | Addressed: `check_action` added to the Protocol |
 | COMPAT-01 | High for increments | No schema migration registry; `ensure_schema_compatible` only rejects newer minor versions. | `contracts.py`. | Open |
-| COMPAT-02 | Medium | No frozen public kernel surface or deprecation policy for plugins/UI. | `pe_sim/__init__.py` exports many names without a stability statement. | Open |
+| COMPAT-02 | Medium | No frozen public kernel surface or deprecation policy for plugins/UI. | `pe_sim/__init__.py` exports many names without a stability statement. | Addressed in 0.5.1: `public_api.py` classifies stable (81) versus experimental (141) names and a frozen baseline fixture fails on any stable-surface change. Deprecation schedule is still absent and is deferred to 1.0 (docs/41 §2). |
 | COMPAT-03 | Medium | No declared unit registry; units are checked only when a plugin is configured with expected units. | `ObservationValidityPlugin`. | Open |
 
 ### Fixed during this review

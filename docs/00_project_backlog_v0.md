@@ -449,9 +449,10 @@ pytest -q tests/test_applicability.py tests/test_qualification_rules.py `
   tests/test_credibility.py tests/test_attestation.py --basetemp .tmp/pytest-stage16
 ```
 
-L1 is a visibility anchor, not a security boundary. `TolerancePolicy`, run
-lineage, conformance-report hashing, schema migration, and L2 signing remain
-open. The Stage 6 increment adds composable Safety/Validity/Qualification plugins,
+L1 is a visibility anchor, not a security boundary. Run lineage, conformance-report
+hashing, schema migration, and L2 signing remain open; the tolerance component
+of CRED-04 and the public-surface component of COMPAT-02 were closed in 0.5.1.
+The Stage 6 increment adds composable Safety/Validity/Qualification plugins,
 structured observation findings, and stable execution-failure categories. It
 was locally verified with `pytest -q --basetemp .tmp/pytest-stage6`,
 `python -m compileall -q src tests`, and `git diff --check`.
@@ -459,6 +460,33 @@ These checks protect runtime evidence only; they do not validate a physical
 model, hardware sensor, convergence configuration, or engineering conclusion.
 Sensor-fault injection and real-sensor handling remain outside the common
 infrastructure scope.
+
+### Stage 17 kernel compatibility surface (0.5.1)
+
+`docs/41_kernel_compatibility_surface_v1.md` closes three properties that were
+previously decided ad hoc per change:
+
+- **Public API tiers:** `pe_sim.public_api` classifies the top-level surface
+  into `stable` (81 names) and `experimental` (141 names);
+  `tests/fixtures/public_api.json` freezes the stable list so any change fails
+  a test until the baseline is updated in the same commit.
+- **Reference-plant review pins:** `buck` and `boost` use the same reviewed
+  identity mechanism as `ngspice-buck`. `runtime.py` stays outside the pin and
+  is declared as an `implementation.runner_loop` rule.
+- **Tolerance policy:** `ToleranceSpec` adds relative and per-signal limits,
+  records the policy digest in the comparison report, and reproduces the
+  historical absolute-only behaviour when no policy is supplied.
+
+Sample grid alignment is still positional and is the remaining half of CRED-04;
+resampling is a prerequisite for UD-04 rather than a defect in this increment.
+A deprecation schedule for stable names is deferred to 1.0.
+
+Acceptance evidence:
+
+```text
+pytest -q tests/test_public_api.py tests/test_reference_plant_identity.py `
+  tests/test_tolerance_policy.py --basetemp .tmp/pytest-stage17
+```
 
 ### Future compact diagnostic mechanism
 

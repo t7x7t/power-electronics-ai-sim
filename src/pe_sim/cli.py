@@ -35,15 +35,47 @@ from .dirty import FormalComparisonError, analyze_git_worktree
 from .environment import check_recommended_environment
 from .inspection import RunInspectionError, inspect_run
 from .provenance import ExecutableBackendAdapter
-from .reproducibility import audit_repeated_runs, compare_runs, cross_machine_evidence
+from .reproducibility import ToleranceSpec, audit_repeated_runs, compare_runs, cross_machine_evidence
 from .baseline import build_baseline_report
 from .visualization_service import serve as serve_visualization
 from .workbench_export import export_run_to_workbench_fixture
 
 
+def _parse_signal_tolerances(values: list[str] | None) -> tuple[tuple[str, float, float], ...]:
+    """Parse repeated ``NAME:ABSOLUTE:RELATIVE`` CLI tolerance declarations."""
+
+    entries: list[tuple[str, float, float]] = []
+    for raw in values or ():
+        parts = str(raw).split(":")
+        if len(parts) != 3:
+            raise ValueError(f"--signal-tolerance expects NAME:ABSOLUTE:RELATIVE, got {raw!r}")
+        name, absolute_text, relative_text = (part.strip() for part in parts)
+        if not name:
+            raise ValueError(f"--signal-tolerance {raw!r} has an empty signal name")
+        try:
+            absolute, relative = float(absolute_text), float(relative_text)
+        except ValueError:
+            raise ValueError(f"--signal-tolerance {raw!r} has a non-numeric tolerance") from None
+        entries.append((name, absolute, relative))
+    return tuple(entries)
+
+
+def _cli_tolerance_policy(relative_tolerance: float, signal_tolerances: list[str] | None) -> ToleranceSpec | None:
+    """Return a policy only when the caller opted in, so defaults stay unchanged."""
+
+    signals = _parse_signal_tolerances(signal_tolerances)
+    # Constructing the policy always validates ``--relative-tolerance`` (NaN,
+    # infinity and negative values are rejected by ``ToleranceSpec``) even when
+    # the zero/empty combination falls back to the historical scalar path.
+    candidate = ToleranceSpec(absolute=0.0, relative=relative_tolerance, per_signal=signals)
+    if relative_tolerance > 0 or signals:
+        return candidate
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Auditable power-electronics simulation runtime")
-    parser.add_argument("--version", action="version", version="0.5.0")
+    parser.add_argument("--version", action="version", version="0.5.1")
     sub = parser.add_subparsers(dest="command")
     run = sub.add_parser("run", help="run an experiment from JSON config")
     run.add_argument("config", type=Path)
@@ -117,6 +149,19 @@ def main(argv: list[str] | None = None) -> int:
     compare.add_argument("left", type=Path)
     compare.add_argument("right", type=Path)
     compare.add_argument("--tolerance", type=float, default=1e-9)
+    compare.add_argument(
+        "--relative-tolerance",
+        type=float,
+        default=0.0,
+        help="relative tolerance scaled by the left-hand value magnitude",
+    )
+    compare.add_argument(
+        "--signal-tolerance",
+        action="append",
+        default=[],
+        metavar="NAME:ABSOLUTE:RELATIVE",
+        help="per-signal tolerance override; repeatable",
+    )
     audit = sub.add_parser(
         "audit-reproducibility",
         aliases=("reproducibility-audit", "audit-runs"),
@@ -124,6 +169,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     audit.add_argument("runs", type=Path, nargs="+")
     audit.add_argument("--tolerance", type=float, default=1e-9)
+    audit.add_argument(
+        "--relative-tolerance",
+        type=float,
+        default=0.0,
+        help="relative tolerance scaled by the left-hand value magnitude",
+    )
     cross = sub.add_parser("cross-machine-evidence", help="build cross-machine reproducibility evidence matrix")
     cross.add_argument("runs", type=Path, nargs="+")
     baseline = sub.add_parser("baseline-report", help="build a release/baseline evidence template")
@@ -211,11 +262,19 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(result.to_dict(), sort_keys=True))
             return 0 if result.status == "pass" else 1
         elif args.command == "compare-runs":
-            result = compare_runs(args.left, args.right, tolerance=args.tolerance)
+            policy = _cli_tolerance_policy(args.relative_tolerance, args.signal_tolerance)
+            if policy is None:
+                result = compare_runs(args.left, args.right, tolerance=args.tolerance)
+            else:
+                result = compare_runs(args.left, args.right, tolerance=args.tolerance, tolerance_policy=policy)
             print(json.dumps(result.to_dict(), sort_keys=True))
             return 0 if result.outcome in {"exact_match", "tolerance_match"} else 1
         elif args.command in {"audit-reproducibility", "reproducibility-audit", "audit-runs"}:
-            result = audit_repeated_runs(args.runs, tolerance=args.tolerance)
+            policy = _cli_tolerance_policy(args.relative_tolerance, None)
+            if policy is None:
+                result = audit_repeated_runs(args.runs, tolerance=args.tolerance)
+            else:
+                result = audit_repeated_runs(args.runs, tolerance=args.tolerance, tolerance_policy=policy)
             print(json.dumps(result.to_dict(), sort_keys=True))
             return 0 if result.reproducible else 1
         elif args.command == "cross-machine-evidence":

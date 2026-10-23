@@ -8,11 +8,10 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 import hashlib
-import inspect
-import sys
 import json
 import math
 
+from .identity import implementation_digest, implementation_sources, review_status
 from .contracts import PlantObservation
 from .model_claim import (
     ModelClaim,
@@ -35,6 +34,10 @@ class _AveragedConverter:
     """Shared deterministic integrator for ideal averaged converters."""
 
     topology = "averaged_converter"
+    # Concrete plants declare the reviewed solve path that produced them.  There
+    # is deliberately no default: guessing an identity would mislabel an
+    # unreviewed implementation as reviewed.
+    backend_id: str
 
     def __init__(
         self,
@@ -85,13 +88,14 @@ class _AveragedConverter:
     def manifest_identity(self) -> dict[str, Any]:
         """Return a portable, deterministic identity for a reference run.
 
-        The source digest identifies the project-owned implementation without
-        recording a local checkout path.  The component digest covers both the
-        implementation and the exact electrical parameters used for this run.
+        The solve-path digest identifies the project-owned implementation
+        through the same reviewed-identity mechanism as the external-simulator
+        backend; it hashes the module source with normalized line endings, so
+        it does not depend on a local checkout path or on CRLF vs LF.  The
+        component digest covers both the implementation and the exact
+        electrical parameters used for this run.
         """
         implementation = type(self)
-        module = sys.modules[implementation.__module__]
-        source = inspect.getsource(module).encode("utf-8")
         parameters = {
             "input_voltage_v": self.input_voltage_v,
             "inductance_h": self.inductance_h,
@@ -99,7 +103,6 @@ class _AveragedConverter:
             "load_resistance_ohm": self.load_resistance_ohm,
             "integration_step_s": self.integration_step_s,
         }
-        source_sha256 = hashlib.sha256(source).hexdigest()
         identity = {
             "level": "L1",
             "kind": "ideal_averaged_reference",
@@ -109,7 +112,9 @@ class _AveragedConverter:
             "implementation": {
                 "module": implementation.__module__,
                 "class": implementation.__qualname__,
-                "source_sha256": source_sha256,
+                "solve_path_modules": sorted(implementation_sources(self.backend_id)),
+                "sha256": implementation_digest(self.backend_id),
+                "review": review_status(self.backend_id),
             },
         }
         identity["sha256"] = hashlib.sha256(
@@ -208,6 +213,10 @@ class _AveragedConverter:
                 {
                     "rule_id": "envelope.duty.resolution",
                     "reason": "switching_frequency_unavailable",
+                },
+                {
+                    "rule_id": "implementation.runner_loop",
+                    "reason": "runtime.py (Runner stepping/observation loop) is outside the reviewed solve path; the pin covers reference_plants.py only",
                 },
             ),
             actuator={"name": "duty", "unit": "normalized"},
@@ -375,6 +384,7 @@ class BuckPlant(_AveragedConverter):
     """Ideal averaged buck converter in continuous-conduction approximation."""
 
     topology = "buck"
+    backend_id = "buck"
 
     def _derivatives(self, duty: float, current: float, voltage: float) -> tuple[float, float]:
         return (
@@ -391,6 +401,7 @@ class BoostPlant(_AveragedConverter):
     """Ideal averaged boost converter in continuous-conduction approximation."""
 
     topology = "boost"
+    backend_id = "boost"
 
     def _derivatives(self, duty: float, current: float, voltage: float) -> tuple[float, float]:
         conduction = 1.0 - duty

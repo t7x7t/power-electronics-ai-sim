@@ -329,11 +329,41 @@ append-only and do not change the Level 1 payload. See
 The reviewed solve path is pinned in `src/pe_sim/reviewed_identities.json` and
 checked by the test suite. Any change to the circuit builder, process boundary,
 solver settings, or waveform parser changes the digest and requires an explicit
-review update. The pin is a review tripwire, not a signature. The review
+review update. The pin covers `ngspice-buck` and, since 0.5.1, the native
+`buck`/`boost` reference models; `runtime.py` is deliberately outside it and is
+declared as an `implementation.runner_loop` rule. The pin is a review tripwire,
+not a signature. The review
 findings and residual risks are in
 [docs/38_kernel_review_v0.md](docs/38_kernel_review_v0.md).
 The applicability/authenticity design, acceptance matrix, and non-claims are in
 [docs/40_validity_and_authenticity_v1.md](docs/40_validity_and_authenticity_v1.md).
+
+## Kernel compatibility surface
+
+Three properties are machine checked rather than left to convention:
+
+- **Public API tiers.** `src/pe_sim/public_api.py` splits the top-level surface
+  into `stable` (81 names an adapter author or evidence verifier depends on) and
+  `experimental` (141 names reachable but not promised).
+  `tests/fixtures/public_api.json` freezes the stable list, so adding or
+  removing a stable name fails a test until the baseline is updated in the same
+  commit.
+- **Reference-plant review pins.** `buck` and `boost` now use the same reviewed
+  identity mechanism as `ngspice-buck`, so the default example path is reviewed
+  with the same strength as the simulator path.
+- **Tolerance policy.** Comparison no longer forces one scalar on every signal:
+
+  ```powershell
+  pe-sim compare-runs runs/a runs/b --relative-tolerance 1e-4
+  pe-sim compare-runs runs/a runs/b --signal-tolerance output_voltage_v:1e-6:1e-4
+  ```
+
+  The report records the policy and its digest, and defaults are unchanged:
+  with no policy the historical absolute-only behaviour is reproduced exactly.
+  Sample grid alignment is still positional and remains open.
+
+See
+[docs/41_kernel_compatibility_surface_v1.md](docs/41_kernel_compatibility_surface_v1.md).
 
 ## Browser workbench status
 

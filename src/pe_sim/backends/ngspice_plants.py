@@ -31,7 +31,7 @@ from ..model_claim import (
 )
 from ..numerical_health import NumericalHealth
 from ..safety import BoundedActionPolicy
-from .identity import implementation_digest, implementation_sources, review_status
+from ..identity import implementation_digest, implementation_sources, review_status
 from .netlist import (
     NETLIST_TEMPLATE_VERSION,
     BuckNetlistParameters,

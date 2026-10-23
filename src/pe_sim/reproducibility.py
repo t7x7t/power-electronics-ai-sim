@@ -18,10 +18,16 @@ from dataclasses import field
 from typing import Any, Mapping, Sequence
 
 from .artifacts import ArtifactWriter, artifact_index, manifest_digest, package_digest
+from .jsonutil import stable_sha256
 
 
 _SOURCE_COMMIT_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$", re.IGNORECASE)
 _PUBLISHED_STATUSES = frozenset({"RUN_OK", "QUALIFIED", "COMPARABLE"})
+_POLICY_KEYS = frozenset({"absolute", "relative", "per_signal"})
+_SIGNAL_KEYS = frozenset({"absolute", "relative"})
+# ``signals`` is derived by ``ToleranceSpec.to_dict``; accepting it lets a
+# serialized report policy be replayed without a lossy hand-written mapping.
+_POLICY_READ_KEYS = _POLICY_KEYS | {"signals"}
 
 
 def _load_json(path: Path) -> Any:
@@ -53,7 +59,148 @@ def _canonical_hash(value: Any) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _numeric_differences(left: Sequence[Mapping[str, Any]], right: Sequence[Mapping[str, Any]], tolerance: float) -> tuple[float, list[dict[str, Any]], list[dict[str, Any]]]:
+def _tolerance_value(value: Any, label: str) -> float:
+    """Return a validated, finite, non-negative tolerance component."""
+
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{label} must be a real number, not {type(value).__name__}")
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError(f"{label} must be finite")
+    if number < 0.0:
+        raise ValueError(f"{label} must be non-negative")
+    return number
+
+
+@dataclass(frozen=True)
+class ToleranceSpec:
+    """Declared numeric comparison limits for one sample-signal comparison.
+
+    ``absolute`` is a global floor and ``relative`` scales with the magnitude of
+    the left-hand reference value.  ``per_signal`` overrides both components for
+    one signal so heterogeneous quantities (a timestamp in seconds and a
+    voltage in volts) no longer share one meaningless scalar.  When
+    ``relative == 0`` and no override applies, :meth:`limit_for` returns
+    ``absolute`` unchanged, which keeps the historical single-tolerance
+    semantics bit-for-bit identical.
+    """
+
+    absolute: float = 0.0
+    relative: float = 0.0
+    per_signal: tuple[tuple[str, float, float], ...] = ()
+    _overrides: Mapping[str, tuple[float, float]] = field(init=False, repr=False, compare=False, default_factory=dict)
+
+    def __post_init__(self) -> None:
+        absolute = _tolerance_value(self.absolute, "absolute")
+        relative = _tolerance_value(self.relative, "relative")
+        if isinstance(self.per_signal, (str, bytes)) or not isinstance(self.per_signal, (tuple, list)):
+            raise ValueError("per_signal must be a sequence of (name, absolute, relative) entries")
+        entries: list[tuple[str, float, float]] = []
+        seen: set[str] = set()
+        for entry in self.per_signal:
+            if not isinstance(entry, (tuple, list)) or len(entry) != 3:
+                raise ValueError("per_signal entries must be (name, absolute, relative) triples")
+            name, signal_absolute, signal_relative = entry
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError("per_signal signal names must be non-empty strings")
+            if name in seen:
+                raise ValueError(f"per_signal declares {name!r} more than once")
+            seen.add(name)
+            entries.append(
+                (
+                    name,
+                    _tolerance_value(signal_absolute, f"per_signal[{name!r}].absolute"),
+                    _tolerance_value(signal_relative, f"per_signal[{name!r}].relative"),
+                )
+            )
+        ordered = tuple(sorted(entries, key=lambda item: item[0]))
+        object.__setattr__(self, "absolute", absolute)
+        object.__setattr__(self, "relative", relative)
+        object.__setattr__(self, "per_signal", ordered)
+        object.__setattr__(self, "_overrides", {name: (signal_absolute, signal_relative) for name, signal_absolute, signal_relative in ordered})
+
+    def limit_for(self, signal: str, reference_value: float) -> float:
+        """Return the accepted absolute error for ``signal`` at ``reference_value``.
+
+        The caller passes the left-hand sample value as the reference
+        magnitude; no interpolation or unit conversion is performed here.
+        """
+
+        override = self._overrides.get(signal)
+        if override is None:
+            absolute, relative = self.absolute, self.relative
+        else:
+            absolute, relative = override
+        if relative == 0.0:
+            # No scaling: return the declared constant unchanged so callers that
+            # only ever used an absolute tolerance observe identical limits.
+            return absolute
+        return max(absolute, relative * abs(float(reference_value)))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "absolute": float(self.absolute),
+            "relative": float(self.relative),
+            "per_signal": {
+                name: {"absolute": signal_absolute, "relative": signal_relative}
+                for name, signal_absolute, signal_relative in self.per_signal
+            },
+            "signals": [name for name, _absolute, _relative in self.per_signal],
+        }
+
+    def sha256(self) -> str:
+        """Return the canonical digest of this policy for compare provenance."""
+
+        return stable_sha256(self.to_dict())
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> ToleranceSpec:
+        """Build a policy from ``absolute``/``relative``/``per_signal`` keys."""
+
+        if not isinstance(value, Mapping):
+            raise ValueError("tolerance policy must be a mapping")
+        unknown = sorted(set(value) - _POLICY_READ_KEYS)
+        if unknown:
+            raise ValueError(f"unknown tolerance policy keys: {unknown}")
+        raw_signals = value.get("per_signal", {})
+        entries: list[tuple[Any, Any, Any]] = []
+        if isinstance(raw_signals, Mapping):
+            for name, specification in raw_signals.items():
+                if not isinstance(specification, Mapping):
+                    raise ValueError(f"per_signal[{name!r}] must be a mapping with absolute/relative limits")
+                extra = sorted(set(specification) - _SIGNAL_KEYS)
+                if extra:
+                    raise ValueError(f"unknown per_signal[{name!r}] keys: {extra}")
+                entries.append((name, specification.get("absolute", 0.0), specification.get("relative", 0.0)))
+        elif isinstance(raw_signals, (list, tuple)):
+            for entry in raw_signals:
+                if not isinstance(entry, (list, tuple)) or len(entry) != 3:
+                    raise ValueError("per_signal entries must be (name, absolute, relative) triples")
+                entries.append((entry[0], entry[1], entry[2]))
+        else:
+            raise ValueError("per_signal must map signal names to absolute/relative limits")
+        policy = cls(value.get("absolute", 0.0), value.get("relative", 0.0), tuple(entries))
+        declared = value.get("signals")
+        if declared is not None:
+            names = [name for name, _absolute, _relative in policy.per_signal]
+            if not isinstance(declared, (list, tuple)) or [str(item) for item in declared] != names:
+                raise ValueError("signals is derived from per_signal and must list the same names")
+        return policy
+
+
+def _resolve_tolerance_policy(value: ToleranceSpec | Mapping[str, Any] | None, *, tolerance: float) -> ToleranceSpec:
+    """Return the policy used for comparison, falling back to ``tolerance``."""
+
+    if value is None:
+        return ToleranceSpec(absolute=float(tolerance))
+    if isinstance(value, ToleranceSpec):
+        return value
+    if isinstance(value, Mapping):
+        return ToleranceSpec.from_mapping(value)
+    raise ValueError("tolerance_policy must be a ToleranceSpec, a mapping, or None")
+
+
+def _numeric_differences(left: Sequence[Mapping[str, Any]], right: Sequence[Mapping[str, Any]], policy: ToleranceSpec) -> tuple[float, list[dict[str, Any]], list[dict[str, Any]]]:
     if len(left) != len(right):
         difference = {"path": "samples.length", "left": len(left), "right": len(right)}
         return math.inf, [difference], [difference]
@@ -72,9 +219,13 @@ def _numeric_differences(left: Sequence[Mapping[str, Any]], right: Sequence[Mapp
                 delta = abs(float(first) - float(second))
                 maximum = max(maximum, delta)
                 if delta > 0:
-                    difference = {"path": f"samples[{index}].{key}", "left": first, "right": second, "absolute_error": delta}
+                    # The left value is the reference magnitude for the
+                    # relative component, and each entry carries the limit it
+                    # was actually judged against.
+                    limit = policy.limit_for(key, float(first))
+                    difference = {"path": f"samples[{index}].{key}", "left": first, "right": second, "absolute_error": delta, "limit": limit}
                     all_differences.append(difference)
-                    if delta > tolerance:
+                    if delta > limit:
                         differences.append(difference)
             elif first != second:
                 difference = {"path": f"samples[{index}].{key}", "left": first, "right": second}
@@ -281,9 +432,10 @@ class ReproducibilityReport:
     sample_hash_equal: bool | None = None
     difference_summary: Mapping[str, int] = field(default_factory=dict)
     scope: str = "same_machine"
+    tolerance_policy: Mapping[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "schema_version": "1.0",
             "outcome": self.outcome,
             "left_run": self.left_run,
@@ -309,13 +461,28 @@ class ReproducibilityReport:
             "difference_summary": dict(self.difference_summary),
             "scope": self.scope,
         }
+        # Adding a key by default would change every existing comparison
+        # payload, so the policy is only serialized when a caller declared one.
+        if self.tolerance_policy is not None:
+            payload["tolerance_policy"] = dict(self.tolerance_policy)
+        return payload
 
 
-def compare_runs(left: str | Path, right: str | Path, *, tolerance: float = 1e-9) -> ReproducibilityReport:
+def compare_runs(
+    left: str | Path,
+    right: str | Path,
+    *,
+    tolerance: float = 1e-9,
+    tolerance_policy: ToleranceSpec | Mapping[str, Any] | None = None,
+) -> ReproducibilityReport:
     """Compare two published runs without silently accepting weak provenance."""
 
     if not math.isfinite(float(tolerance)) or float(tolerance) < 0:
         raise ValueError("tolerance must be finite and non-negative")
+    policy = _resolve_tolerance_policy(tolerance_policy, tolerance=float(tolerance))
+    policy_payload: dict[str, Any] | None = None
+    if tolerance_policy is not None:
+        policy_payload = {**policy.to_dict(), "sha256": policy.sha256()}
     left_dir, right_dir = _run_dir(left), _run_dir(right)
     left_manifest, right_manifest = _load_json(left_dir / "manifest.json"), _load_json(right_dir / "manifest.json")
     left_name, right_name = left_dir.name, right_dir.name
@@ -383,9 +550,9 @@ def compare_runs(left: str | Path, right: str | Path, *, tolerance: float = 1e-9
         )
     left_samples, right_samples = _samples(left_dir), _samples(right_dir)
     left_sample_hash, right_sample_hash = _sample_digest(left_samples), _sample_digest(right_samples)
-    maximum, sample_diffs, all_sample_diffs = _numeric_differences(left_samples, right_samples, float(tolerance))
+    maximum, sample_diffs, all_sample_diffs = _numeric_differences(left_samples, right_samples, policy)
     numeric_diffs = [item for item in all_sample_diffs if "absolute_error" in item]
-    numeric_exceeded = [item for item in numeric_diffs if float(item["absolute_error"]) > tolerance]
+    numeric_exceeded = [item for item in numeric_diffs if float(item["absolute_error"]) > float(item["limit"])]
     structural_diffs = [item for item in all_sample_diffs if "absolute_error" not in item]
     summary = {
         "identity": 0,
@@ -408,7 +575,7 @@ def compare_runs(left: str | Path, right: str | Path, *, tolerance: float = 1e-9
     }
     if not all_sample_diffs:
         if common["sample_hash_equal"]:
-            return ReproducibilityReport("exact_match", left_name, right_name, True, True, maximum, (), tuple(limitations), **common)
+            return ReproducibilityReport("exact_match", left_name, right_name, True, True, maximum, (), tuple(limitations), tolerance_policy=policy_payload, **common)
         # Numeric values compare equal, but canonical bytes differ (for
         # example ``1`` versus ``1.0``).  Keep exact-hash and value/tolerance
         # semantics distinct so a consumer can see the representation drift.
@@ -419,13 +586,13 @@ def compare_runs(left: str | Path, right: str | Path, *, tolerance: float = 1e-9
             "right": right_sample_hash,
             "attribution": "numeric_representation",
         }
-        return ReproducibilityReport("tolerance_match", left_name, right_name, False, True, maximum, (hash_difference,), tuple(limitations), **common)
+        return ReproducibilityReport("tolerance_match", left_name, right_name, False, True, maximum, (hash_difference,), tuple(limitations), tolerance_policy=policy_payload, **common)
     only_numeric = not structural_diffs
-    if only_numeric and maximum <= tolerance:
+    if only_numeric and not numeric_exceeded:
         attributed = tuple({**item, "attribution": "numeric_within_tolerance"} for item in all_sample_diffs)
-        return ReproducibilityReport("tolerance_match", left_name, right_name, False, True, maximum, attributed, tuple(limitations), **common)
-    attributed = tuple({**item, "attribution": "numeric_exceeded_tolerance" if "absolute_error" in item and float(item["absolute_error"]) > tolerance else "structural"} for item in sample_diffs)
-    return ReproducibilityReport("mismatch", left_name, right_name, False, False, maximum, attributed, tuple(limitations), **common)
+        return ReproducibilityReport("tolerance_match", left_name, right_name, False, True, maximum, attributed, tuple(limitations), tolerance_policy=policy_payload, **common)
+    attributed = tuple({**item, "attribution": "numeric_exceeded_tolerance" if "absolute_error" in item and float(item["absolute_error"]) > float(item["limit"]) else "structural"} for item in sample_diffs)
+    return ReproducibilityReport("mismatch", left_name, right_name, False, False, maximum, attributed, tuple(limitations), tolerance_policy=policy_payload, **common)
 
 
 @dataclass(frozen=True)
@@ -463,7 +630,12 @@ class RepetitionAudit:
         }
 
 
-def audit_repeated_runs(runs: Sequence[str | Path], *, tolerance: float = 1e-9) -> RepetitionAudit:
+def audit_repeated_runs(
+    runs: Sequence[str | Path],
+    *,
+    tolerance: float = 1e-9,
+    tolerance_policy: ToleranceSpec | Mapping[str, Any] | None = None,
+) -> RepetitionAudit:
     """Compare every pair in a repeated-run set and aggregate conservatively."""
 
     paths = tuple(_run_dir(item) for item in runs)
@@ -472,7 +644,7 @@ def audit_repeated_runs(runs: Sequence[str | Path], *, tolerance: float = 1e-9) 
     reports: list[Mapping[str, Any]] = []
     counts = {"exact_match": 0, "tolerance_match": 0, "mismatch": 0, "unknown": 0}
     for left, right in combinations(paths, 2):
-        report = compare_runs(left, right, tolerance=tolerance)
+        report = compare_runs(left, right, tolerance=tolerance, tolerance_policy=tolerance_policy)
         counts[report.outcome] = counts.get(report.outcome, 0) + 1
         reports.append(report.to_dict())
     if counts["unknown"]:

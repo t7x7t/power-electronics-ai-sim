@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from pe_sim.backends.identity import (
+from pe_sim.identity import (
     REVIEW_IDENTITIES_SCHEMA,
     implementation_digest,
     implementation_sources,
