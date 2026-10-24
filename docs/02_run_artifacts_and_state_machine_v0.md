@@ -44,6 +44,7 @@ LEARNING_ELIGIBLE -> LEARNING_UPDATED
 - `COMPARABLE` 表示与指定基线的合同、初态、时间网格和输入一致；
 - `LEARNING_ELIGIBLE` 表示在启用可选学习/适配扩展且通过额外准入审查时，允许将证据交给外部学习器；它不是核心 Runner 的必经状态；
 - 任何安全失败、非有限值、未来信息泄漏或合同不匹配都禁止进入学习。
+- `INCOMPLETE` 表示运行未完成；`failure.category` 区分 `cancelled`（客户端通过取消令牌请求停止）与 `interrupted`（进程中断）。两者都保留检查点，可由 `resume_from` 恢复。
 - 未接入学习/适配扩展时，运行在 `QUALIFIED` 或 `COMPARABLE` 即可完成核心基础设施流程；项目不内置训练器、在线学习循环或自动模型/控制器更新。
 
 状态不得通过字符串覆盖产生。每个转换应记录检查项、时间、规则版本和失败原因。

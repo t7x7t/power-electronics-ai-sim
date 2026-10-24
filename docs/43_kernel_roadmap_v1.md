@@ -44,8 +44,9 @@ never regress.
 registration as data, entry-point discovery, and adapter trust levels - shipped
 in 0.5.4 and satisfies gate G-A for stepped engines. **A2** - the time-model
 abstraction for engines that cannot be stepped - is blocked on decision D1.
-Everything shipped before 0.5.4 is groundwork covered by §4, not a completed
-phase.
+Phase B is partially complete: items 1-3 shipped in 0.5.5-0.5.6, item 4 (error
+codes) remains. Everything shipped before 0.5.4 is groundwork covered by §4,
+not a completed phase.
 
 ```mermaid
 graph LR
@@ -113,10 +114,25 @@ Work:
 and enumerate results using only documented contracts; nothing in this surface
 can mutate a published package.
 
-**Status:** the read-only query surface (item 3) shipped in 0.5.5 as
-`pe_sim.catalog` plus `pe-sim list-runs`. It was taken first because it is
-read-only, needs no decision, and answers the question a client asks most often.
-Items 1, 2, and 4 remain.
+**Status:** items 1, 2, and 3 are delivered. The read-only query surface
+(item 3) shipped in 0.5.5 as `pe_sim.catalog` plus `pe-sim list-runs`. Items 1
+and 2 shipped in 0.5.6: `pe_sim.run_events` defines schema-tagged
+`run.started` / `run.progress` / `run.finished` events and a rate-limited
+`ProgressPolicy`; `pe_sim.cancellation` turns cancellation into a polled
+contract instead of the `cancel_after_steps` test hook; the CLI exposes
+`--progress` (JSON lines on stderr) and `--cancel-file`. `pe-sim list-plants`
+exposes the registered plant declarations, so "discover capabilities" needs no
+Python import. The wire contract is
+`docs/44_run_interaction_contract_v1.md`.
+
+**Gate G-B is met** for the CLI client, evidenced by
+`tests/test_cli_run_interaction.py` and `tests/test_run_events.py`: start,
+observe, cancel, receive a versioned terminal result, enumerate with
+`list-runs`, and verify the cancelled package with `inspect-run` - all through
+documented contracts. Cancellation and progress write nothing into a
+published package, and a broken progress sink changes neither samples nor
+status. Item 4 (stable error codes) remains, so T3 stays "fails" until a
+client can branch on codes rather than match prose.
 
 **Excluded:** UI; remote access; multi-user operation; authentication.
 

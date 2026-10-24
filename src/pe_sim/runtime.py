@@ -34,6 +34,13 @@ from .runner.policies import RunOptions
 from .applicability import ApplicabilityError, ApplicabilityPolicy, ModelEnvelopePlugin
 from .identity import CONTRADICTED_VERIFICATION_STATUSES, verify_adapter_identity
 from .jsonutil import json_safe
+from .run_events import (
+    EVENT_RUN_FINISHED,
+    EVENT_RUN_PROGRESS,
+    EVENT_RUN_STARTED,
+    RunEventEmitter,
+    progress_due,
+)
 from .checks import (
     CheckContext,
     CheckFailureError,
@@ -54,6 +61,10 @@ class RunResult:
     run_dir: Path
     status: str
     qualification: Mapping[str, Any]
+    #: The evidence level recorded in the published manifest.  Added for
+    #: clients that only need to know how strong the result is; ``None`` only
+    #: for results constructed by older callers.
+    evidence_level: str | None = None
 
 
 # Private aliases preserve the old implementation names for downstream code.
@@ -452,6 +463,13 @@ class Runner:
             qualification_plugins = tuple(qualification_plugins or ())
         if mode not in {"exploratory", "formal_comparison"}:
             raise ValueError("mode must be 'exploratory' or 'formal_comparison'")
+        # Interaction surface: both default to None, so the ordinary in-process
+        # caller pays nothing for progress or cancellation support.
+        progress_policy = options.progress if options is not None else None
+        cancel_token = options.cancellation if options is not None else None
+        event_emitter = RunEventEmitter(
+            progress_policy.sink if progress_policy is not None else None
+        )
         if checkpoint_interval_steps is not None and checkpoint_interval_steps <= 0:
             raise ValueError("checkpoint_interval_steps must be positive")
         if interrupt_after_steps is not None and interrupt_after_steps <= 0:
@@ -730,7 +748,24 @@ class Runner:
             previous_observation_time: float | None = None
             primary_key = measurement_key or str(spec.plant_config.get("primary_measurement", spec.controller_config.get("measurement_key", "vout")))
             run_end_time = run_start_time + spec.timebase.duration_s
+            run_wall_start = time.monotonic()
+            last_progress_wall = run_wall_start
+            event_emitter.emit(
+                EVENT_RUN_STARTED,
+                spec.run_id,
+                {
+                    "plant_id": spec.plant_id,
+                    "controller_id": spec.controller_id,
+                    "mode": mode,
+                    "steps_total": n_steps,
+                    "start_step_index": next_step_index,
+                    "duration_s": spec.timebase.duration_s,
+                    "control_period_s": spec.timebase.control_period_s,
+                },
+            )
             for index in range(next_step_index, n_steps):
+                if cancel_token is not None and cancel_token.cancelled():
+                    raise SimulationCancelledError("cancellation requested by the client")
                 cycle_start = current_time
                 window_duration = min(spec.timebase.control_period_s, run_end_time - cycle_start)
                 if window_duration <= spec.timebase.event_tolerance_s:
@@ -884,6 +919,28 @@ class Runner:
                 current_time, last_action = float(next_obs.time_s), action
                 if checkpoint_interval_steps and (index + 1) % checkpoint_interval_steps == 0:
                     _write_checkpoint(writer, spec, plant, controller, controller_state, samples, events, index + 1, current_time, last_action, audit, run_start_time=run_start_time, controller_state_protocol=controller_state_protocol)
+                if progress_policy is not None:
+                    now_wall = time.monotonic()
+                    if progress_due(
+                        sample_count=len(samples),
+                        interval_steps=progress_policy.interval_steps,
+                        interval_s=progress_policy.interval_s,
+                        wall_time_s=now_wall,
+                        last_wall_time_s=last_progress_wall,
+                    ):
+                        event_emitter.emit(
+                            EVENT_RUN_PROGRESS,
+                            spec.run_id,
+                            {
+                                "step_index": index,
+                                "sample_count": len(samples),
+                                "steps_total": n_steps,
+                                "time_s": current_time,
+                                "fraction": len(samples) / n_steps if n_steps else 1.0,
+                                "wall_time_s": now_wall - run_wall_start,
+                            },
+                        )
+                        last_progress_wall = now_wall
                 if interrupt_after_steps is not None and len(samples) >= interrupt_after_steps:
                     raise KeyboardInterrupt(f"interrupted after {len(samples)} steps")
                 if cancel_after_steps is not None and len(samples) >= cancel_after_steps:
@@ -1015,6 +1072,10 @@ class Runner:
                 "sample_schema_version": "samples-v1",
                 "sample_count": len(samples),
                 "audit_call_count": len(audit.calls),
+                # Interaction observability only: these counters describe what
+                # the client was told, not what the run proved.
+                "progress_events_emitted": event_emitter.delivered,
+                "progress_events_dropped": event_emitter.dropped,
             },
         )
         writer.write_json("events.json", events)
@@ -1042,7 +1103,10 @@ class Runner:
                 "environment_status": environment["status"],
             }
         )
-        manifest = {"schema_version": spec.schema_version, "experiment_id": spec.experiment_id, "run_id": spec.run_id, "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), **git_fields, "provenance": provenance, "worktree_analysis": worktree_manifest, "worktree_analysis_sha256": worktree_evidence_sha256, "run_mode": mode, "applicability": _applicability_manifest(applicability_plugin, applicability_report), "environment": environment, "plant": plant_manifest, "controller": controller_manifest, "action_policy": _action_policy_manifest(selected_action_policy), "contracts": {k: v["hash"] for k, v in spec.contracts.items()}, "timebase": spec.timebase.to_dict(), "initial_state": spec.initial_state.to_dict(), "random_seed": spec.seed, "artifacts": {}, "status": status, "qualification": qualification, "safety": {"passed": safety_passed, "checks": safety_report.to_dict(), "validity": validity_report.to_dict(), "applicability": _applicability_manifest(applicability_plugin, applicability_report)}, "evidence_level": _derive_evidence_level(status, mode, worktree, environment, plant_manifest, qualification), "error": error, "failure": failure, "recovery": recovery_provenance, "abandoned_runs": abandoned_runs, "capabilities": {"plant": capabilities[0].to_dict(), "controller": capabilities[1].to_dict()} if capabilities else {}, "checks": {"safety": safety_report.to_dict(), "validity": validity_report.to_dict(), "qualification": qualification_report.to_dict(), "applicability": applicability_report.to_dict(), "plugins": {"safety": [plugin_identity(item) for item in safety_chain], "validity": [plugin_identity(item) for item in validity_chain], "qualification": [plugin_identity(item) for item in qualification_chain], "applicability": [plugin_identity(item) for item in applicability_chain]}}, "audit": {"call_count": len(audit.calls)}, "state_transition_matrix": machine.allowed_transitions(), "state_transitions": machine.transitions}
+        # One derivation drives both the manifest field and the terminal event,
+        # so a client can never be told a level the package does not carry.
+        evidence_level = _derive_evidence_level(status, mode, worktree, environment, plant_manifest, qualification)
+        manifest = {"schema_version": spec.schema_version, "experiment_id": spec.experiment_id, "run_id": spec.run_id, "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), **git_fields, "provenance": provenance, "worktree_analysis": worktree_manifest, "worktree_analysis_sha256": worktree_evidence_sha256, "run_mode": mode, "applicability": _applicability_manifest(applicability_plugin, applicability_report), "environment": environment, "plant": plant_manifest, "controller": controller_manifest, "action_policy": _action_policy_manifest(selected_action_policy), "contracts": {k: v["hash"] for k, v in spec.contracts.items()}, "timebase": spec.timebase.to_dict(), "initial_state": spec.initial_state.to_dict(), "random_seed": spec.seed, "artifacts": {}, "status": status, "qualification": qualification, "safety": {"passed": safety_passed, "checks": safety_report.to_dict(), "validity": validity_report.to_dict(), "applicability": _applicability_manifest(applicability_plugin, applicability_report)}, "evidence_level": evidence_level, "error": error, "failure": failure, "recovery": recovery_provenance, "abandoned_runs": abandoned_runs, "capabilities": {"plant": capabilities[0].to_dict(), "controller": capabilities[1].to_dict()} if capabilities else {}, "checks": {"safety": safety_report.to_dict(), "validity": validity_report.to_dict(), "qualification": qualification_report.to_dict(), "applicability": applicability_report.to_dict(), "plugins": {"safety": [plugin_identity(item) for item in safety_chain], "validity": [plugin_identity(item) for item in validity_chain], "qualification": [plugin_identity(item) for item in qualification_chain], "applicability": [plugin_identity(item) for item in applicability_chain]}}, "audit": {"call_count": len(audit.calls)}, "state_transition_matrix": machine.allowed_transitions(), "state_transitions": machine.transitions}
         writer.write_json("logs/run.json", {"status": status, "error": error, "sample_count": len(samples)})
         # Complete the immutable publication summary while the run is still
         # hidden in the writer's temporary directory.  Publication then moves
@@ -1056,7 +1120,22 @@ class Runner:
         }
         writer.write_json("manifest.json", manifest)
         run_dir = writer.finalize()
-        return RunResult(run_dir, status, qualification)
+        event_emitter.emit(
+            EVENT_RUN_FINISHED,
+            spec.run_id,
+            {
+                "status": status,
+                "run_dir": str(run_dir),
+                "sample_count": len(samples),
+                "qualification_level": qualification.get("level"),
+                "evidence_level": evidence_level,
+                "error": error,
+                "failure_category": failure.get("category")
+                if isinstance(failure, Mapping)
+                else None,
+            },
+        )
+        return RunResult(run_dir, status, qualification, evidence_level)
 
 
 def _advance_segments(plant: Any, action: float, duration: float, external: Mapping[str, Any], plant_step: float | None, audit: _Audit, step_index: int, *, expected_end_s: float | None = None, tolerance_s: float = 1e-12) -> PlantObservation | None:

@@ -90,12 +90,25 @@ from .attestation import (
 )
 from .inspection import RunInspection, RunInspectionError, inspect_run
 from .catalog import CatalogError, RunCatalog, RunEntry, scan_runs
+from .cancellation import CallbackCancelToken, CancelToken, FileCancelToken
+from .run_events import (
+    EVENT_RUN_FINISHED,
+    EVENT_RUN_PROGRESS,
+    EVENT_RUN_STARTED,
+    RUN_EVENT_SCHEMA,
+    RUN_RESULT_SCHEMA,
+    ProgressPolicy,
+    RunEvent,
+    RunEventEmitter,
+)
 from .identity import implementation_digest, register_solve_path, review_status, verify_adapter_identity
 from .plant_registry import (
     ENTRY_POINT_GROUP,
+    PLANT_CATALOG_SCHEMA,
     TRUST_LEVELS,
     PlantRegistration,
     discover_entry_points,
+    plant_catalog,
     plant_ids,
     register_plant,
     registered_plants,

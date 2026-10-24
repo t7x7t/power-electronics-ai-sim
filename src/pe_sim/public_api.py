@@ -285,9 +285,11 @@ EXPERIMENTAL_API: frozenset[str] = frozenset(
         # experimental on purpose: the registration shape may still change, and
         # adding a plant must not grow the stable surface.
         "ENTRY_POINT_GROUP",
+        "PLANT_CATALOG_SCHEMA",
         "TRUST_LEVELS",
         "PlantRegistration",
         "discover_entry_points",
+        "plant_catalog",
         "plant_ids",
         "register_plant",
         "registered_plants",
@@ -298,6 +300,20 @@ EXPERIMENTAL_API: frozenset[str] = frozenset(
         "RunCatalog",
         "RunEntry",
         "scan_runs",
+        # run interaction: versioned progress events, the terminal-result
+        # schema tag, the rate policy, and cancellation tokens.  This is the
+        # Phase B client surface; field sets may still grow.
+        "EVENT_RUN_FINISHED",
+        "EVENT_RUN_PROGRESS",
+        "EVENT_RUN_STARTED",
+        "RUN_EVENT_SCHEMA",
+        "RUN_RESULT_SCHEMA",
+        "ProgressPolicy",
+        "RunEvent",
+        "RunEventEmitter",
+        "CancelToken",
+        "CallbackCancelToken",
+        "FileCancelToken",
         # attestation: record internals below the verification verdict.
         "AnchorRecord",
         "AttestationDocument",

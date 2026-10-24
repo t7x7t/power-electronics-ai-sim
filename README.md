@@ -304,6 +304,37 @@ pe-sim list-runs runs --plant buck --published-only --limit 20
 verifies a package and never writes. Use `inspect-run` for integrity and
 `verify-attestation` for authenticity.
 
+To see what can be run before choosing a config:
+
+```powershell
+pe-sim list-plants
+```
+
+`list-plants` prints the registered plant declarations - id, backend, accepted
+schedule and config keys, trust level, export eligibility - without importing
+the plant implementations.
+
+## Watching or cancelling a run
+
+A client that did not write the simulation code can follow a run and stop it
+through documented contracts only:
+
+```powershell
+# One JSON object per line on stderr: run.started / run.progress / run.finished.
+pe-sim run examples/buck_pi_step/config.json --backend buck --progress
+
+# Stop the run by creating this path from another shell or an agent.
+pe-sim run examples/buck_pi_step/config.json --backend buck --cancel-file .cancel-buck
+```
+
+Progress is rate-limited observability, not evidence: it is never written into
+the package, and a failing consumer cannot change the run. Cancellation is
+polled once per control window, so it cannot interrupt an adapter mid-window.
+A cancelled run is published as `INCOMPLETE` with a checkpoint and failure
+category `cancelled`, which is distinct from an operator interrupt. The wire
+contract is
+[docs/44_run_interaction_contract_v1.md](docs/44_run_interaction_contract_v1.md).
+
 ## Applicability and authenticity
 
 Runs now record what the model is declared to apply to, not only that the

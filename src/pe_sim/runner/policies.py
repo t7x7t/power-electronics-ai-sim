@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from ..applicability import ApplicabilityPolicy
+from ..cancellation import CancelToken
+from ..run_events import ProgressPolicy
 from ..safety import ActionPolicy
 
 
@@ -34,7 +36,13 @@ class TimingPolicy:
 
 @dataclass(frozen=True)
 class RecoveryPolicy:
-    """Checkpoint and resume behavior for advanced callers."""
+    """Checkpoint and resume behavior for advanced callers.
+
+    ``interrupt_after_steps`` and ``cancel_after_steps`` are deterministic
+    in-process test hooks.  An external client cancels through
+    ``RunOptions.cancellation`` instead, which is polled at window boundaries
+    and is the documented contract.
+    """
 
     checkpoint_interval_steps: int | None = None
     resume_from: str | Path | None = None
@@ -84,10 +92,19 @@ class RunOptions:
     validity_plugins: tuple[Any, ...] = ()
     qualification_plugins: tuple[Any, ...] = ()
     applicability: ApplicabilityPolicy = ApplicabilityPolicy()
+    # Interaction surface, not evidence: ``progress`` streams rate-limited
+    # events and ``cancellation`` is polled at each window boundary.  Both
+    # default to None so ordinary callers pay nothing.
+    progress: ProgressPolicy | None = None
+    cancellation: CancelToken | None = None
 
     def validate(self, spec: Any) -> None:
         if self.mode not in {"exploratory", "formal_comparison"}:
             raise ValueError("mode must be 'exploratory' or 'formal_comparison'")
+        if self.progress is not None and not isinstance(self.progress, ProgressPolicy):
+            raise TypeError("progress must be a ProgressPolicy")
+        if self.cancellation is not None and not callable(getattr(self.cancellation, "cancelled", None)):
+            raise TypeError("cancellation must provide cancelled()")
         if self.measurement_key is not None and not str(self.measurement_key).strip():
             raise ValueError("measurement_key must be non-empty when provided")
         if self.action_policy is not None and not callable(getattr(self.action_policy, "project", None)):

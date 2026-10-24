@@ -4,15 +4,19 @@ from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path
+import sys
+from typing import Any, Mapping
 
 from .applicability import ApplicabilityPolicy
 from .attestation import attest_run, verify_attestation
+from .cancellation import FileCancelToken
 from .contracts import ExperimentSpec, validate_experiment_document
 from .qualification_rules import QualificationRulePack
+from .run_events import RUN_RESULT_SCHEMA, ProgressPolicy
 from .runner import RunOptions
 from .runtime import FakePIController, Runner
 from .builtin_plants import PlantBuildContext, load_builtin_plants
-from .plant_registry import PlantRegistration, resolve
+from .plant_registry import PlantRegistration, plant_catalog, resolve
 from .backends import (
     BackendConfigError,
     BackendNotFoundError,
@@ -72,7 +76,7 @@ def _cli_tolerance_policy(relative_tolerance: float, signal_tolerances: list[str
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Auditable power-electronics simulation runtime")
-    parser.add_argument("--version", action="version", version="0.5.5")
+    parser.add_argument("--version", action="version", version="0.5.6")
     sub = parser.add_subparsers(dest="command")
     run = sub.add_parser("run", help="run an experiment from JSON config")
     run.add_argument("config", type=Path)
@@ -103,6 +107,18 @@ def main(argv: list[str] | None = None) -> int:
         choices=("native", "pyspice"),
         default="native",
         help="netlist builder for the ngspice-buck backend; 'pyspice' requires the optional PySpice install",
+    )
+    run.add_argument(
+        "--progress",
+        action="store_true",
+        help="stream pe-sim.run-event.v1 progress events as JSON lines on stderr",
+    )
+    run.add_argument(
+        "--cancel-file",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help="cancel the run when this path exists; checked once per control window",
     )
     status = sub.add_parser("git-status", help="inspect Git worktree readiness without modifying it")
     status.add_argument("path", nargs="?", type=Path, default=Path.cwd())
@@ -205,6 +221,10 @@ def main(argv: list[str] | None = None) -> int:
     listing.add_argument("--run-id-prefix", default=None)
     listing.add_argument("--published-only", action="store_true", help="only PUBLISHED packages")
     listing.add_argument("--limit", type=int, default=None)
+    sub.add_parser(
+        "list-plants",
+        help="list registered plants and the inputs each one declares",
+    )
     preview = sub.add_parser(
         "preview-netlist",
         help="render the reviewed circuit netlist without executing a simulation",
@@ -266,6 +286,8 @@ def main(argv: list[str] | None = None) -> int:
                 mode=args.mode,
                 applicability=ApplicabilityPolicy(mode=args.applicability),
                 qualification_plugins=qualification_plugins,
+                progress=ProgressPolicy(sink=_stderr_event_sink) if args.progress else None,
+                cancellation=FileCancelToken(args.cancel_file) if args.cancel_file is not None else None,
             )
             result = Runner().run(spec, plant, controller, options=options)
         elif args.command == "git-status":
@@ -369,6 +391,9 @@ def main(argv: list[str] | None = None) -> int:
             if verification.status != "ok":
                 return 2
             return 0 if verification.trust_level == "L1_anchored" else 1
+        elif args.command == "list-plants":
+            print(json.dumps(plant_catalog(discover=True), sort_keys=True, indent=2))
+            return 0
         elif args.command == "list-runs":
             catalog = scan_runs(
                 args.root,
@@ -411,11 +436,14 @@ def main(argv: list[str] | None = None) -> int:
     print(
         json.dumps(
             {
+                "schema": RUN_RESULT_SCHEMA,
                 "status": result.status,
+                "run_id": spec.run_id,
                 "run_dir": str(result.run_dir),
                 "backend": backend,
                 "plant_id": spec.plant_id,
                 "plant_class": type(plant).__name__,
+                "evidence_level": result.evidence_level,
                 "qualification": result.qualification,
             },
             sort_keys=True,
@@ -425,6 +453,12 @@ def main(argv: list[str] | None = None) -> int:
     # Keep RUN_OK accepted for compatibility with callers that disable or
     # defer post-run qualification in a custom integration.
     return 0 if result.status in {"RUN_OK", "QUALIFIED"} else 1
+
+
+def _stderr_event_sink(event: Mapping[str, Any]) -> None:
+    """Write one event per line to stderr so stdout stays the terminal result."""
+
+    print(json.dumps(event, sort_keys=True), file=sys.stderr, flush=True)
 
 
 def _select_registration(document: dict[str, object], requested: str | None) -> PlantRegistration:

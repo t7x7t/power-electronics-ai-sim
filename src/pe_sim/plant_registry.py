@@ -42,6 +42,10 @@ TRUST_LEVELS: tuple[str, ...] = ("reference", "third-party", "fixture")
 # group name is a contract with those distributions and is not a plant list.
 ENTRY_POINT_GROUP = "pe_sim.plants"
 
+# Schema tag for the read-only discovery document returned by
+# ``plant_catalog``.  A client branches on this tag, not on module layout.
+PLANT_CATALOG_SCHEMA = "pe-sim.plant-catalog.v1"
+
 # A plant id becomes a file-system-adjacent name in several places (run
 # directories, export folders), so path separators, leading dots, and
 # whitespace are rejected at registration time rather than at use time.
@@ -172,6 +176,40 @@ def unregister_plant(plant_id: str) -> bool:
     return _REGISTRATIONS.pop(plant_id, None) is not None
 
 
+def plant_catalog(*, discover: bool = False) -> dict[str, Any]:
+    """Return the declared shape of every registered plant.
+
+    This is the read-only answer to "what can I ask the kernel to run?".  It
+    exposes declarations only: the factory stays in-process, because a client
+    needs to know which inputs a plant accepts, not how the kernel builds it.
+    ``discover=True`` also inspects the entry-point group; the default does
+    not, so importing or introspecting the registry never imports third-party
+    code by accident.
+    """
+
+    if discover:
+        discover_entry_points()
+    plants = [
+        {
+            "plant_id": registration.plant_id,
+            "backend_id": registration.backend_id,
+            "class_name": registration.class_name,
+            "schedule_keys": sorted(registration.schedule_keys),
+            "config_keys": None
+            if registration.config_keys is None
+            else sorted(registration.config_keys),
+            "trust_level": registration.trust_level,
+            "export_eligible": registration.export_eligible,
+        }
+        for _, registration in sorted(_REGISTRATIONS.items())
+    ]
+    return {
+        "schema": PLANT_CATALOG_SCHEMA,
+        "trust_levels": list(TRUST_LEVELS),
+        "plants": plants,
+    }
+
+
 def clear_registrations() -> None:
     """Reset the whole module state.  Used by tests only."""
 
@@ -265,11 +303,13 @@ def resolve(plant_id: str) -> PlantRegistration:
 
 __all__ = [
     "ENTRY_POINT_GROUP",
+    "PLANT_CATALOG_SCHEMA",
     "TRUST_LEVELS",
     "PlantRegistration",
     "clear_registrations",
     "discover_entry_points",
     "get_plant",
+    "plant_catalog",
     "plant_ids",
     "register_plant",
     "registered_plants",

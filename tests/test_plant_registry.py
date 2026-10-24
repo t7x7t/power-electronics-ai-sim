@@ -8,18 +8,22 @@ and a new engine is a declared solve path, never a kernel edit.
 from __future__ import annotations
 
 import importlib.metadata
+import json
 
 import pytest
 
 from pe_sim import builtin_plants, identity, plant_registry
+from pe_sim.cli import main as cli_main
 from pe_sim.contracts import Timebase
 from pe_sim.plant_registry import (
     ENTRY_POINT_GROUP,
+    PLANT_CATALOG_SCHEMA,
     TRUST_LEVELS,
     PlantRegistration,
     clear_registrations,
     discover_entry_points,
     get_plant,
+    plant_catalog,
     plant_ids,
     register_plant,
     registered_plants,
@@ -492,6 +496,24 @@ def test_registry_module_is_pure():
 
     assert {name for name in imports if name.startswith(".")} == set()
     assert not [name for name in imports if "backends" in name]
+
+
+def test_plant_catalog_reports_declarations_not_implementation(capsys):
+    assert cli_main(["list-plants"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["schema"] == PLANT_CATALOG_SCHEMA
+    assert payload["trust_levels"] == list(TRUST_LEVELS)
+    entries = {item["plant_id"]: item for item in payload["plants"]}
+    assert set(_EXPECTED_TRUST) <= set(entries)
+    assert entries["buck"]["backend_id"] == "buck"
+    assert entries["buck"]["trust_level"] == "reference"
+    assert entries["buck"]["export_eligible"] is True
+    assert "factory" not in entries["buck"], "a client needs the shape, not the builder"
+    assert entries["buck"]["schedule_keys"] == sorted(entries["buck"]["schedule_keys"])
+
+    direct = plant_catalog()
+    assert list(direct) == ["schema", "trust_levels", "plants"]
 
 
 def _imports_of(module) -> set[str]:

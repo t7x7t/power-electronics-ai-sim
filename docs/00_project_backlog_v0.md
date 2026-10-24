@@ -611,6 +611,39 @@ Acceptance evidence:
 pytest -q tests/test_run_catalog.py --basetemp .tmp/pytest-stage21
 ```
 
+### Stage 22 run interaction contract (0.5.6)
+
+Roadmap Phase B items 1 and 2 (`docs/43_kernel_roadmap_v1.md`). The kernel now
+has a versioned way for a client to observe and stop a run, instead of the
+`cancel_after_steps` test hook being the only option.
+
+- `pe_sim.run_events` defines `pe-sim.run-event.v1`
+  (`run.started` / `run.progress` / `run.finished`) and `pe-sim.run-result.v1`
+  for the CLI's terminal result. Progress is rate-limited and is explicitly
+  **not evidence**: it is never written into the package.
+- `RunEventEmitter` is best-effort. A failing sink is counted in `metrics.json`
+  and cannot change a status, a qualification, or the samples.
+- `pe_sim.cancellation` defines `CancelToken.cancelled()`, polled once per
+  control-window boundary. `FileCancelToken` backs `--cancel-file`; the runner
+  only reads the path and never deletes the client's request.
+- A cancelled run is `INCOMPLETE` with failure category `cancelled`, a
+  checkpoint, and `recoverable: true`. It stays distinct from an operator
+  interrupt (`interrupted`).
+- `pe-sim list-plants` exposes registered plant declarations (id, backend,
+  schedule/config keys, trust level) so capability discovery needs no Python
+  import. `pe-sim list-runs` remains the package-discovery surface.
+
+The wire contract and its non-goals are
+`docs/44_run_interaction_contract_v1.md`. Remaining in Phase B: stable error
+codes a client can branch on (item 4).
+
+Acceptance evidence:
+
+```text
+pytest -q tests/test_run_events.py tests/test_cli_run_interaction.py `
+  tests/test_plant_registry.py --basetemp .tmp/pytest-stage22
+```
+
 ### Future compact diagnostic mechanism
 
 The current Stage 6 checks are intentionally a runtime integrity gate. A later
