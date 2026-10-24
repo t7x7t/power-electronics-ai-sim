@@ -5,6 +5,11 @@ what is implemented, what is only specified, and what must be reviewed before
 the project can claim the L0 goal. A passing test is evidence for the tested
 behavior only; it is not a hardware or product approval.
 
+**Sequencing authority:** this document records *status*, not *order*. The
+authoritative sequence, phase gates, invariants, and open decisions are in
+`docs/43_kernel_roadmap_v1.md`. A stage marked `Planned` here does not mean it
+is next.
+
 ## Status vocabulary
 
 - **Done**: implemented and covered by a local verification result.

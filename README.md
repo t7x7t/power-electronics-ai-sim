@@ -63,6 +63,7 @@ and control algorithms remain in Plant/Controller adapters.
 | L1 | `docs/02_run_artifacts_and_state_machine_v0.md` | 运行产物、状态机、Hash 和证据规则 |
 | L1 | `docs/03_agent_operating_policy_v0.md` | Agent 权限、工作流、停止条件和人工审批 |
 | L1 | `docs/04_mvp_implementation_plan_v0.md` | MVP 范围、任务、验收和迁移顺序 |
+| L1 | `docs/43_kernel_roadmap_v1.md` | 内核阶段路线图：顺序、阶段门、不变量与待决事项 |
 | L1 | `docs/05_current_workspace_migration_map_v0.md` | `D:\PySpice` 到本项目的迁移边界 |
 | 机器规范 | `schemas/manifest.schema.json` | Manifest 的最小 JSON Schema |
 | 机器规范 | `schemas/experiment.schema.json` | 实验配置的最小 JSON Schema |

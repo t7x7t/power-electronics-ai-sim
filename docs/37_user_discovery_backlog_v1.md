@@ -192,6 +192,11 @@ window without relying on private adapter internals.
 
 ## Priority
 
+**This ordering is user impact, not a work sequence.** Where and when these
+items consume kernel attention is decided by `docs/43_kernel_roadmap_v1.md`.
+In particular, items below that add control algorithms, topologies, or models
+are adapter or product content and are outside the kernel roadmap's scope.
+
 1. UD-01 (largest user-facing control gap).
 2. UD-04 (required before claiming multi-engine support).
 3. UD-03 (needed for switching-level analysis).
