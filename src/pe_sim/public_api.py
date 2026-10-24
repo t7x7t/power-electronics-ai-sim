@@ -300,6 +300,15 @@ EXPERIMENTAL_API: frozenset[str] = frozenset(
         "RunCatalog",
         "RunEntry",
         "scan_runs",
+        # compatibility (Phase C, D4): read-with-policy verdicts for packages.
+        "COMPATIBILITY_SCHEMA",
+        "COMPATIBILITY_STATUSES",
+        "CompatibilityVerdict",
+        "assess_package_compatibility",
+        # discovery root (Phase C, D3): explicit > PE_SIM_RUNS_ROOT > ./runs.
+        "DEFAULT_RUNS_DIRNAME",
+        "RUNS_ROOT_ENV",
+        "discovery_root",
         # run interaction: versioned progress events, the terminal-result
         # schema tag, the rate policy, and cancellation tokens.  This is the
         # Phase B client surface; field sets may still grow.

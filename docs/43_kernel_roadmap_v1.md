@@ -167,6 +167,14 @@ Work:
 its cross-version comparability is stated by the evidence rather than assumed.
 **Excluded:** plugin marketplace; cloud sync.
 
+**Status:** D3 and D4 are decided and the first compatibility increment shipped
+in 0.5.9: read-with-policy verdicts in `inspect-run` and an explicit discovery
+root (`docs/47_compatibility_policy_v1.md`). Install-time extras remain open:
+`docs/28` deliberately keeps PySpice out of dependencies/extras, so item 1 needs
+a release-policy decision. The schema migration registry is deliberately
+deferred to the first schema bump. **T4 still fails** until an upgrade gate runs
+an installed release against an older package.
+
 ### Phase D - Lower barrier
 
 **Goal:** T6.
@@ -218,8 +226,8 @@ depends on them starts. A phase does not begin on an unresolved decision.
 | --- | --- | --- | --- |
 | D1 | Who owns time: kernel-stepped / engine-whole-run / dual with priced evidence | Phase A | **decided 2026-10-25: dual with priced evidence** |
 | D2 | Third-party adapters run in-process or behind a process boundary | Phase A trust levels | **decided 2026-10-24: in-process, priced by trust level** |
-| D3 | Run store root: working directory or user scope | Phase C | pending |
-| D4 | Reading older packages: migrate on read, or read-with-policy | Phase C | pending |
+| D3 | Run store root: working directory or user scope | Phase C | **decided 2026-10-25: explicit discovery root** |
+| D4 | Reading older packages: migrate on read, or read-with-policy | Phase C | **decided 2026-10-25: read-with-policy** |
 
 D1 and D2 are prerequisites for Phase A. D3 and D4 may be decided later but
 must be settled before Phase C starts.
@@ -277,6 +285,36 @@ or evidence must cover plugin *behaviour* rather than source identity.
 **Interface impact.** None. `PlantRegistration` is data and the registry never
 imports an adapter, so moving to a process boundary would replace the loader,
 not the contract.
+
+### D3 record: explicit discovery root
+
+**Decision.** A package is written only where its experiment document's
+`output.directory` says; the kernel never relocates one. Discovery resolves its
+root in one documented order: explicit CLI argument, `PE_SIM_RUNS_ROOT`, then
+`runs` in the working directory. No ambient user-home default is introduced
+until a migration policy exists.
+
+**Why.** Silently relocating a published package would break reproducibility
+and the parent-link evidence chain. A user-scoped store is a deployment
+choice, expressed by the environment variable an installer may set.
+
+**Status.** Implemented in 0.5.9 (`pe_sim.run_store`; `list-runs` and
+`visualization-serve`). Resolution never creates a directory.
+
+### D4 record: read-with-policy, never rewrite on read
+
+**Decision.** Readers classify a package as `current`, `read_only`, or
+`incompatible` and state the cross-version limits. They never migrate or
+rewrite a published package. A migration, if ever needed, is a new derived
+package with a parent link to the original.
+
+**Why.** Invariant I3 makes published packages immutable. Migrating in place
+would change the bytes a verifier attested and silently invalidate old
+attestations.
+
+**Status.** Implemented in 0.5.9 (`pe_sim.compatibility`,
+`inspect-run.summary.compatibility`). No schema bump exists yet, so the schema
+migration registry is deliberately not created.
 
 ## 7. Scope guard
 

@@ -711,6 +711,34 @@ pytest -q tests/test_time_model.py tests/test_time_model_integration.py `
   tests/test_plant_registry.py --basetemp .tmp/pytest-stage24
 ```
 
+### Stage 25 compatibility policy and install extras (0.5.9)
+
+Roadmap Phase C first increment (`docs/43_kernel_roadmap_v1.md`). D3 and D4
+are recorded; the kernel can now state how to read a package produced by a
+different schema version without touching it.
+
+- `pe_sim.compatibility` classifies a manifest as `current`, `read_only`, or
+  `incompatible`, names both versions, and carries
+  `may_rewrite: false`. `inspect-run` reports the verdict under
+  `summary.compatibility`; package integrity remains a separate `status`.
+- `pe_sim.run_store` resolves discovery as explicit path ->
+  `PE_SIM_RUNS_ROOT` -> `./runs`; `list-runs` and `visualization-serve` use it.
+  Resolution never creates a directory.
+- Install-time capability extras remain open: `docs/28` deliberately keeps
+  PySpice out of dependencies/extras, and a new extra needs a release-policy
+  decision. This stage does not change `environment-check`.
+
+Still open: install-time extras, the schema migration registry (deferred to the
+first schema bump), and the upgrade gate (T4).
+
+Acceptance evidence:
+
+```text
+pytest -q tests/test_compatibility.py tests/test_run_store.py `
+  tests/test_inspection.py tests/test_run_catalog.py `
+  --basetemp .tmp/pytest-stage25
+```
+
 ### Future compact diagnostic mechanism
 
 The current Stage 6 checks are intentionally a runtime integrity gate. A later

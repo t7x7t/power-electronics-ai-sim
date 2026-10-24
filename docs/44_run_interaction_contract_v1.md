@@ -44,7 +44,9 @@ registered plant: `plant_id`, `backend_id`, `class_name`, `time_model`,
 `schedule_keys`, `config_keys`, `trust_level`, `export_eligible`. `config_keys:
 null` means the factory validates its own keys, not that any key is accepted.
 The catalog exposes declarations only; the factory stays in-process.
-`pe-sim list-runs` serves the same purpose for packages already produced.
+`pe-sim list-runs` serves the same purpose for packages already produced. Its
+root resolves as an explicit argument, then `PE_SIM_RUNS_ROOT`, then `./runs`;
+see `docs/47_compatibility_policy_v1.md`.
 
 ## 2. Progress events
 

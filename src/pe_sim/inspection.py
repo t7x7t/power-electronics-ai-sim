@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from .artifacts import artifact_index, manifest_digest, package_digest
+from .compatibility import assess_package_compatibility
 from .credibility import CredibilityPolicy, assess_credibility
 
 
@@ -262,6 +263,9 @@ def inspect_run(
             "signals": stats,
         },
         "artifact_index_verified": not any("artifact index" in item for item in problems),
+        # Compatibility is a reading policy, not an integrity claim: an older
+        # or newer package stays "ok" here and the verdict says how to read it.
+        "compatibility": assess_package_compatibility(manifest).to_dict(),
     }
     qualification_document = _load_optional_json(directory / "qualification.json")
     preflight_document = _load_optional_json(directory / "preflight.json")

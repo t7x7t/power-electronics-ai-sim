@@ -14,6 +14,7 @@ import pytest
 
 from pe_sim.catalog import CATALOG_SCHEMA, CatalogError, scan_runs
 from pe_sim.cli import main
+from pe_sim.run_store import RUNS_ROOT_ENV
 
 
 def _run(
@@ -210,3 +211,21 @@ def test_cli_list_runs_rejects_a_missing_root(tmp_path, capsys, monkeypatch):
     assert main(["list-runs", str(tmp_path / "absent")]) == 2
     payload = json.loads(capsys.readouterr().out)
     assert payload["status"] == "CONFIG_REJECTED"
+
+
+def test_cli_list_runs_uses_the_environment_root_without_a_positional(
+    tmp_path, capsys, monkeypatch
+):
+    store = tmp_path / "store"
+    _run(store, "alpha")
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)  # no ./runs here, so the default cannot answer
+    monkeypatch.setenv(RUNS_ROOT_ENV, str(store))
+
+    assert main(["list-runs"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["count"] == 1
+    assert payload["runs"][0]["run_id"] == "alpha"
+    assert Path(payload["root"]).resolve() == store.resolve()

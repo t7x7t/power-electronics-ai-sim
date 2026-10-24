@@ -105,6 +105,11 @@ These tags label the **view**. The authoritative evidence remains the
 published package plus its manifest; a view can be regenerated at any time and
 is never written into the package.
 
+Since 0.5.9, `inspect-run` also reports `summary.compatibility`
+(`current` / `read_only` / `incompatible`, with `may_rewrite: false`). That is a
+read-with-policy verdict, not an integrity claim; see
+`docs/47_compatibility_policy_v1.md`.
+
 ## 5. Versioning
 
 - A new rejection code or failure category may be added within v1; clients

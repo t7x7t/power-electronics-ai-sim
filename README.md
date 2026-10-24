@@ -113,7 +113,9 @@ pe-sim run examples/ngspice_buck_step/config.json --backend ngspice-buck --model
 ```
 
 On Python 3.13, use an isolated environment and install `PySpice==1.5` without
-the 1.26.4 NumPy pin, then run `pip check` there. The ideal averaged `buck_pi_step` and `boost_pi_step` examples are deterministic
+the 1.26.4 NumPy pin, then run `pip check` there. The verified pin set is not
+published as a package extra: `docs/28` keeps PySpice out of dependencies and
+extras, so the requirements file remains the only supported installation path. The ideal averaged `buck_pi_step` and `boost_pi_step` examples are deterministic
 test fixtures, not reference-circuit results. They remain available for runtime
 and comparison tests:
 
@@ -292,8 +294,13 @@ identity, `implementation.review.status`, first/last window digests, and any
 recorded failure evidence. A package can be intact while its run failed:
 `status` reports package integrity, while `run_status` and `run_ok` report the
 execution outcome separately. It also reports a read-only `credibility`
-assessment and the `qualification.level` (`full`, `limited`, or `failed`).
-Its output is tagged `pe-sim.run-inspection.v1`.
+assessment, the `qualification.level` (`full`, `limited`, or `failed`), and a
+`compatibility` verdict (`current`, `read_only`, or `incompatible`).
+Compatibility is a reading policy, not an integrity claim: an older package can
+still verify while `read_only` says its cross-version comparability is not
+assessed, and `may_rewrite` is always false. Its output is tagged
+`pe-sim.run-inspection.v1`. The policy is in
+[docs/47_compatibility_policy_v1.md](docs/47_compatibility_policy_v1.md).
 
 To discover what exists before verifying anything:
 
@@ -303,7 +310,9 @@ pe-sim list-runs runs --plant buck --published-only --limit 20
 
 `list-runs` reads recorded metadata only and says so in `limitations`; it never
 verifies a package and never writes. Use `inspect-run` for integrity and
-`verify-attestation` for authenticity.
+`verify-attestation` for authenticity. Without a positional root, discovery uses
+`PE_SIM_RUNS_ROOT` and then `./runs`; the same order applies to
+`visualization-serve`.
 
 To see what can be run before choosing a config:
 
@@ -398,7 +407,7 @@ Three properties are machine checked rather than left to convention:
 
 - **Public API tiers.** `src/pe_sim/public_api.py` splits the top-level surface
   into `stable` (81 names an adapter author or evidence verifier depends on) and
-  `experimental` (190 names reachable but not promised).
+  `experimental` (197 names reachable but not promised).
   `tests/fixtures/public_api.json` freezes the stable list, so adding or
   removing a stable name fails a test until the baseline is updated in the same
   commit.

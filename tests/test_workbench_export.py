@@ -21,6 +21,7 @@ def _published_buck_run(root):
     (run_dir / "samples.json").write_text(json.dumps(samples), encoding="utf-8")
     (run_dir / ".run-state.json").write_text(json.dumps({"run_id": "buck-demo", "status": "PUBLISHED"}), encoding="utf-8")
     manifest = {
+        "schema_version": "0.1",
         "run_id": "buck-demo",
         "status": "QUALIFIED",
         "run_mode": "exploratory",

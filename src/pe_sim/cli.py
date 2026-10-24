@@ -14,6 +14,7 @@ from .contracts import ExperimentSpec, validate_experiment_document
 from .error_codes import RequestRejected, rejection_document
 from .qualification_rules import QualificationRulePack
 from .run_events import RUN_RESULT_SCHEMA, ProgressPolicy
+from .run_store import discovery_root
 from .runner import RunOptions
 from .runtime import FakePIController, Runner
 from .builtin_plants import PlantBuildContext, load_builtin_plants
@@ -84,7 +85,7 @@ def _emit_rejection(status: str, code: str, error: str, **extra: Any) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Auditable power-electronics simulation runtime")
-    parser.add_argument("--version", action="version", version="0.5.8")
+    parser.add_argument("--version", action="version", version="0.5.9")
     sub = parser.add_subparsers(dest="command")
     run = sub.add_parser("run", help="run an experiment from JSON config")
     run.add_argument("config", type=Path)
@@ -223,7 +224,13 @@ def main(argv: list[str] | None = None) -> int:
         "list-runs",
         help="discover run packages under a directory without verifying them",
     )
-    listing.add_argument("root", nargs="?", type=Path, default=Path("runs"))
+    listing.add_argument(
+        "root",
+        nargs="?",
+        type=Path,
+        default=None,
+        help="directory to scan; resolution order: this argument, PE_SIM_RUNS_ROOT, ./runs",
+    )
     listing.add_argument("--plant", default=None, help="only runs produced by this plant_id")
     listing.add_argument("--status", default=None, help="only runs with this recorded manifest status")
     listing.add_argument("--run-id-prefix", default=None)
@@ -252,7 +259,7 @@ def main(argv: list[str] | None = None) -> int:
     export.add_argument("destination", type=Path, help="derived fixture directory outside the run package")
     export.add_argument("--overwrite", action="store_true", help="replace existing derived fixture files")
     service = sub.add_parser("visualization-serve", help="serve verified visualization contracts read-only")
-    service.add_argument("--runs-root", type=Path, default=Path("runs"))
+    service.add_argument("--runs-root", type=Path, default=None, help="runs root; defaults to PE_SIM_RUNS_ROOT or ./runs")
     service.add_argument("--host", default="127.0.0.1")
     service.add_argument("--port", type=int, default=8765)
     args = parser.parse_args(argv)
@@ -410,7 +417,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         elif args.command == "list-runs":
             catalog = scan_runs(
-                args.root,
+                discovery_root(args.root),
                 plant_id=args.plant,
                 status=args.status,
                 run_id_prefix=args.run_id_prefix,
@@ -430,7 +437,7 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(exported.to_dict(), ensure_ascii=True, sort_keys=True, indent=2))
             return 0
         elif args.command == "visualization-serve":
-            serve_visualization(args.runs_root, args.host, args.port)
+            serve_visualization(discovery_root(args.runs_root), args.host, args.port)
             return 0
         else:
             parser.print_help()

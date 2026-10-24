@@ -115,6 +115,13 @@ from .time_model import (
     validate_whole_run_result,
 )
 from .catalog import CatalogError, RunCatalog, RunEntry, scan_runs
+from .compatibility import (
+    COMPATIBILITY_SCHEMA,
+    COMPATIBILITY_STATUSES,
+    CompatibilityVerdict,
+    assess_package_compatibility,
+)
+from .run_store import DEFAULT_RUNS_DIRNAME, RUNS_ROOT_ENV, discovery_root
 from .cancellation import CallbackCancelToken, CancelToken, FileCancelToken
 from .run_events import (
     EVENT_RUN_FINISHED,
