@@ -89,6 +89,7 @@ from .attestation import (
     verify_git_anchor,
 )
 from .inspection import RunInspection, RunInspectionError, inspect_run
+from .catalog import CatalogError, RunCatalog, RunEntry, scan_runs
 from .identity import implementation_digest, register_solve_path, review_status, verify_adapter_identity
 from .plant_registry import (
     ENTRY_POINT_GROUP,

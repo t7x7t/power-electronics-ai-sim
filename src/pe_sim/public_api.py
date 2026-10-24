@@ -292,6 +292,12 @@ EXPERIMENTAL_API: frozenset[str] = frozenset(
         "register_plant",
         "registered_plants",
         "resolve_plant",
+        # catalog: discovery of run packages.  Read-only, and explicitly not a
+        # verification path, so it carries no compatibility promise yet.
+        "CatalogError",
+        "RunCatalog",
+        "RunEntry",
+        "scan_runs",
         # attestation: record internals below the verification verdict.
         "AnchorRecord",
         "AttestationDocument",

@@ -294,6 +294,16 @@ recorded failure evidence. A package can be intact while its run failed:
 execution outcome separately. It also reports a read-only `credibility`
 assessment and the `qualification.level` (`full`, `limited`, or `failed`).
 
+To discover what exists before verifying anything:
+
+```powershell
+pe-sim list-runs runs --plant buck --published-only --limit 20
+```
+
+`list-runs` reads recorded metadata only and says so in `limitations`; it never
+verifies a package and never writes. Use `inspect-run` for integrity and
+`verify-attestation` for authenticity.
+
 ## Applicability and authenticity
 
 Runs now record what the model is declared to apply to, not only that the

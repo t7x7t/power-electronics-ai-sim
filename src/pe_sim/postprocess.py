@@ -20,6 +20,7 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from .artifacts import ArtifactWriter, artifact_index, canonical_json, manifest_digest, package_digest
 from .builtin_plants import builtin_registrations
+from .catalog import recorded_plant_class
 
 
 _SOURCE_COMMIT_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$", re.IGNORECASE)
@@ -244,16 +245,9 @@ def _finite(value: Any) -> bool:
 
 
 def _plant_class(plant: Mapping[str, Any]) -> str | None:
-    """Read the class from either fixture or L1 reference identity shape."""
+    """Read the class from either fixture or reference identity shape."""
 
-    identity = plant.get("identity")
-    if not isinstance(identity, Mapping):
-        return None
-    direct = identity.get("class")
-    if isinstance(direct, str):
-        return direct
-    implementation = identity.get("implementation")
-    nested = implementation.get("class") if isinstance(implementation, Mapping) else None
+    return recorded_plant_class(plant)
     return nested if isinstance(nested, str) else None
 
 

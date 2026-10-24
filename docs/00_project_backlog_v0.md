@@ -583,6 +583,34 @@ pytest -q tests/test_plant_registry.py tests/test_plant_extension_gate.py `
   tests/test_plant_id_schema.py --basetemp .tmp/pytest-stage20
 ```
 
+### Stage 21 read-only run catalog (0.5.5)
+
+Roadmap Phase B, read-only query surface (`docs/43_kernel_roadmap_v1.md`).
+
+`pe_sim.catalog.scan_runs` walks a runs root and describes every package it
+finds from recorded metadata, exposed as `pe-sim list-runs`. Properties that
+matter:
+
+- **It is discovery, not verification.** It reads `manifest.json` and
+  `.run-state.json` only, reports `limitations` saying so, and leaves integrity
+  checking to `inspect-run`. There is one definition of "valid package".
+- **It never writes.** A regression test compares file mtimes and sizes before
+  and after a scan.
+- **It reports what it cannot read.** An unreadable manifest is listed in
+  `skipped` with a reason, and a missing state marker becomes an entry with a
+  problem, because a silently absent entry is indistinguishable from a missing
+  run.
+- **Ordering is deterministic** (newest `created_at` first, then `run_id`), so
+  two clients see the same list.
+- Staging directories (leading dot) and trees deeper than the depth limit are
+  pruned.
+
+Acceptance evidence:
+
+```text
+pytest -q tests/test_run_catalog.py --basetemp .tmp/pytest-stage21
+```
+
 ### Future compact diagnostic mechanism
 
 The current Stage 6 checks are intentionally a runtime integrity gate. A later

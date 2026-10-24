@@ -33,6 +33,7 @@ from .inspection import RunInspectionError, inspect_run
 from .provenance import ExecutableBackendAdapter
 from .reproducibility import ToleranceSpec, audit_repeated_runs, compare_runs, cross_machine_evidence
 from .baseline import build_baseline_report
+from .catalog import scan_runs
 from .visualization_service import serve as serve_visualization
 from .workbench_export import export_run_to_workbench_fixture
 
@@ -71,7 +72,7 @@ def _cli_tolerance_policy(relative_tolerance: float, signal_tolerances: list[str
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Auditable power-electronics simulation runtime")
-    parser.add_argument("--version", action="version", version="0.5.4")
+    parser.add_argument("--version", action="version", version="0.5.5")
     sub = parser.add_subparsers(dest="command")
     run = sub.add_parser("run", help="run an experiment from JSON config")
     run.add_argument("config", type=Path)
@@ -194,6 +195,16 @@ def main(argv: list[str] | None = None) -> int:
     verify_att.add_argument("--repo", type=Path, default=None)
     verify_att.add_argument("--no-git", action="store_true", help="skip the Git anchor check")
     verify_att.add_argument("--compact", action="store_true", help="emit single-line JSON")
+    listing = sub.add_parser(
+        "list-runs",
+        help="discover run packages under a directory without verifying them",
+    )
+    listing.add_argument("root", nargs="?", type=Path, default=Path("runs"))
+    listing.add_argument("--plant", default=None, help="only runs produced by this plant_id")
+    listing.add_argument("--status", default=None, help="only runs with this recorded manifest status")
+    listing.add_argument("--run-id-prefix", default=None)
+    listing.add_argument("--published-only", action="store_true", help="only PUBLISHED packages")
+    listing.add_argument("--limit", type=int, default=None)
     preview = sub.add_parser(
         "preview-netlist",
         help="render the reviewed circuit netlist without executing a simulation",
@@ -356,6 +367,17 @@ def main(argv: list[str] | None = None) -> int:
             if verification.status != "ok":
                 return 2
             return 0 if verification.trust_level == "L1_anchored" else 1
+        elif args.command == "list-runs":
+            catalog = scan_runs(
+                args.root,
+                plant_id=args.plant,
+                status=args.status,
+                run_id_prefix=args.run_id_prefix,
+                published_only=args.published_only,
+                limit=args.limit,
+            )
+            print(json.dumps(catalog.to_dict(), sort_keys=True, indent=2))
+            return 0
         elif args.command == "preview-netlist":
             return _run_preview_netlist(args)
         elif args.command == "export-workbench":

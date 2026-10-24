@@ -112,6 +112,12 @@ Work:
 **Gate G-B:** an external client can start a run, observe progress, cancel it,
 and enumerate results using only documented contracts; nothing in this surface
 can mutate a published package.
+
+**Status:** the read-only query surface (item 3) shipped in 0.5.5 as
+`pe_sim.catalog` plus `pe-sim list-runs`. It was taken first because it is
+read-only, needs no decision, and answers the question a client asks most often.
+Items 1, 2, and 4 remain.
+
 **Excluded:** UI; remote access; multi-user operation; authentication.
 
 ### Phase C - Distribution and compatibility
@@ -185,12 +191,39 @@ depends on them starts. A phase does not begin on an unresolved decision.
 | ID | Decision | Blocks | Status |
 | --- | --- | --- | --- |
 | D1 | Who owns time: kernel-stepped / engine-whole-run / dual with priced evidence | Phase A | **pending** |
-| D2 | Third-party adapters run in-process or behind a process boundary | Phase A trust levels | **pending** |
+| D2 | Third-party adapters run in-process or behind a process boundary | Phase A trust levels | **decided 2026-10-24: in-process, priced by trust level** |
 | D3 | Run store root: working directory or user scope | Phase C | pending |
 | D4 | Reading older packages: migrate on read, or read-with-policy | Phase C | pending |
 
 D1 and D2 are prerequisites for Phase A. D3 and D4 may be decided later but
 must be settled before Phase C starts.
+
+### D2 record: in-process adapters, priced by trust
+
+**Decision.** Third-party adapters are loaded in-process, and the loss of
+assurance is expressed through the trust level and the evidence cap rather than
+through isolation.
+
+**Why.** The kernel enforces safety, validity, and applicability *per window*
+by calling the adapter; a process boundary would require a window-level RPC
+protocol before the first external engine even exists. At this stage the threat
+model is "an agent drives the CLI", not "an untrusted party ships code":
+installing a distribution is already an operator-level trust decision, and no
+agent-facing path turns a JSON document into an arbitrary import.
+
+**What makes it acceptable now.** Discovery is lazy and only runs on a lookup
+miss, so the built-in path never imports third-party code; the registry module
+imports no adapter; entry-point registrations are forced to `third-party` and
+`export_eligible = False`; and an unpinned implementation cannot exceed
+`limited` evidence.
+
+**Revisit when** any of these becomes true: an untrusted party must be able to
+install a distribution; the kernel runs adapters inside a long-lived service;
+or evidence must cover plugin *behaviour* rather than source identity.
+
+**Interface impact.** None. `PlantRegistration` is data and the registry never
+imports an adapter, so moving to a process boundary would replace the loader,
+not the contract.
 
 ## 7. Scope guard
 
