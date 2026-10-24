@@ -140,6 +140,14 @@ still positional; a second engine with a different time grid will not compare
 against the ngspice windows until a resampling policy is reviewed. Treat that
 as the first task of UD-04, not as a leftover of the tolerance work.
 
+**Implemented in 0.5.4 (registration, discovery, trust):** `plant_registry`
+turns the plant catalog into data, `pe_sim.plants` entry points let a
+distribution ship its own plant, and every registration carries a trust level
+that is forced to `third-party` for entry points. The kernel no longer
+enumerates plants in the CLI, the experiment schema, the identity pins, or the
+post-processing allow-list. `EngineAdapter`, engine capability negotiation, and
+the time-grid policy are unchanged and still belong to A2 / D1.
+
 ### UD-05: phase-continuous PWM for arbitrary control ratios
 
 **Finding:** the window netlist restarts the PWM carrier at `t=0`. The adapter

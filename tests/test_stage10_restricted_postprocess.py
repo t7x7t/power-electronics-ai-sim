@@ -13,6 +13,7 @@ def _published_run(
     status="QUALIFIED",
     clean=True,
     plant_class="FakePlant",
+    plant_id="fake",
     environment_status="partial",
     sample_schema_version=None,
     metrics_schema_version=None,
@@ -57,7 +58,7 @@ def _published_run(
             "python": {"version": "3.12.7"},
             "backends": [{"name": "fixture", "status": "not_declared", "version": None, "solver_settings": None}],
         },
-        "plant": {"id": "fixture-plant", "hash": "p" * 64, "identity": {"class": plant_class}},
+        "plant": {"id": plant_id, "hash": "p" * 64, "identity": {"class": plant_class}},
         "controller": {"id": "fixture-controller", "hash": "c" * 64, "identity": {"class": "FakePIController"}},
         "contracts": {},
         "timebase": {"unit": "s", "control_period_s": 0.001, "duration_s": 0.002},
@@ -107,7 +108,7 @@ def test_qualified_reference_run_has_traceable_summary_and_exports(tmp_path):
     [
         ({"status": "RUN_FAILED"}, "expected QUALIFIED"),
         ({"clean": False}, "not clean"),
-        ({"plant_class": "UnreviewedPlant"}, "outside the restricted"),
+        ({"plant_class": "UnreviewedPlant", "plant_id": "unreviewed-plant"}, "outside the restricted"),
         ({"environment_status": "unknown"}, "environment provenance is unknown"),
     ],
 )

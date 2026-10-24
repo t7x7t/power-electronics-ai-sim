@@ -3,6 +3,14 @@
   "backends": {
     "ngspice-buck": {
       "implementation_sha256": "53c245ffbe2fa66fca2f81eb2a593296da4bb599a6176475636da3d0bbc854d3",
+      "solve_path": [
+        "backends/ngspice_plants.py",
+        "backends/netlist.py",
+        "backends/netlist_builder.py",
+        "backends/process.py",
+        "backends/settings.py",
+        "backends/wrdata.py"
+      ],
       "reviewed_at": "2026-10-24",
       "reviewer": "project maintainer",
       "acceptance_ids": [
@@ -19,6 +27,9 @@
     },
     "buck": {
       "implementation_sha256": "943b081eea21ecfd4ffd472c59d661dd34bb5c2aad2f95063aed61c4bf18bdaf",
+      "solve_path": [
+        "reference_plants.py"
+      ],
       "reviewed_at": "2026-10-24",
       "reviewer": "project maintainer",
       "acceptance_ids": [
@@ -35,6 +46,9 @@
     },
     "boost": {
       "implementation_sha256": "943b081eea21ecfd4ffd472c59d661dd34bb5c2aad2f95063aed61c4bf18bdaf",
+      "solve_path": [
+        "reference_plants.py"
+      ],
       "reviewed_at": "2026-10-24",
       "reviewer": "project maintainer",
       "acceptance_ids": [

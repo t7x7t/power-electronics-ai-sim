@@ -40,9 +40,12 @@ never regress.
 
 ## 3. Phases
 
-**Current position:** Phase A, not started. It is blocked on decisions D1 and
-D2 (§6). Everything shipped through 0.5.3 is groundwork covered by §4, not a
-completed phase.
+**Current position:** Phase A is partially complete. **A1** - engine
+registration as data, entry-point discovery, and adapter trust levels - shipped
+in 0.5.4 and satisfies gate G-A for stepped engines. **A2** - the time-model
+abstraction for engines that cannot be stepped - is blocked on decision D1.
+Everything shipped before 0.5.4 is groundwork covered by §4, not a completed
+phase.
 
 ```mermaid
 graph LR
@@ -79,6 +82,13 @@ Work, at the level of commitments rather than code:
 
 **Gate G-A:** T1 passes for a second engine whose time behaviour differs from
 the first, and the existing engine's evidence level is unchanged.
+
+**Status:** steps 4 and 5 are delivered (0.5.4) and verified by
+`tests/test_plant_extension_gate.py`: a plant registered at runtime runs through
+the CLI with no kernel change, its trust level is recorded in the manifest, and
+an entry-point distribution cannot grant itself a reviewed trust level or export
+eligibility. Steps 1-3 belong to A2 and remain blocked on D1.
+
 **Excluded:** implementing the second engine; choosing resampling parameters;
 performance work.
 

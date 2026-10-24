@@ -1,13 +1,14 @@
-"""Reviewed implementation identity for the shipped solve paths.
+"""Reviewed implementation identity for declared solve paths.
 
 The digest covers the source files that determine how a reviewed window is
 constructed, executed, and parsed.  It is intentionally narrower than a package
 digest: it answers "did the numerical solve path change?" rather than "did any
 file in the repository change?".
 
-The same mechanism covers the external-simulator adapter (``ngspice-buck``)
-and the project-owned averaged reference plants (``buck``/``boost``), so the
-default example path is reviewed with the same strength as the simulator path.
+This module does not name any engine or model.  A backend declares its solve
+path as data, either in the checked-in review pin (``reviewed_identities.json``)
+or at runtime through :func:`register_solve_path`, and the digest is computed
+from whatever the declaration lists.
 
 ``reviewed_identities.json`` is a review pin, not a security boundary.  A local
 process with write access can change both the code and the pin; the pin makes
@@ -21,7 +22,8 @@ import inspect
 import json
 from importlib import resources
 from pathlib import Path, PurePosixPath
-from typing import Any, Mapping
+from types import MappingProxyType
+from typing import Any, Iterable, Mapping
 
 
 REVIEW_IDENTITIES_SCHEMA = "pe-sim.reviewed-identities.v1"
@@ -33,46 +35,104 @@ CONTRADICTED_VERIFICATION_STATUSES = frozenset(
     {"digest_mismatch", "review_status_mismatch", "module_outside_solve_path"}
 )
 
-# Solve paths are declared relative to the ``pe_sim`` package root, so the
-# native reference models and the external-simulator adapter use one
-# declaration shape.  The returned mapping is still keyed by the plain module
-# file name: those keys are part of the aggregate digest that was already
-# reviewed, and renaming them would silently invalidate existing pins.
+# Solve paths are declared relative to the ``pe_sim`` package root, so a native
+# model and an external-simulator adapter use one declaration shape.  The
+# returned mapping is still keyed by the plain module file name: those keys are
+# part of the aggregate digest that was already reviewed, and renaming them
+# would silently invalidate existing pins.
 #
 # This module lives at the package root on purpose.  It is a general review
 # mechanism, not an adapter detail: core modules (``reference_plants``,
-# ``inspection``) need it, and they must not depend on the external-simulator
-# package to get it.
+# ``inspection``) need it, and they must not depend on any adapter package.
 _PACKAGE_ROOT = Path(__file__).resolve().parent
 
-# Adding or removing a module here is a model-review decision: it changes the
-# implementation digest for every backend that uses this solve path.
-_NGSPICE_SOLVE_PATH = (
-    "backends/ngspice_plants.py",
-    "backends/netlist.py",
-    "backends/netlist_builder.py",
-    "backends/process.py",
-    "backends/settings.py",
-    "backends/wrdata.py",
-)
+# Field name a review-pin entry uses to declare its solve path.
+_SOLVE_PATH_FIELD = "solve_path"
 
-# The native averaged reference plants are the default example and test path.
-# Both directions share one module, so they intentionally share one digest.
-_REFERENCE_PLANT_SOLVE_PATH = ("reference_plants.py",)
+# Runtime declarations.  They are memory only: writing to the checked-in pin is
+# a review decision, so a third party declares its path in its own process.
+_MEMORY_SOLVE_PATHS: dict[str, tuple[str, ...]] = {}
 
-_SOLVE_PATHS: dict[str, tuple[str, ...]] = {
-    "ngspice-buck": _NGSPICE_SOLVE_PATH,
-    "buck": _REFERENCE_PLANT_SOLVE_PATH,
-    "boost": _REFERENCE_PLANT_SOLVE_PATH,
-}
+
+def _normalized_modules(backend_id: str, modules: Iterable[str]) -> tuple[str, ...]:
+    """Validate one declaration into package-root-relative POSIX paths."""
+
+    if isinstance(modules, str):
+        raise TypeError(
+            f"solve path for backend {backend_id!r} must be a sequence of module paths, not a string"
+        )
+    normalized: list[str] = []
+    for module in modules:
+        if not isinstance(module, str) or not module.strip():
+            raise ValueError(f"backend {backend_id!r} solve path contains an empty module name")
+        relative = PurePosixPath(module.strip().replace("\\", "/"))
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError(
+                f"backend {backend_id!r} solve path must be relative to the package root: {module!r}"
+            )
+        normalized.append(relative.as_posix())
+    if not normalized:
+        raise ValueError(f"backend {backend_id!r} solve path must list at least one module")
+    return tuple(normalized)
+
+
+def register_solve_path(backend_id: str, modules: Iterable[str]) -> None:
+    """Declare a backend's solve path for this process only.
+
+    The checked-in pin is deliberately not modified: a runtime declaration is
+    enough to compute and compare a digest, but pinning a value is a review
+    decision that belongs in version control.
+    """
+
+    if not isinstance(backend_id, str) or not backend_id.strip():
+        raise ValueError("backend_id must be a non-empty string")
+    _MEMORY_SOLVE_PATHS[backend_id] = _normalized_modules(backend_id, modules)
+
+
+def _reviewed_solve_paths() -> dict[str, tuple[str, ...]]:
+    """Read the declared solve path of every entry in the checked-in pin."""
+
+    declared: dict[str, tuple[str, ...]] = {}
+    backends = load_reviewed_identities().get("backends", {})
+    for backend_id, entry in backends.items():
+        if not isinstance(entry, Mapping):
+            continue
+        modules = entry.get(_SOLVE_PATH_FIELD)
+        if modules is None:
+            # A pin entry without a solve path still carries review metadata;
+            # it simply cannot be recomputed from source.
+            continue
+        if not isinstance(modules, (list, tuple)):
+            raise ValueError(
+                f"reviewed_identities.json backend {backend_id!r} {_SOLVE_PATH_FIELD} "
+                "must be an array of module paths"
+            )
+        declared[str(backend_id)] = _normalized_modules(str(backend_id), modules)
+    return declared
+
+
+def declared_solve_paths() -> Mapping[str, tuple[str, ...]]:
+    """Return the checked-in declarations merged with runtime registrations.
+
+    A runtime registration wins over the pin, so a process can describe code it
+    has not pinned yet without editing the reviewed file.
+    """
+
+    merged = _reviewed_solve_paths()
+    merged.update(_MEMORY_SOLVE_PATHS)
+    return MappingProxyType(merged)
 
 
 def implementation_sources(backend_id: str) -> dict[str, str]:
     """Return the normalized SHA-256 of every module in the solve path."""
 
-    modules = _SOLVE_PATHS.get(backend_id)
+    modules = declared_solve_paths().get(backend_id)
     if modules is None:
-        raise KeyError(f"no reviewed solve path is declared for backend {backend_id!r}")
+        raise KeyError(
+            f"no solve path is declared for backend {backend_id!r}; declare one with "
+            "pe_sim.identity.register_solve_path() or add a 'solve_path' array to the "
+            "backend entry in reviewed_identities.json"
+        )
     result: dict[str, str] = {}
     for relative in modules:
         path = _PACKAGE_ROOT / relative
@@ -241,9 +301,11 @@ __all__ = [
     "ADAPTER_VERIFICATION_SCHEMA",
     "CONTRADICTED_VERIFICATION_STATUSES",
     "REVIEW_IDENTITIES_SCHEMA",
+    "declared_solve_paths",
     "implementation_digest",
     "implementation_sources",
     "load_reviewed_identities",
+    "register_solve_path",
     "review_status",
     "verify_adapter_identity",
 ]

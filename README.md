@@ -377,6 +377,19 @@ plugs in by implementing `PlantAdapter` (`capabilities`, `reset`, `observe`,
 `advance`, `snapshot`, `restore`) and is passed to `Runner.run` or
 `run_experiment`. Agents are clients of the CLI/API, not kernel plug-ins.
 
+Since 0.5.4 the CLI also does not keep a plant list. A plant is a
+`PlantRegistration` and comes from one of two places:
+
+- the project-owned `pe_sim.builtin_plants` composition root, loaded by the CLI
+  at start-up;
+- the `pe_sim.plants` entry-point group, for a distribution that ships its own
+  plant without touching this repository.
+
+Entry-point registrations are forced to `trust_level = "third-party"` and
+`export_eligible = False`, and the trust level is recorded at
+`manifest.plant.trust_level`. Importing `pe_sim.plant_registry` never starts a
+simulator and never imports a plugin.
+
 A `manifest_identity()` record is producer-declared, so since 0.5.2 the kernel
 recomputes it for any adapter that declares a `backend_id` and records the
 verdict at `plant.verification`:

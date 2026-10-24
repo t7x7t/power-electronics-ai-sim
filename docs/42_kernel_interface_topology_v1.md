@@ -141,22 +141,37 @@ The schema now declares the runtime vocabulary, and
 `_derive_evidence_level` rather than restating them, so the two cannot drift
 apart again.
 
-## 6. Adjustment C: one wiring table instead of four
+## 6. Adjustment C: the kernel no longer enumerates plants
 
-The CLI previously encoded the same knowledge in four places: `_PLANT_BACKENDS`
-(an identity map, `plant_id -> backend` with every value equal to its key),
-`_BACKEND_CLASSES`, a schedule-key if/elif, and a build if/elif. They could
-disagree, and a half-registered plant was a reachable state.
+The CLI once encoded the plant catalog four times: `_PLANT_BACKENDS` (an
+identity map, `plant_id -> backend` with every value equal to its key),
+`_BACKEND_CLASSES`, a schedule-key if/elif, and a build if/elif. It then
+collapsed into a single `_PlantBinding` table, which was still a kernel table.
 
-They are replaced by one `_PlantBinding` table carrying the backend id, the
-expected class name, the accepted `input_schedule` keys, and the accepted
-`plant_config` keys. The allow-list, the validation, and the constructor read
-from the same row.
+0.5.4 removes the table entirely. `PlantRegistration` is data supplied by a
+composition root, and there are two sources:
 
-Third-party plants do **not** come through this table: they implement
-`PlantAdapter` and are passed to `Runner.run` / `run_experiment` directly. The
-table is a catalog of built-ins, not a kernel extension point, because a public
-registration API with no discovery mechanism is a half-interface.
+- `pe_sim.builtin_plants` registers the shipped plants explicitly;
+- the `pe_sim.plants` entry-point group lets a third-party distribution ship its
+  own plant.
+
+Four enumerations disappeared with it:
+
+| Was | Now |
+| --- | --- |
+| `cli._PLANT_BINDINGS` and the `--backend` `choices=` list | resolved through `plant_registry.resolve()` |
+| `plant_id` enum in `experiment.schema.json` | a pattern plus registry lookup |
+| `identity._SOLVE_PATHS` (six hardcoded engine modules) | a `solve_path` array in the review pin, or `register_solve_path()` at runtime |
+| `postprocess._ALLOWED_PLANT_CLASSES` | derived from the project-owned registrations, keyed by id |
+
+Trust is assigned, not claimed. An entry-point registration is forced to
+`third-party` and `export_eligible = False` at discovery time, so a distribution
+cannot promote itself to `reference` or into the restricted export slice. The
+value is recorded at `manifest.plant.trust_level`.
+
+The registry deliberately does not import an adapter: importing
+`plant_registry` cannot start a simulator or pull in a heavy dependency, and
+entry points are only inspected when a lookup misses.
 
 ## 7. Redundancy register
 

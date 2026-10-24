@@ -280,6 +280,18 @@ EXPERIMENTAL_API: frozenset[str] = frozenset(
         "implementation_digest",
         "review_status",
         "verify_adapter_identity",
+        "register_solve_path",
+        # plant_registry: the extension point for third-party plants.  Kept
+        # experimental on purpose: the registration shape may still change, and
+        # adding a plant must not grow the stable surface.
+        "ENTRY_POINT_GROUP",
+        "TRUST_LEVELS",
+        "PlantRegistration",
+        "discover_entry_points",
+        "plant_ids",
+        "register_plant",
+        "registered_plants",
+        "resolve_plant",
         # attestation: record internals below the verification verdict.
         "AnchorRecord",
         "AttestationDocument",

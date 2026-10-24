@@ -19,13 +19,16 @@ from statistics import fmean
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from .artifacts import ArtifactWriter, artifact_index, canonical_json, manifest_digest, package_digest
+from .builtin_plants import builtin_registrations
 
 
 _SOURCE_COMMIT_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$", re.IGNORECASE)
 _PUBLISHED_MARKER = "PUBLISHED"
-_ALLOWED_PLANT_CLASSES = frozenset(
-    {"FakePlant", "FakeLoadPlant", "BuckPlant", "BoostPlant", "NgspiceBuckPlant"}
-)
+# Export eligibility is a project decision, so it is read from the project-owned
+# registrations rather than hardcoded here.  A third-party plant is absent from
+# this map by construction and therefore cannot become export-eligible by
+# declaring its own flag.
+_BUILTIN_BY_ID = {item.plant_id: item for item in builtin_registrations()}
 _ALLOWED_BACKEND_STATUSES = frozenset({"known", "not_declared", "not_assessed"})
 _METRIC_SCHEMA = "stage10-metrics-v1"
 _COMPARISON_SCHEMA = "stage10-metric-comparison-v1"
@@ -297,8 +300,16 @@ def _check_package(run_dir: Path, manifest: Mapping[str, Any]) -> list[str]:
     plant_id = plant.get("id") if isinstance(plant, Mapping) else None
     if not isinstance(plant, Mapping) or not isinstance(plant.get("hash"), str) or len(plant.get("hash", "")) != 64:
         reasons.append("Plant identity/hash is missing")
-    if plant_class not in _ALLOWED_PLANT_CLASSES:
-        reasons.append(f"Plant family {plant_class or plant_id or 'missing'} is outside the restricted Stage 10 slice")
+    registration = _BUILTIN_BY_ID.get(str(plant_id)) if plant_id is not None else None
+    if registration is None or not registration.export_eligible:
+        reasons.append(
+            f"Plant family {plant_class or plant_id or 'missing'} is outside the restricted Stage 10 slice"
+        )
+    elif registration.class_name != plant_class:
+        reasons.append(
+            f"Plant {plant_id!r} was produced by {plant_class or 'missing'}, "
+            f"but the registration declares {registration.class_name!r}"
+        )
     controller = manifest.get("controller")
     if not isinstance(controller, Mapping) or not isinstance(controller.get("hash"), str) or len(controller.get("hash", "")) != 64:
         reasons.append("Controller identity/hash is missing")

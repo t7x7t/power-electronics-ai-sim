@@ -89,7 +89,17 @@ from .attestation import (
     verify_git_anchor,
 )
 from .inspection import RunInspection, RunInspectionError, inspect_run
-from .identity import implementation_digest, review_status, verify_adapter_identity
+from .identity import implementation_digest, register_solve_path, review_status, verify_adapter_identity
+from .plant_registry import (
+    ENTRY_POINT_GROUP,
+    TRUST_LEVELS,
+    PlantRegistration,
+    discover_entry_points,
+    plant_ids,
+    register_plant,
+    registered_plants,
+    resolve as resolve_plant,
+)
 from .conformance import ConformanceReport, check_controller_adapter, check_plant_adapter
 from .provenance import (
     BackendProvenanceAdapter,

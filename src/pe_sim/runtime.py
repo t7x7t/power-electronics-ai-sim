@@ -1523,6 +1523,11 @@ def _component_manifest(component_id: str, component: Any, declared_capabilities
         "hash": sha256_bytes(canonical_json(identity)),
         "identity": identity,
     }
+    # Who supplied the adapter is provenance, not model identity, so it lives
+    # outside the digest for the same reason execution evidence does.
+    trust_level = getattr(component, "trust_level", None)
+    if isinstance(trust_level, str) and trust_level:
+        manifest["trust_level"] = trust_level
     # Execution evidence is deliberately kept outside the identity digest:
     # changing the number of solved windows must not look like a model change.
     evidence_fn = getattr(component, "backend_evidence", None)

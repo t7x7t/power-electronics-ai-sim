@@ -549,6 +549,40 @@ pytest -q tests/test_pid_controller.py tests/test_pi_controller.py `
   tests/test_stage8_failure_recovery.py --basetemp .tmp/pytest-stage19
 ```
 
+### Stage 20 plant registry and extension gate (0.5.4)
+
+Roadmap Phase A1 (`docs/43_kernel_roadmap_v1.md`). The kernel stopped naming the
+plants it ships with.
+
+- `pe_sim.plant_registry` holds `PlantRegistration` data (id, backend id,
+  factory, schedule keys, config keys, trust level, export eligibility) and
+  resolves a `plant_id` on demand. Importing it cannot start a simulator.
+- `pe_sim.builtin_plants` is the project-owned composition root; the CLI loads
+  it at start-up instead of keeping its own table.
+- Third-party distributions register through the `pe_sim.plants` entry-point
+  group. Discovery runs at most once and is only triggered by a lookup miss, so
+  the built-in path never imports third-party code.
+- Trust is assigned, not claimed: entry-point registrations are forced to
+  `third-party` and `export_eligible = False`. The value is recorded at
+  `manifest.plant.trust_level`.
+
+Four kernel enumerations were removed: the CLI binding table and `--backend`
+allow-list, the `plant_id` enum in `experiment.schema.json`, the six hardcoded
+modules in `identity`, and the class-name list in `postprocess`.
+
+Sample overrides, `plant_config` validation, and `input_schedule` validation now
+come from the registration, so a plant cannot be half-registered.
+
+Still open: the time-model abstraction (A2) is blocked on decision D1, and
+engines that cannot be stepped therefore remain unsupported.
+
+Acceptance evidence:
+
+```text
+pytest -q tests/test_plant_registry.py tests/test_plant_extension_gate.py `
+  tests/test_plant_id_schema.py --basetemp .tmp/pytest-stage20
+```
+
 ### Future compact diagnostic mechanism
 
 The current Stage 6 checks are intentionally a runtime integrity gate. A later

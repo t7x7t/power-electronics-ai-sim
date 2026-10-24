@@ -141,4 +141,4 @@ def test_schedule_key_must_be_supported_by_the_selected_backend(tmp_path, monkey
     assert main(["run", str(config), "--backend", "buck"]) == 2
     payload = json.loads(capsys.readouterr().out)
     assert payload["status"] == "CONFIG_REJECTED"
-    assert "not supported by backend" in payload["error"]
+    assert "not supported by plant" in payload["error"]
