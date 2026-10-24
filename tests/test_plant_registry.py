@@ -52,6 +52,7 @@ _EXPECTED_TRUST = {
     "buck": "reference",
     "boost": "reference",
     "ngspice-buck": "reference",
+    "whole-run-buck": "reference",
 }
 
 
@@ -416,7 +417,9 @@ def test_load_builtin_plants_is_idempotent_and_complete():
     for plant_id, trust_level in _EXPECTED_TRUST.items():
         registration = get_plant(plant_id)
         assert registration.trust_level == trust_level
-        assert registration.export_eligible is True
+        # The whole-run route is executable but has no reviewed workbench
+        # export yet, so it declares that instead of pretending otherwise.
+        assert registration.export_eligible is (plant_id != "whole-run-buck")
         assert registration.class_name.endswith("Plant")
 
 
@@ -520,7 +523,10 @@ def test_plant_catalog_reports_declarations_not_implementation(capsys):
     assert entries["buck"]["trust_level"] == "reference"
     assert entries["buck"]["export_eligible"] is True
     assert entries["buck"]["time_model"] == "stepped"
-    assert {item["time_model"] for item in payload["plants"]} == {"stepped"}
+    assert {item["time_model"] for item in payload["plants"]} == {
+        "stepped",
+        "whole_run",
+    }
     assert "factory" not in entries["buck"], "a client needs the shape, not the builder"
     assert entries["buck"]["schedule_keys"] == sorted(entries["buck"]["schedule_keys"])
 

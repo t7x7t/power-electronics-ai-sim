@@ -18,7 +18,7 @@ That goal is only useful if it can be checked. The design must pass:
 
 | # | Test | Today |
 | --- | --- | --- |
-| T1 | Add a physical engine by writing an adapter and registering it, with **zero** edits to kernel modules | fails |
+| T1 | Add a physical engine by writing an adapter and registering it, with **zero** edits to kernel modules | **passes** (0.5.10) |
 | T2 | Add a topology without editing CLI allow-lists or schema enums | fails |
 | T3 | An agent can discover capabilities, start, observe progress, cancel, and read evidence using only versioned contracts | **passes** (0.5.7) |
 | T4 | An installed release reads a package from an older release and states cross-version comparability honestly | fails |
@@ -40,16 +40,15 @@ never regress.
 
 ## 3. Phases
 
-**Current position:** Phase A is partially complete. **A1** - engine
-registration as data, entry-point discovery, and adapter trust levels - shipped
-in 0.5.4 and is the registration half of gate G-A; the gate itself stays open
-until T1 is met. **A2** - the time-model
-abstraction - has its decision (D1), trace contract, and engine boundary
-delivered in 0.5.8 (`docs/46_time_model_and_engine_boundary_v1.md`); the
-whole-run execution route is declared but not implemented, so **T1 still
-fails** until a second engine exercises it. Phase B is complete: items 1-4
-shipped in 0.5.5-0.5.7. Everything shipped before 0.5.4 is groundwork covered
-by §4, not a completed phase.
+**Current position:** Phase A is complete and gate G-A is met (0.5.10). **A1** -
+engine registration as data, entry-point discovery, and adapter trust levels -
+shipped in 0.5.4. **A2** - the time-model abstraction - delivered its decision
+(D1), trace contract, and engine boundary in 0.5.8, and its **execution route
+plus a second engine in 0.5.10** (`docs/46`). Phase B is complete: items 1-4
+shipped in 0.5.5-0.5.7. Phase C is partially complete (D3/D4 + read-with-policy
+in 0.5.9; extras and the upgrade gate remain). Phase D has not started.
+Everything shipped before 0.5.4 is groundwork covered by §4, not a completed
+phase.
 
 ```mermaid
 graph LR
@@ -94,11 +93,21 @@ an entry-point distribution cannot grant itself a reviewed trust level or export
 eligibility. Steps 1-3 are delivered as a contract in 0.5.8: D1 is recorded,
 `pe_sim.time_model` declares stepped vs whole-run ownership, the trace contract
 and whole-run protocol are defined, and the evidence pricing is executable.
-The whole-run **execution route** remains unimplemented and is refused by the
-Runner; it lands with the first whole-run engine, which is excluded from this
-phase.
+The execution route and a second engine with a different time ownership landed
+in 0.5.10 (`pe_sim.whole_run_route`, `pe_sim.backends.whole_run_engine`).
 
-**Excluded:** implementing the second engine; choosing resampling parameters;
+**Gate G-A is met.** Evidence: a project-owned engine that owns its own time
+axis (`whole-run-buck`) is declared in the composition root, runs through the
+CLI, and publishes a normal package with `time_model: "whole_run"`,
+`enforcement: "post_hoc_only"`, and both route limitations
+(`tests/test_whole_run_route.py`). The kernel route module names no engine, and
+the engine module is added without touching `plant_registry.py` or
+`time_model.py`. The existing stepped engine's evidence is unchanged: a Buck
+exploratory run still records `functional`, asserted in the same test file.
+A whole-run run records `functional` too, because formal comparison is refused
+outright; `limited` remains its structural ceiling, not its current level.
+
+**Excluded:** implementing more engines; choosing resampling parameters;
 performance work.
 
 ### Phase B - Interaction surface
@@ -248,8 +257,10 @@ trade-off instead of hiding it.
 
 **What is delivered now.** The declaration (`PlantRegistration.time_model`),
 the trace contract (`pe-sim.trace-contract.v1`), the whole-run protocol, the
-post-hoc validator, and the pricing functions in 0.5.8. The whole-run
-execution route is refused, explicitly and before any filesystem change.
+post-hoc validator, the pricing functions (0.5.8), and the executable route
+with its first engine (0.5.10). The route still refuses the options it cannot
+honour - formal comparison, checkpoint/resume, step interruption, and
+applicability enforcement - explicitly and before any filesystem change.
 
 **Revisit when** a whole-run engine exposes window or checkpoint callbacks
 that restore in-run enforcement, or a trace-level enforcement policy is

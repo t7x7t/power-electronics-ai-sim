@@ -696,12 +696,11 @@ axis is admitted only at `limited` evidence with post-hoc trace checks.
 - The Runner records `manifest["time_model"]`, announces it in `run.started`,
   and caps every success level through `cap_evidence_level`. Formal comparison
   remains stepped-only.
-- The whole-run **execution route is not implemented in this release**. The
-  Runner refuses `whole_run` before any filesystem action, so a declaration
-  cannot silently produce a mis-run package.
+- At 0.5.8 the execution route was declared but refused. **Stage 26 (0.5.10)
+  implements it**; this entry records the contract half only.
 
-What remains: the executable whole-run route and the first real whole-run
-engine (T1), which is excluded from this phase. See
+What remained at 0.5.8: the executable whole-run route and the first real
+whole-run engine (T1). Both landed in Stage 26. See
 `docs/46_time_model_and_engine_boundary_v1.md`.
 
 Acceptance evidence:
@@ -738,6 +737,49 @@ pytest -q tests/test_compatibility.py tests/test_run_store.py `
   tests/test_inspection.py tests/test_run_catalog.py `
   --basetemp .tmp/pytest-stage25
 ```
+
+### Stage 26 whole-run execution route (0.5.10)
+
+Roadmap Phase A completion (`docs/43_kernel_roadmap_v1.md`, gate G-A, test T1).
+The kernel now executes an engine that owns its own time axis, and a second
+engine ships to prove the route is not a special case for one model.
+
+- `pe_sim.whole_run_route` runs a `WholeRunPlant`: one `trace_contract()`, one
+  `run_whole(request)`, post-hoc `validate_whole_run_result`, then the normal
+  sample rows, plugin chains, and package layout. The manifest is assembled by
+  the same `_build_run_manifest` helper the stepped route uses, so the two
+  routes cannot drift into two definitions of evidence.
+- `pe_sim.backends.whole_run_engine` is a project-owned deterministic linear
+  state-space RK4 engine with an ideal averaged Buck reference plant. It owns
+  its own discrete PI loop, because a whole-run engine cannot be driven window
+  by window; the kernel-provided controller is recorded but not driven.
+- Evidence: `time_model` is recorded, `route_limitations` lists
+  `in_run_enforcement_unavailable` and `post_hoc_validation_only`,
+  `enforcement` is `post_hoc_only`, and every level passes through the runtime
+  cap. An exploratory whole-run run records `functional`; `limited` is its
+  structural ceiling because formal comparison is refused outright.
+- Refused before any filesystem change: `formal_comparison`,
+  `checkpoint_interval_steps`, `resume_from`, `interrupt_after_steps`,
+  `cancel_after_steps`, and `applicability: enforce`. A trace that violates its
+  own contract is published as `RUN_FAILED` with
+  `failure.category = trace_contract_violation` and the validator problems
+  verbatim.
+- Cancellation is polled before and after the engine call; both outcomes
+  publish `INCOMPLETE` and record which observation point fired.
+
+Acceptance evidence:
+
+```text
+pytest -q tests/test_whole_run_route.py tests/test_whole_run_engine.py `
+  tests/test_time_model.py tests/test_time_model_integration.py `
+  --basetemp .tmp/pytest-stage26
+python -m pe_sim.cli run examples/whole_run_buck_step/config.json
+python -m pe_sim.cli inspect-run runs/whole-run-buck-step --compact
+```
+
+Still open on this route: resampling, checkpoint/resume, in-run enforcement
+callbacks, a reviewed identity pin for the engine (`not_pinned`), and workbench
+export eligibility.
 
 ### Future compact diagnostic mechanism
 

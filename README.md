@@ -124,6 +124,24 @@ pe-sim run examples/buck_pi_step/config.json --backend buck
 pe-sim run examples/boost_pi_step/config.json --backend boost
 ```
 
+An engine that owns its own time axis uses the whole-run route instead of the
+window-by-window contract. The shipped example is a project-owned deterministic
+state-space engine with an ideal averaged Buck reference. It publishes a normal
+package and declares the limits of its route:
+
+```powershell
+pe-sim run examples/whole_run_buck_step/config.json
+pe-sim inspect-run runs/whole-run-buck-step --compact
+```
+
+The manifest records `time_model: "whole_run"`, `enforcement: "post_hoc_only"`,
+and `route_limitations: [in_run_enforcement_unavailable, post_hoc_validation_only]`.
+Formal comparison is refused with `formal_comparison_rejected`, and the
+checkpoint/resume/interruption options are refused, because the kernel does not
+own the engine's steps. The declared controller identity is recorded but not
+driven: the engine owns its control loop. See
+[docs/46_time_model_and_engine_boundary_v1.md](docs/46_time_model_and_engine_boundary_v1.md).
+
 ### CLI configuration contract
 
 - `--backend` is optional only when it matches `plant_id`. A mismatch, an
@@ -452,9 +470,9 @@ A registration also declares `time_model`. `stepped` (the default) means the
 kernel owns the clock and can enforce constraints per window; those runs remain
 eligible for `comparable`. `whole_run` means the engine owns its time axis and
 returns a trace that can only be checked afterwards, so it is capped at
-`limited`. The contract is declared in 0.5.8, but the whole-run execution route
-is not implemented yet: the Runner refuses such a declaration before creating a
-run rather than mis-running it. See
+`limited`. Both routes are executable as of 0.5.10: the whole-run route checks
+the trace after the fact, records `enforcement: "post_hoc_only"`, and refuses
+formal comparison because it cannot enforce constraints in-run. See
 [docs/46_time_model_and_engine_boundary_v1.md](docs/46_time_model_and_engine_boundary_v1.md).
 
 A `manifest_identity()` record is producer-declared, so since 0.5.2 the kernel

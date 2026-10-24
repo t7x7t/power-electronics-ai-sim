@@ -486,12 +486,6 @@ class Runner:
                 f"plant {spec.plant_id!r} declares unknown time_model {time_model!r}; "
                 f"expected one of {list(TIME_MODELS)}"
             )
-        if time_model == TIME_MODEL_WHOLE_RUN:
-            raise ValueError(
-                f"plant {spec.plant_id!r} declares time_model {time_model!r}; the "
-                "whole-run execution route is not implemented in this release, so "
-                f"run {spec.run_id!r} was not started"
-            )
         # Interaction surface: both default to None, so the ordinary in-process
         # caller pays nothing for progress or cancellation support.
         progress_policy = options.progress if options is not None else None
@@ -518,6 +512,30 @@ class Runner:
                 selected_action_policy = FiniteActionPolicy()
         if not callable(getattr(selected_action_policy, "project", None)):
             raise TypeError("selected action policy must provide project(value)")
+        if time_model == TIME_MODEL_WHOLE_RUN:
+            # An engine that owns its own time axis cannot be constrained
+            # window by window, so it runs on a separate route that prices that
+            # gap in the evidence level (docs/43 section 5, docs/46).  The
+            # route performs its own pre-filesystem refusals.
+            from .whole_run_route import run_whole_run_route
+
+            return run_whole_run_route(
+                spec,
+                plant,
+                controller,
+                mode=mode,
+                options=options,
+                checkpoint_interval_steps=checkpoint_interval_steps,
+                resume_from=resume_from,
+                interrupt_after_steps=interrupt_after_steps,
+                cancel_after_steps=cancel_after_steps,
+                measurement_key=measurement_key,
+                qualification_checker=qualification_checker,
+                action_policy=selected_action_policy,
+                safety_plugins=tuple(safety_plugins or ()),
+                validity_plugins=tuple(validity_plugins or ()),
+                qualification_plugins=tuple(qualification_plugins or ()),
+            )
         applicability_policy = (
             options.applicability if options is not None else ApplicabilityPolicy()
         ).resolve(mode)
@@ -1136,7 +1154,48 @@ class Runner:
         # One derivation drives both the manifest field and the terminal event,
         # so a client can never be told a level the package does not carry.
         evidence_level = _derive_evidence_level(status, mode, worktree, environment, plant_manifest, qualification, time_model=time_model)
-        manifest = {"schema_version": spec.schema_version, "experiment_id": spec.experiment_id, "run_id": spec.run_id, "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), **git_fields, "provenance": provenance, "worktree_analysis": worktree_manifest, "worktree_analysis_sha256": worktree_evidence_sha256, "time_model": time_model, "run_mode": mode, "applicability": _applicability_manifest(applicability_plugin, applicability_report), "environment": environment, "plant": plant_manifest, "controller": controller_manifest, "action_policy": _action_policy_manifest(selected_action_policy), "contracts": {k: v["hash"] for k, v in spec.contracts.items()}, "timebase": spec.timebase.to_dict(), "initial_state": spec.initial_state.to_dict(), "random_seed": spec.seed, "artifacts": {}, "status": status, "qualification": qualification, "safety": {"passed": safety_passed, "checks": safety_report.to_dict(), "validity": validity_report.to_dict(), "applicability": _applicability_manifest(applicability_plugin, applicability_report)}, "evidence_level": evidence_level, "error": error, "failure": failure, "recovery": recovery_provenance, "abandoned_runs": abandoned_runs, "capabilities": {"plant": capabilities[0].to_dict(), "controller": capabilities[1].to_dict()} if capabilities else {}, "checks": {"safety": safety_report.to_dict(), "validity": validity_report.to_dict(), "qualification": qualification_report.to_dict(), "applicability": applicability_report.to_dict(), "plugins": {"safety": [plugin_identity(item) for item in safety_chain], "validity": [plugin_identity(item) for item in validity_chain], "qualification": [plugin_identity(item) for item in qualification_chain], "applicability": [plugin_identity(item) for item in applicability_chain]}}, "audit": {"call_count": len(audit.calls)}, "state_transition_matrix": machine.allowed_transitions(), "state_transitions": machine.transitions}
+        manifest = _build_run_manifest(
+            spec,
+            time_model=time_model,
+            mode=mode,
+            git_fields=git_fields,
+            provenance=provenance,
+            worktree_manifest=worktree_manifest,
+            worktree_analysis_sha256=worktree_evidence_sha256,
+            environment=environment,
+            plant_manifest=plant_manifest,
+            controller_manifest=controller_manifest,
+            action_policy_manifest=_action_policy_manifest(selected_action_policy),
+            applicability_manifest=_applicability_manifest(
+                applicability_plugin, applicability_report
+            ),
+            status=status,
+            qualification=qualification,
+            safety_passed=safety_passed,
+            evidence_level=evidence_level,
+            error=error,
+            failure=failure,
+            recovery=recovery_provenance,
+            abandoned_runs=abandoned_runs,
+            capabilities=(
+                {
+                    "plant": capabilities[0].to_dict(),
+                    "controller": capabilities[1].to_dict(),
+                }
+                if capabilities
+                else {}
+            ),
+            safety_report=safety_report,
+            validity_report=validity_report,
+            qualification_report=qualification_report,
+            applicability_report=applicability_report,
+            safety_chain=safety_chain,
+            validity_chain=validity_chain,
+            qualification_chain=qualification_chain,
+            applicability_chain=applicability_chain,
+            audit=audit,
+            machine=machine,
+        )
         writer.write_json("logs/run.json", {"status": status, "error": error, "sample_count": len(samples)})
         # Complete the immutable publication summary while the run is still
         # hidden in the writer's temporary directory.  Publication then moves
@@ -1372,6 +1431,109 @@ def _derive_evidence_level(
     if qualification.get("level") == "limited":
         return cap_evidence_level("limited", time_model)
     return cap_evidence_level("comparable", time_model)
+
+
+def _build_run_manifest(
+    spec: ExperimentSpec,
+    *,
+    time_model: str,
+    mode: str,
+    git_fields: Mapping[str, Any],
+    provenance: Mapping[str, Any],
+    worktree_manifest: Mapping[str, Any],
+    worktree_analysis_sha256: str,
+    environment: Mapping[str, Any],
+    plant_manifest: Mapping[str, Any],
+    controller_manifest: Mapping[str, Any],
+    action_policy_manifest: Mapping[str, Any],
+    applicability_manifest: Mapping[str, Any] | None,
+    status: str,
+    qualification: Mapping[str, Any],
+    safety_passed: bool,
+    evidence_level: str,
+    error: str | None,
+    failure: Mapping[str, Any] | None,
+    recovery: Mapping[str, Any],
+    abandoned_runs: Any,
+    capabilities: Mapping[str, Any],
+    safety_report: CheckReport,
+    validity_report: CheckReport,
+    qualification_report: CheckReport,
+    applicability_report: CheckReport,
+    safety_chain: tuple[Any, ...],
+    validity_chain: tuple[Any, ...],
+    qualification_chain: tuple[Any, ...],
+    applicability_chain: tuple[Any, ...],
+    audit: _Audit,
+    machine: _StateMachine,
+    extra: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Assemble the shared run manifest for every execution route.
+
+    A second route must publish the same evidence shape, not a look-alike.
+    Route-specific additions (for example a whole-run limitation list) are
+    passed through ``extra`` so the common keys stay in one place.
+    """
+
+    safety_document = {
+        "passed": safety_passed,
+        "checks": safety_report.to_dict(),
+        "validity": validity_report.to_dict(),
+        "applicability": applicability_manifest,
+    }
+    manifest: dict[str, Any] = {
+        "schema_version": spec.schema_version,
+        "experiment_id": spec.experiment_id,
+        "run_id": spec.run_id,
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        **git_fields,
+        "provenance": dict(provenance),
+        "worktree_analysis": dict(worktree_manifest),
+        "worktree_analysis_sha256": worktree_analysis_sha256,
+        "time_model": time_model,
+        "run_mode": mode,
+        "applicability": applicability_manifest,
+        "environment": dict(environment),
+        "plant": dict(plant_manifest),
+        "controller": dict(controller_manifest),
+        "action_policy": dict(action_policy_manifest),
+        "contracts": {key: value["hash"] for key, value in spec.contracts.items()},
+        "timebase": spec.timebase.to_dict(),
+        "initial_state": spec.initial_state.to_dict(),
+        "random_seed": spec.seed,
+        "artifacts": {},
+        "status": status,
+        "qualification": dict(qualification),
+        "safety": safety_document,
+        "evidence_level": evidence_level,
+        "error": error,
+        "failure": failure,
+        "recovery": dict(recovery),
+        "abandoned_runs": abandoned_runs,
+        "capabilities": dict(capabilities),
+        "checks": {
+            "safety": safety_report.to_dict(),
+            "validity": validity_report.to_dict(),
+            "qualification": qualification_report.to_dict(),
+            "applicability": applicability_report.to_dict(),
+            "plugins": {
+                "safety": [plugin_identity(item) for item in safety_chain],
+                "validity": [plugin_identity(item) for item in validity_chain],
+                "qualification": [
+                    plugin_identity(item) for item in qualification_chain
+                ],
+                "applicability": [
+                    plugin_identity(item) for item in applicability_chain
+                ],
+            },
+        },
+        "audit": {"call_count": len(audit.calls)},
+        "state_transition_matrix": machine.allowed_transitions(),
+        "state_transitions": machine.transitions,
+    }
+    if extra:
+        manifest.update(dict(extra))
+    return manifest
 
 
 def _require_formal_evidence(spec: ExperimentSpec, worktree: Any, git: Any, plant: Mapping[str, Any], controller: Mapping[str, Any], environment: Mapping[str, Any]) -> None:

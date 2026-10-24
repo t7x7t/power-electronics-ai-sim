@@ -64,7 +64,14 @@ fail), and the `run.finished` event carries the same value as
 `failure_category`.
 
 `pe_sim.error_codes.KERNEL_FAILURE_CODES` documents the set the kernel and
-its built-in checks produce:
+its built-in checks produce. It is a documentation set, not a gate: see the
+closing note in this section.
+
+One code was added in 0.5.10: `trace_contract_violation`. A whole-run engine
+declares a `TraceContract` and then returns a trace; when the trace does not
+satisfy it, the kernel records that category and keeps the validator problems
+verbatim under `logs/run.json` and the corresponding event. It is the only
+whole-run-specific failure the kernel itself decides.
 
 | Group | Codes |
 | --- | --- |
@@ -72,6 +79,7 @@ its built-in checks produce:
 | backend | `backend_timeout`, `backend_process_failure`, `simulation_execution_error` |
 | numerical / model | `numerical_nonconvergence`, `model_numerical_error` |
 | plant / timing | `plant_advance_failure`, `plant_execution_failure`, `timing_violation`, `timestamp_violation` |
+| whole-run route | `trace_contract_violation` |
 | observation / action | `nonfinite_observation`, `invalid_observation_age`, `unit_mismatch`, `action_invalid` |
 | built-in validity findings | `missing_measurement`, `invalid_measurement`, `measurement_out_of_range`, `future_observation`, `stale_observation` |
 | built-in applicability findings | `envelope_undeclared`, `envelope_declaration_invalid`, `external_input_changed`, `actuator_undeclared`, `actuator_outside_envelope`, `invalid_schedule_value`, `control_period_too_short`, `insufficient_sample_resolution`, `integration_step_too_large`, `insufficient_integration_substeps`, `load_too_close_to_switch_off_resistance`, `parameter_provenance_invalid`, `parameter_provenance_unknown`, `parameter_unreviewed`, `ccm_boundary_violated`, `pulse_width_below_template_resolution` |

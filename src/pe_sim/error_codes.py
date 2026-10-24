@@ -68,6 +68,8 @@ KERNEL_FAILURE_CODES = frozenset(
         "safety_violation",
         "simulation_execution_error",
         "timestamp_violation",
+        # Whole-run route: the engine's trace violated the contract it declared.
+        "trace_contract_violation",
         "timing_violation",
         "unit_mismatch",
         "unsupported_capability",

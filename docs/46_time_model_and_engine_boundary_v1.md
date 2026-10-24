@@ -1,9 +1,9 @@
 # Time Model and Engine Boundary v1
 
-**Status:** Phase A2 contract, delivered in 0.5.8. It records who owns time,
-what a trace must promise, and how a route is priced. The whole-run execution
-route is **declared but not implemented**: the Runner refuses `whole_run`
-before touching the filesystem rather than silently mis-running it.
+**Status:** Phase A2 contract delivered in 0.5.8; the **whole-run execution
+route and its first engine are implemented in 0.5.10**. It records who owns
+time, what a trace must promise, how a route is priced, and what the route
+still cannot do.
 
 ## 1. Decision D1: dual ownership, priced by evidence
 
@@ -45,9 +45,9 @@ A plant declares its route as data:
   six-method contract; a whole-run adapter must expose `trace_contract()` and
   `run_whole()`. No engine, topology, or vendor name appears in this check.
 - The Runner reads `plant.time_model`, records it in the manifest, and
-  announces it in `run.started`. An unknown value is refused. `whole_run` is
-  refused in this release with an explicit "route is not implemented" error,
-  before any run directory or temporary package exists.
+  announces it in `run.started`. An unknown value is refused. Both declared
+  routes are executable as of 0.5.10; a route that cannot honour a requested
+  option refuses it explicitly (section 6).
 
 ## 3. Trace contract
 
@@ -108,18 +108,56 @@ its evidence does not support. The levels used here are the runtime manifest
 vocabulary (`diagnostic_only` < `functional` < `limited` < `comparable`), not
 the Stage 12 classification vocabulary (`docs/22`), which has separate axes.
 
-## 6. Current status and non-goals
+## 6. The executable whole-run route (0.5.10)
 
-**Delivered (0.5.8):** D1, the declaration, the trace contract, the engine
-protocol, the post-hoc validator, the pricing functions, catalog/CLI/manifest
-visibility, and tests.
+`pe_sim.whole_run_route.run_whole_run_route` is the kernel side of the route.
+It keeps one package layout: the manifest is assembled by the same
+`_build_run_manifest` helper the stepped route uses, so a client sees the same
+keys plus `time_model`, `route_limitations`, and `enforcement`.
 
-**Not delivered:** an executable whole-run route, a second engine, trace
-resampling, checkpoint/resume for whole-run runs, and any comparability claim
-for a whole-run trace. Declaring `whole_run` is refused until the route lands.
+**Refused before any filesystem change.**
 
-**Non-goals:** choosing a resampling policy, performance work, or allowing a
-whole-run trace to bypass the evidence cap.
+| Request | Result |
+| --- | --- |
+| `mode: formal_comparison` | `ValueError` in the Runner; the CLI emits `formal_comparison_rejected` and exits 2 |
+| `checkpoint_interval_steps` / `resume_from` / `interrupt_after_steps` / `cancel_after_steps` | `ValueError`: the kernel owns no steps to checkpoint, resume, or interrupt |
+| `applicability: enforce` | `ValueError`: there are no kernel-owned windows to enforce at |
+| unknown `time_model`, missing `trace_contract`/`run_whole`, wrong contract type | `ValueError` |
+
+**What the route does.**
+
+1. Builds `WholeRunRequest(duration_s, initial_state, seed, metadata)` from the
+   experiment document; `metadata` carries documented execution facts only
+   (`input_schedule`, `control_period_s`, `run_id`, `experiment_id`).
+2. Calls `trace_contract()` once and `run_whole(request)` once.
+3. Validates the returned trace with `validate_whole_run_result`. Problems are
+   not a crash: the package is published as `RUN_FAILED` with
+   `failure.category = trace_contract_violation` and the validator problems
+   verbatim in `logs/run.json` and in an events entry.
+4. Converts the trace to the normal sample rows (`step_index`, `time_s`, one
+   column per signal) and runs the same plugin chains as a stepped run, with
+   the check context marked `post_hoc: true`.
+5. Prices the result through `_derive_evidence_level(..., time_model=...)`.
+
+**Cancellation.** A `CancelToken` is polled before the engine call and once
+after it. Cancelling before publishes an `INCOMPLETE` package with no samples
+and `failure.cancellation_observed = "before_engine_call"`. A cancellation
+observed after the engine returned still publishes `INCOMPLETE`: the client
+asked to stop, so the package records the trace length it had reached rather
+than pretending the request arrived earlier.
+
+**Evidence level in practice.** A whole-run run is always `exploratory`
+because formal comparison is refused, and an exploratory success records
+`functional`. That is *below* `limited` on the runtime ladder
+(`diagnostic_only` < `functional` < `limited` < `comparable`), so the
+structural `limited` cap is never the binding constraint for this route; it
+exists to stop a future change from promoting a whole-run run past `limited`.
+
+**Still not delivered:** trace resampling, checkpoint/resume for whole-run
+runs, in-run enforcement callbacks, cross-version comparability for a
+whole-run trace, and any reviewed identity pin for the first engine (it
+remains `not_pinned`).
+
 
 ## 7. Related documents
 

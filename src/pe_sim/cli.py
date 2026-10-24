@@ -85,7 +85,7 @@ def _emit_rejection(status: str, code: str, error: str, **extra: Any) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Auditable power-electronics simulation runtime")
-    parser.add_argument("--version", action="version", version="0.5.9")
+    parser.add_argument("--version", action="version", version="0.5.10")
     sub = parser.add_subparsers(dest="command")
     run = sub.add_parser("run", help="run an experiment from JSON config")
     run.add_argument("config", type=Path)
@@ -279,6 +279,18 @@ def main(argv: list[str] | None = None) -> int:
             validate_experiment_document(document)
             registration = _select_registration(document, args.backend)
             _validate_schedule_keys(document, registration)
+            if args.mode == "formal_comparison" and registration.time_model == TIME_MODEL_WHOLE_RUN:
+                # The kernel cannot enforce constraints while the engine owns
+                # the clock, so a whole-run route can never be a formal
+                # comparison.  Refuse before building an adapter or a run
+                # directory so the reason is branchable and nothing is left
+                # behind (docs/45).
+                raise RequestRejected(
+                    "formal_comparison_rejected",
+                    f"plant_id {registration.plant_id!r} declares time_model "
+                    f"{TIME_MODEL_WHOLE_RUN!r}; formal comparison requires in-run "
+                    "enforcement, which this route cannot provide",
+                )
             spec = ExperimentSpec.from_dict(document)
             backend = registration.backend_id
             plant = _build_plant(

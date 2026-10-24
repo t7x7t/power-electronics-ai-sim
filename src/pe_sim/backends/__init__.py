@@ -53,6 +53,12 @@ from .process import (
     parse_ngspice_version,
 )
 from .settings import NgspiceSolverSettings
+from .whole_run_engine import (
+    IntegrationOutcome,
+    LinearStateSpace,
+    WholeRunBuckPlant,
+    integrate_rk4,
+)
 from .wrdata import TraceTable, WrdataParseError, parse_wrdata
 
 
@@ -78,13 +84,17 @@ __all__ = [
     "NgspiceProcess",
     "NgspiceRunResult",
     "NgspiceSolverSettings",
+    "IntegrationOutcome",
+    "LinearStateSpace",
     "TraceTable",
+    "WholeRunBuckPlant",
     "WrdataParseError",
     "default_sample_step_s",
     "config_template",
     "current_platform",
     "executable_digest",
     "get_backend",
+    "integrate_rk4",
     "list_backends",
     "load_backend_config",
     "netlist_digest",

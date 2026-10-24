@@ -18,6 +18,11 @@ The values here mirror ``pe_sim.cli`` exactly on purpose: this stage extracts
 the knowledge into data, and a later change removes the duplicate.  Keeping
 them in sync is checked by tests rather than by importing the CLI, so the CLI
 stays free to change.
+
+A plant declares which time model it uses.  The kernel reads that declaration
+and routes the run; it never decides what a plant is.  Both time models are
+executable, and the whole-run route is priced at a lower evidence level rather
+than hidden from the catalogue.
 """
 
 from __future__ import annotations
@@ -32,12 +37,14 @@ from .backends import (
     NgspiceBuckPlant,
     PyspiceBuckNetlistBuilder,
     PyspiceUnavailableError,
+    WholeRunBuckPlant,
     resolve_ngspice_executable,
 )
 from .contracts import Timebase
 from .plant_registry import PlantRegistration, register_plant, registered_plants
 from .reference_plants import BuckPlant, BoostPlant
 from .runtime import FakeLoadPlant, FakePlant
+from .time_model import TIME_MODEL_WHOLE_RUN
 
 
 @dataclass(frozen=True)
@@ -82,6 +89,23 @@ _NGSPICE_BUCK_DEFAULTS: dict[str, object] = {
     "keep_artifacts": False,
 }
 
+# The whole-run engine owns its own PI loop, so the gains below are engine
+# parameters rather than the kernel controller configuration.
+_WHOLE_RUN_BUCK_DEFAULTS: dict[str, object] = {
+    "input_voltage_v": 12.0,
+    "inductance_h": 100e-6,
+    "capacitance_f": 470e-6,
+    "load_resistance_ohm": 1.0,
+    "integration_step_s": 1e-6,
+    "cadence_s": None,
+    "default_vref_v": 5.0,
+    "kp": 0.1,
+    "ki": 60.0,
+    "output_min": 0.0,
+    "output_max": 1.0,
+    "anti_windup": True,
+}
+
 
 def _reject_unknown_keys(plant_id: str, config: Mapping[str, Any], allowed: frozenset[str]) -> None:
     unknown = set(config) - set(allowed)
@@ -111,6 +135,30 @@ def _build_boost(config: Mapping[str, Any], context: PlantBuildContext) -> Boost
     values = dict(_REFERENCE_PLANT_DEFAULTS)
     values.update(config)
     return BoostPlant(**values)
+
+
+def _build_whole_run_buck(
+    config: Mapping[str, Any], context: PlantBuildContext
+) -> WholeRunBuckPlant:
+    """Build the engine-owned whole-run Buck declaration.
+
+    The trace cadence defaults to the experiment control period, because the
+    engine also updates its PI loop on that cadence.  The horizon is not a
+    constructor input: a whole-run engine receives ``duration_s`` in the
+    request.
+    """
+
+    _reject_unknown_keys("whole-run-buck", config, frozenset(_WHOLE_RUN_BUCK_DEFAULTS))
+    values = dict(_WHOLE_RUN_BUCK_DEFAULTS)
+    values.update(config)
+    cadence = values.pop("cadence_s")
+    if cadence is None:
+        if context.timebase is None:
+            raise ValueError(
+                "whole-run-buck requires cadence_s in plant_config or a timebase control_period_s"
+            )
+        cadence = context.timebase.control_period_s
+    return WholeRunBuckPlant(cadence_s=cadence, **values)
 
 
 def _build_ngspice_buck(config: Mapping[str, Any], context: PlantBuildContext) -> NgspiceBuckPlant:
@@ -201,6 +249,17 @@ _BUILTIN_REGISTRATIONS: tuple[PlantRegistration, ...] = (
         trust_level="reference",
         export_eligible=True,
     ),
+    PlantRegistration(
+        plant_id="whole-run-buck",
+        backend_id="whole-run-buck",
+        factory=_build_whole_run_buck,
+        class_name="WholeRunBuckPlant",
+        schedule_keys=_BASE_SCHEDULE_KEYS,
+        config_keys=frozenset(_WHOLE_RUN_BUCK_DEFAULTS),
+        trust_level="reference",
+        export_eligible=False,
+        time_model=TIME_MODEL_WHOLE_RUN,
+    ),
 )
 
 
@@ -217,9 +276,10 @@ def load_builtin_plants() -> None:
     cannot leave the registry holding half of the built-in plants.
     """
 
+    registrations = _BUILTIN_REGISTRATIONS
     existing = registered_plants()
     pending: list[PlantRegistration] = []
-    for registration in _BUILTIN_REGISTRATIONS:
+    for registration in registrations:
         current = existing.get(registration.plant_id)
         if current == registration:
             continue

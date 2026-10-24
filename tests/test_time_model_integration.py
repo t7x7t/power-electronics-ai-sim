@@ -112,7 +112,11 @@ def test_the_catalog_exposes_the_declared_time_model():
 
     assert entries
     assert {item["plant_id"] for item in entries} >= {"buck", "boost", "fake"}
-    assert {item["time_model"] for item in entries} == {TIME_MODEL_STEPPED}
+    time_models = {item["time_model"] for item in entries}
+    assert {"stepped", TIME_MODEL_WHOLE_RUN} <= time_models
+    assert {
+        item["time_model"] for item in entries if item["plant_id"] != "whole-run-buck"
+    } == {TIME_MODEL_STEPPED}
 
 
 def test_validate_plant_adapter_accepts_a_whole_run_shape():
@@ -167,25 +171,39 @@ def test_the_registration_route_is_authoritative_for_a_slotted_adapter(tmp_path)
     plant = _build_plant(registration, {}, PlantBuildContext(timebase=Timebase(duration_s=0.003)))
     _validate_plant_adapter(registration, plant)
 
-    with pytest.raises(ValueError, match="whole-run execution route is not implemented"):
-        Runner().run(
-            _spec(tmp_path, "slotted"),
-            plant,
-            FakePIController(),
-            time_model=registration.time_model,
-        )
+    # The declaration is authoritative: the Runner takes the whole-run route
+    # even though the adapter cannot be annotated at runtime, and prices the
+    # trace it actually returned.
+    result = Runner().run(
+        _spec(tmp_path, "slotted"),
+        plant,
+        FakePIController(),
+        time_model=registration.time_model,
+    )
 
-    assert not (tmp_path / "slotted").exists()
+    assert result.status == "RUN_FAILED"
+    assert result.failure_category == "trace_contract_violation"
+    assert (tmp_path / "slotted" / "manifest.json").exists()
 
 
-def test_runner_refuses_the_whole_run_route_without_starting_the_run(tmp_path):
+def test_runner_prices_a_whole_run_trace_instead_of_refusing_the_route(tmp_path):
     spec = _spec(tmp_path, "whole-run")
 
-    with pytest.raises(ValueError, match="whole-run execution route is not implemented"):
-        Runner().run(spec, _WholeRunPlant(), FakePIController())
+    result = Runner().run(spec, _WholeRunPlant(), FakePIController())
 
-    assert not (tmp_path / "whole-run").exists()
-    assert list(tmp_path.iterdir()) == []
+    # The stub returns a two-sample trace for a three-window horizon, so the
+    # route publishes a failed package instead of crashing.
+    assert result.status == "RUN_FAILED"
+    assert result.failure_category == "trace_contract_violation"
+    assert result.evidence_level == "diagnostic_only"
+    manifest = json.loads(
+        (tmp_path / "whole-run" / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["time_model"] == TIME_MODEL_WHOLE_RUN
+    assert manifest["route_limitations"] == [
+        "in_run_enforcement_unavailable",
+        "post_hoc_validation_only",
+    ]
 
 
 def test_runner_rejects_an_unknown_time_model(tmp_path):
