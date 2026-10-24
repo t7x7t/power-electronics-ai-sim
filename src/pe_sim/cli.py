@@ -76,7 +76,7 @@ def _cli_tolerance_policy(relative_tolerance: float, signal_tolerances: list[str
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Auditable power-electronics simulation runtime")
-    parser.add_argument("--version", action="version", version="0.5.2")
+    parser.add_argument("--version", action="version", version="0.5.3")
     sub = parser.add_subparsers(dest="command")
     run = sub.add_parser("run", help="run an experiment from JSON config")
     run.add_argument("config", type=Path)
@@ -495,14 +495,53 @@ def _validate_plant_adapter(backend: str, plant: object) -> None:
         raise ValueError(f"backend {backend!r} built {actual!r}, expected {binding.class_name!r}")
 
 
-def _build_controller(spec: ExperimentSpec):
-    """Build the reviewed PI controller from validated configuration."""
+_PI_CONFIG_KEYS = frozenset(
+    {"kp", "ki", "output_min", "output_max", "anti_windup", "measurement_key"}
+)
+_PID_CONFIG_KEYS = _PI_CONFIG_KEYS | {"kd", "kd_filter_tau_s", "kff_v"}
 
-    if spec.controller_id != "pi":
+
+@dataclass(frozen=True)
+class _ControllerBinding:
+    """One built-in CLI controller and the configuration keys it accepts.
+
+    The controller class is shared: a ``pi`` binding rejects derivative and
+    feedforward keys instead of silently ignoring them, which keeps a typo or a
+    copied PID configuration from looking like it took effect.
+    """
+
+    controller_id: str
+    class_name: str
+    config_keys: frozenset[str]
+
+
+_CONTROLLER_BINDINGS: dict[str, _ControllerBinding] = {
+    "pi": _ControllerBinding("pi", "FakePIController", _PI_CONFIG_KEYS),
+    "pid": _ControllerBinding("pid", "FakePIController", _PID_CONFIG_KEYS),
+}
+
+
+def _build_controller(spec: ExperimentSpec):
+    """Build the reviewed controller from a registered controller_id."""
+
+    binding = _CONTROLLER_BINDINGS.get(spec.controller_id)
+    if binding is None:
         raise ValueError(
-            f"unsupported controller_id {spec.controller_id!r}; supported: ['pi']"
+            f"unsupported controller_id {spec.controller_id!r}; "
+            f"supported: {sorted(_CONTROLLER_BINDINGS)}"
         )
-    return FakePIController.from_config(spec.controller_config)
+    unknown = set(spec.controller_config) - binding.config_keys
+    if unknown:
+        raise ValueError(
+            f"unsupported {spec.controller_id} controller_config fields: {sorted(unknown)}"
+        )
+    controller = FakePIController.from_config(spec.controller_config)
+    if type(controller).__name__ != binding.class_name:
+        raise ValueError(
+            f"controller_id {spec.controller_id!r} built {type(controller).__name__!r}, "
+            f"expected {binding.class_name!r}"
+        )
+    return controller
 
 
 def _build_plant(backend: str, config: dict[str, object], timebase: Timebase | None = None, ngspice_executable: str | None = None, model_builder: str = "native"):

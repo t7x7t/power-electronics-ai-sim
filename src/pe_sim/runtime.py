@@ -132,14 +132,21 @@ class FakePIController:
     an unbounded proportional action.
 
     ``ki`` is in duty-ratio per (volt * second), ``kp`` in duty-ratio per volt,
-    and ``kd`` is intentionally not implemented.  This is a fixture controller,
-    not a deployment or tuning claim.
+    ``kd`` in duty-ratio per (volt / second), and ``kff_v`` in duty-ratio per
+    volt of reference.  The derivative term is taken on the measured error and
+    is optionally low-pass filtered with ``kd_filter_tau_s``; a zero gain
+    disables the term entirely so a ``pi`` configuration keeps its exact
+    previous behaviour.  This is a fixture controller, not a deployment or
+    tuning claim.
     """
 
     _CONFIG_KEYS = frozenset(
         {
             "kp",
             "ki",
+            "kd",
+            "kd_filter_tau_s",
+            "kff_v",
             "output_min",
             "output_max",
             "anti_windup",
@@ -151,7 +158,10 @@ class FakePIController:
         self,
         kp: float = 1.0,
         ki: float = 0.0,
+        kd: float = 0.0,
         *,
+        kd_filter_tau_s: float = 0.0,
+        kff_v: float = 0.0,
         output_min: float | None = None,
         output_max: float | None = None,
         anti_windup: bool = True,
@@ -159,8 +169,15 @@ class FakePIController:
     ):
         self.kp = float(kp)
         self.ki = float(ki)
-        if not math.isfinite(self.kp) or not math.isfinite(self.ki):
+        self.kd = float(kd)
+        self.kff_v = float(kff_v)
+        if not all(
+            math.isfinite(value) for value in (self.kp, self.ki, self.kd, self.kff_v)
+        ):
             raise ValueError("controller gains must be finite")
+        self.kd_filter_tau_s = float(kd_filter_tau_s)
+        if not math.isfinite(self.kd_filter_tau_s) or self.kd_filter_tau_s < 0.0:
+            raise ValueError("kd_filter_tau_s must be finite and non-negative")
         if (output_min is None) != (output_max is None):
             raise ValueError("output_min and output_max must be provided together")
         if output_min is not None:
@@ -181,6 +198,8 @@ class FakePIController:
         self.measurement_key = measurement_key
         self._integral = 0.0
         self._previous_time_s: float | None = None
+        self._previous_error: float | None = None
+        self._filtered_derivative = 0.0
         self.state: dict[str, Any] = {}
 
     @classmethod
@@ -209,6 +228,9 @@ class FakePIController:
         return cls(
             kp=float(values.get("kp", 1.0)),
             ki=float(values.get("ki", 0.0)),
+            kd=float(values.get("kd", 0.0)),
+            kd_filter_tau_s=float(values.get("kd_filter_tau_s", 0.0)),
+            kff_v=float(values.get("kff_v", 0.0)),
             output_min=output_min,
             output_max=output_max,
             anti_windup=anti_windup,
@@ -216,18 +238,27 @@ class FakePIController:
         )
 
     def manifest_identity(self) -> dict[str, Any]:
+        parameters: dict[str, Any] = {
+            "kp": self.kp,
+            "ki": self.ki,
+            "output_min": self.output_min,
+            "output_max": self.output_max,
+            "anti_windup": self.anti_windup,
+            "measurement_key": self.measurement_key,
+        }
+        # Only record the PID/feedforward parameters when they change the
+        # control law.  A ``pi`` configuration is numerically identical to the
+        # pre-0.5.3 controller, so its identity must not change either.
+        if self.kd:
+            parameters["kd"] = self.kd
+            parameters["kd_filter_tau_s"] = self.kd_filter_tau_s
+        if self.kff_v:
+            parameters["kff_v"] = self.kff_v
         return {
             "kind": "fixture_controller",
             "module": type(self).__module__,
             "class": type(self).__qualname__,
-            "parameters": {
-                "kp": self.kp,
-                "ki": self.ki,
-                "output_min": self.output_min,
-                "output_max": self.output_max,
-                "anti_windup": self.anti_windup,
-                "measurement_key": self.measurement_key,
-            },
+            "parameters": parameters,
             "capabilities": [],
         }
 
@@ -238,13 +269,18 @@ class FakePIController:
         provenance source.  This records the controller's numerical identity
         without pretending it is an external circuit solver.
         """
+        state = "integral-state" if self.ki else "proportional-only"
+        if self.kd:
+            state += "+derivative"
+        if self.kff_v:
+            state += "+feedforward"
         return {
             "status": "known",
             "name": "pe_sim.reference_pi_controller",
             "version": "reference-pi-v2",
             "solver_settings": {
                 "arithmetic": "IEEE-754-binary64",
-                "state": "integral-state" if self.ki else "proportional-only",
+                "state": state,
                 "anti_windup": "integral-clamping" if self.anti_windup else "none",
             },
             "limitations": ["project-owned reference controller; not a tuning or deployment claim"],
@@ -260,6 +296,8 @@ class FakePIController:
         return {
             "integral": self._integral,
             "previous_time_s": self._previous_time_s,
+            "previous_error": self._previous_error,
+            "filtered_derivative": self._filtered_derivative,
         }
 
     def restore(self, snapshot: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -273,6 +311,13 @@ class FakePIController:
             not math.isfinite(self._previous_time_s) or self._previous_time_s < 0.0
         ):
             raise ValueError("controller previous_time_s must be finite and non-negative")
+        previous_error = state.get("previous_error")
+        self._previous_error = None if previous_error is None else float(previous_error)
+        if self._previous_error is not None and not math.isfinite(self._previous_error):
+            raise ValueError("controller previous_error must be finite")
+        self._filtered_derivative = float(state.get("filtered_derivative", 0.0))
+        if not math.isfinite(self._filtered_derivative):
+            raise ValueError("controller filtered_derivative must be finite")
         self.state = self.snapshot()
         return dict(self.state)
 
@@ -288,8 +333,9 @@ class FakePIController:
         if key not in measurement:
             raise ValueError(f"measurement does not contain {key!r}")
         error = float(command.get("vref", 1.0)) - float(measurement[key])
+        reference = float(command.get("vref", 1.0))
         now = float(timing["sample_time_s"])
-        if not math.isfinite(error) or not math.isfinite(now):
+        if not math.isfinite(error) or not math.isfinite(now) or not math.isfinite(reference):
             raise ValueError("controller input must be finite")
 
         period = timing.get("control_period_s")
@@ -300,17 +346,33 @@ class FakePIController:
             dt = 1e-6
 
         integral_candidate = self._integral + self.ki * error * dt if self.ki else 0.0
-        if self.output_min is not None and self.output_max is not None:
-            if self.anti_windup:
-                # Integral clamping keeps the stored state inside the actuator
-                # range instead of accumulating an unusable windup term.
-                integral_candidate = min(
-                    max(integral_candidate, self.output_min), self.output_max
+        if self.output_min is not None and self.anti_windup:
+            # Integral clamping keeps the stored state inside the actuator
+            # range instead of accumulating an unusable windup term.
+            integral_candidate = min(
+                max(integral_candidate, self.output_min), self.output_max
+            )
+        output = self.kp * error + integral_candidate
+
+        # A zero derivative gain leaves the state untouched, so a ``pi``
+        # configuration remains bit-identical to the pre-0.5.3 controller.
+        if self.kd:
+            raw_derivative = (
+                0.0 if self._previous_error is None else (error - self._previous_error) / dt
+            )
+            if self.kd_filter_tau_s > 0.0:
+                alpha = dt / (self.kd_filter_tau_s + dt)
+                self._filtered_derivative = (
+                    alpha * raw_derivative + (1.0 - alpha) * self._filtered_derivative
                 )
-            output = self.kp * error + integral_candidate
+            else:
+                self._filtered_derivative = raw_derivative
+            self._previous_error = error
+            output += self.kd * self._filtered_derivative
+        if self.kff_v:
+            output += self.kff_v * reference
+        if self.output_min is not None:
             output = min(max(output, self.output_min), self.output_max)
-        else:
-            output = self.kp * error + integral_candidate
 
         self._integral = integral_candidate
         self._previous_time_s = now

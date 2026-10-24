@@ -40,6 +40,40 @@ controllers require the Python API.
 the run publishes a `QUALIFIED` package with the controller identity, and
 existing configurations keep their behavior.
 
+**Implemented in 0.5.3 (registry, derivative, feedforward):**
+
+- `controller_id` is resolved through a binding table (`pi`, `pid`) instead of
+  a hardcoded single id. Each binding declares the configuration keys it
+  accepts, so a copied PID configuration under `pi` is rejected rather than
+  silently ignored.
+- The control law is explicit and unit-bearing:
+
+  ```text
+  u = kp*e + sum(ki*e*dt) + kd*de/dt + kff_v*vref
+  ```
+
+  | Gain | Unit |
+  | --- | --- |
+  | `kp` | duty per volt |
+  | `ki` | duty per (volt * second) |
+  | `kd` | duty per (volt / second) |
+  | `kff_v` | duty per volt of reference |
+
+- The derivative acts on the measured error and is optionally low-pass filtered
+  with `kd_filter_tau_s`, using `alpha = dt / (tau + dt)`.
+- A zero gain disables its term **and** removes it from the recorded identity,
+  so a `pi` configuration stays numerically and identity-compatible with 0.5.2.
+- Derivative state (`previous_error`, `filtered_derivative`) participates in
+  `snapshot()`/`restore()`, so checkpoint and resume stay deterministic.
+- Both copies of `experiment.schema.json` (repository and packaged) accept the
+  new keys and reject unknown `controller_id` values.
+
+**Still open:** load-compensation feedforward needs a load estimate the kernel
+cannot observe, so `kff_v` is reference feedforward only. Bumpless transfer and
+industrial anti-windup variants are out of scope for a reference controller.
+Custom controller *classes* still require the Python API; adapter discovery is
+tracked by UD-04.
+
 ### UD-02: topology coverage
 
 **Finding:** the reviewed real-solver path covers only the switching Buck;

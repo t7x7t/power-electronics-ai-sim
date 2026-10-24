@@ -127,9 +127,13 @@ pe-sim run examples/boost_pi_step/config.json --backend boost
   unknown `plant_id`, or an unknown backend is rejected before a run directory
   is created. The CLI output records the selected `backend`, `plant_id`, and
   `plant_class`.
-- `controller_id` currently supports `pi`. `controller_config` accepts only
-  `kp`, `ki`, `output_min`, `output_max`, `anti_windup`, and `measurement_key`;
-  `ki` is a real integral term with integral clamping when limits are present.
+- `controller_id` supports `pi` and `pid`. Both use the same reference
+  controller with an explicit law:
+  `u = kp*e + sum(ki*e*dt) + kd*de/dt + kff_v*vref`, with gains in duty per
+  volt (and per volt-second for `ki`, per volt/second for `kd`). `pid` adds
+  `kd`, `kd_filter_tau_s`, and `kff_v`; those keys are rejected under `pi`
+  rather than silently ignored. A zero gain removes its term from the recorded
+  identity, so `pi` runs stay comparable with earlier packages.
 - `input_schedule` keys are backend-specific: `fake` accepts `time_s`/`vref`;
   `fake-load` additionally accepts `load`; `buck`/`boost`/`ngspice-buck`
   accept `vin_v`/`input_voltage_v` and `load_ohm`/`load_resistance_ohm`.

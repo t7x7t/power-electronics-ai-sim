@@ -518,6 +518,32 @@ pytest -q tests/test_adapter_verification.py `
   tests/test_manifest_evidence_level_contract.py --basetemp .tmp/pytest-stage18
 ```
 
+### Stage 19 controller registry and PID/feedforward (0.5.3)
+
+UD-01's registry and control-law work, recorded in `docs/37`:
+
+- The CLI resolves `controller_id` through a binding table (`pi`, `pid`) whose
+  rows declare the accepted `controller_config` keys, replacing the hardcoded
+  single-id check. A PID key under `pi` is rejected instead of ignored.
+- The reference controller gains a derivative term with optional first-order
+  filtering and a reference feedforward term. A zero gain disables the term and
+  omits it from the controller identity, so `pi` behaviour and identity are
+  unchanged from 0.5.2.
+- Derivative state is part of the controller snapshot, so checkpoint and resume
+  remain deterministic.
+- Both `experiment.schema.json` copies accept the new keys.
+
+Load compensation needs a load estimate the kernel cannot observe, so only
+reference feedforward is implemented. Custom controller classes remain a
+Python-API feature until UD-04 adds adapter discovery.
+
+Acceptance evidence:
+
+```text
+pytest -q tests/test_pid_controller.py tests/test_pi_controller.py `
+  tests/test_stage8_failure_recovery.py --basetemp .tmp/pytest-stage19
+```
+
 ### Future compact diagnostic mechanism
 
 The current Stage 6 checks are intentionally a runtime integrity gate. A later
