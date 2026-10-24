@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .applicability import ApplicabilityPolicy
 from .attestation import attest_run, verify_attestation
-from .contracts import ExperimentSpec, Timebase, validate_experiment_document
+from .contracts import ExperimentSpec, validate_experiment_document
 from .qualification_rules import QualificationRulePack
 from .runner import RunOptions
 from .runtime import FakePIController, Runner
@@ -228,10 +228,12 @@ def main(argv: list[str] | None = None) -> int:
     service.add_argument("--host", default="127.0.0.1")
     service.add_argument("--port", type=int, default=8765)
     args = parser.parse_args(argv)
-    # The CLI is the composition root: it attaches the project-owned plant
-    # registrations. The kernel never enumerates plants itself.
-    load_builtin_plants()
     try:
+        # The CLI is the composition root: it attaches the project-owned plant
+        # registrations. The kernel never enumerates plants itself.  Kept
+        # inside the try so a registration conflict is reported as JSON rather
+        # than as a traceback.
+        load_builtin_plants()
         if args.command == "backend":
             return _run_backend_command(args)
         if args.command == "run":

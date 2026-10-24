@@ -15,7 +15,7 @@ Nothing in this module writes, repairs, or deletes anything.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
@@ -154,7 +154,6 @@ def _entry(directory: Path, root: Path, manifest: Mapping[str, Any]) -> RunEntry
     if state is None:
         problems.append("run state marker is missing or unreadable")
     plant = manifest.get("plant") if isinstance(manifest.get("plant"), Mapping) else {}
-    identity = plant.get("identity") if isinstance(plant.get("identity"), Mapping) else {}
     qualification = manifest.get("qualification") if isinstance(manifest.get("qualification"), Mapping) else {}
     run_id = _text(manifest.get("run_id")) or directory.name
     try:

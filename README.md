@@ -359,7 +359,7 @@ Three properties are machine checked rather than left to convention:
 
 - **Public API tiers.** `src/pe_sim/public_api.py` splits the top-level surface
   into `stable` (81 names an adapter author or evidence verifier depends on) and
-  `experimental` (141 names reachable but not promised).
+  `experimental` (155 names reachable but not promised).
   `tests/fixtures/public_api.json` freezes the stable list, so adding or
   removing a stable name fails a test until the baseline is updated in the same
   commit.
