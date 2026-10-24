@@ -325,6 +325,23 @@ EXPERIMENTAL_API: frozenset[str] = frozenset(
         "INSPECTION_SCHEMA",
         "ATTESTATION_VERIFICATION_SCHEMA",
         "ATTESTATION_WRITE_SCHEMA",
+        # time model and engine boundary (Phase A2): who owns the clock, what a
+        # trace contract promises, and how a route is priced.  The whole-run
+        # execution route is declared but not implemented yet.
+        "RUNTIME_EVIDENCE_LEVELS",
+        "TIME_MODELS",
+        "TIME_MODEL_STEPPED",
+        "TIME_MODEL_WHOLE_RUN",
+        "TRACE_CONTRACT_SCHEMA",
+        "TraceContract",
+        "WholeRunPlant",
+        "WholeRunRequest",
+        "WholeRunResult",
+        "cap_evidence_level",
+        "evidence_cap",
+        "formal_comparison_allowed",
+        "route_limitations",
+        "validate_whole_run_result",
         # attestation: record internals below the verification verdict.
         "AnchorRecord",
         "AttestationDocument",

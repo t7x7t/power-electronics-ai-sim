@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import importlib.metadata
 import json
+import sys
 
 import pytest
 
-from pe_sim import builtin_plants, identity, plant_registry
+from pe_sim import builtin_plants, identity, plant_registry, time_model
 from pe_sim.cli import main as cli_main
 from pe_sim.contracts import Timebase
 from pe_sim.plant_registry import (
@@ -494,8 +495,17 @@ def test_registry_module_is_pure():
 
     imports = _imports_of(plant_registry)
 
-    assert {name for name in imports if name.startswith(".")} == set()
+    # The registry may learn the declared time-model vocabulary, but only from
+    # the kernel-side module that owns it.
+    assert {name for name in imports if name.startswith(".")} == {".time_model"}
     assert not [name for name in imports if "backends" in name]
+
+    # That module is pure too: stdlib only, no adapter, no kernel module.
+    time_model_imports = _imports_of(time_model)
+    assert {name for name in time_model_imports if name.startswith(".")} == set()
+    assert not [name for name in time_model_imports if "backends" in name]
+    top_level = {name.split(".", 1)[0] for name in time_model_imports}
+    assert top_level <= set(sys.stdlib_module_names) | {"__future__"}
 
 
 def test_plant_catalog_reports_declarations_not_implementation(capsys):
@@ -509,6 +519,8 @@ def test_plant_catalog_reports_declarations_not_implementation(capsys):
     assert entries["buck"]["backend_id"] == "buck"
     assert entries["buck"]["trust_level"] == "reference"
     assert entries["buck"]["export_eligible"] is True
+    assert entries["buck"]["time_model"] == "stepped"
+    assert {item["time_model"] for item in payload["plants"]} == {"stepped"}
     assert "factory" not in entries["buck"], "a client needs the shape, not the builder"
     assert entries["buck"]["schedule_keys"] == sorted(entries["buck"]["schedule_keys"])
 

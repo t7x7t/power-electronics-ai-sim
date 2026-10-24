@@ -398,7 +398,7 @@ Three properties are machine checked rather than left to convention:
 
 - **Public API tiers.** `src/pe_sim/public_api.py` splits the top-level surface
   into `stable` (81 names an adapter author or evidence verifier depends on) and
-  `experimental` (155 names reachable but not promised).
+  `experimental` (190 names reachable but not promised).
   `tests/fixtures/public_api.json` freezes the stable list, so adding or
   removing a stable name fails a test until the baseline is updated in the same
   commit.
@@ -438,6 +438,15 @@ Entry-point registrations are forced to `trust_level = "third-party"` and
 `export_eligible = False`, and the trust level is recorded at
 `manifest.plant.trust_level`. Importing `pe_sim.plant_registry` never starts a
 simulator and never imports a plugin.
+
+A registration also declares `time_model`. `stepped` (the default) means the
+kernel owns the clock and can enforce constraints per window; those runs remain
+eligible for `comparable`. `whole_run` means the engine owns its time axis and
+returns a trace that can only be checked afterwards, so it is capped at
+`limited`. The contract is declared in 0.5.8, but the whole-run execution route
+is not implemented yet: the Runner refuses such a declaration before creating a
+run rather than mis-running it. See
+[docs/46_time_model_and_engine_boundary_v1.md](docs/46_time_model_and_engine_boundary_v1.md).
 
 A `manifest_identity()` record is producer-declared, so since 0.5.2 the kernel
 recomputes it for any adapter that declares a `backend_id` and records the

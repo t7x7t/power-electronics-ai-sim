@@ -32,6 +32,8 @@ from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, Callable, Mapping
 
+from .time_model import TIME_MODEL_STEPPED, TIME_MODELS
+
 
 # Declared provenance classes.  ``reference`` means the project reviewed the
 # implementation; ``fixture`` means it exists for tests and examples;
@@ -61,7 +63,8 @@ class PlantRegistration:
     ``config_keys`` of ``None`` means "the factory validates its own keys".
     ``schedule_keys`` defaults to the base schedule every plant understands.
     ``trust_level`` is a declaration for reporting; it is never used to decide
-    how the kernel behaves.
+    how the kernel behaves.  ``time_model`` is likewise a declaration: the
+    registry reports who owns the clock and never branches on the value.
     """
 
     plant_id: str
@@ -72,6 +75,10 @@ class PlantRegistration:
     config_keys: frozenset[str] | None = None
     trust_level: str = "third-party"
     export_eligible: bool = False
+    #: ``stepped`` means the kernel owns the clock and the adapter must advance
+    #: to the requested endpoint; ``whole_run`` means the engine owns its time
+    #: axis.  Both are recorded as data; only the evidence cap differs.
+    time_model: str = TIME_MODEL_STEPPED
 
 
 _REGISTRATIONS: dict[str, PlantRegistration] = {}
@@ -120,6 +127,11 @@ def _validated(registration: PlantRegistration) -> PlantRegistration:
         raise TypeError(f"plant_id {plant_id!r} factory must be callable")
     if not isinstance(registration.class_name, str) or not registration.class_name.strip():
         raise ValueError(f"plant_id {plant_id!r} must declare a non-empty class_name")
+    if registration.time_model not in TIME_MODELS:
+        raise ValueError(
+            f"plant_id {plant_id!r} declares time_model {registration.time_model!r}; "
+            f"expected one of {list(TIME_MODELS)}"
+        )
     if not isinstance(registration.export_eligible, bool):
         raise TypeError(f"plant_id {plant_id!r} export_eligible must be a bool")
     return replace(
@@ -194,6 +206,7 @@ def plant_catalog(*, discover: bool = False) -> dict[str, Any]:
             "plant_id": registration.plant_id,
             "backend_id": registration.backend_id,
             "class_name": registration.class_name,
+            "time_model": registration.time_model,
             "schedule_keys": sorted(registration.schedule_keys),
             "config_keys": None
             if registration.config_keys is None

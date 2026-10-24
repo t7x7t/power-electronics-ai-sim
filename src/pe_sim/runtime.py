@@ -54,6 +54,12 @@ from .checks import (
     run_plugins,
 )
 from .model_claim import collect_model_claim, collect_parameter_provenance
+from .time_model import (
+    TIME_MODEL_STEPPED,
+    TIME_MODEL_WHOLE_RUN,
+    TIME_MODELS,
+    cap_evidence_level,
+)
 
 
 @dataclass(frozen=True)
@@ -401,7 +407,7 @@ class FakePIController:
 
 class Runner:
     """Run a Plant/Controller pair with explicit timing and evidence."""
-    def run(self, spec: ExperimentSpec, plant: Any, controller: Any, mode: str = "exploratory", *, checkpoint_interval_steps: int | None = None, resume_from: str | Path | None = None, interrupt_after_steps: int | None = None, cancel_after_steps: int | None = None, measurement_key: str | None = None, safety_checker: Callable[[Mapping[str, float]], Any] | None = None, qualification_checker: Callable[[list[Mapping[str, Any]]], tuple[bool, list[str]]] | None = None, action_policy: ActionPolicy | None = None, safety_plugins: tuple[Any, ...] | None = None, validity_plugins: tuple[Any, ...] | None = None, qualification_plugins: tuple[Any, ...] | None = None, options: RunOptions | None = None) -> RunResult:
+    def run(self, spec: ExperimentSpec, plant: Any, controller: Any, mode: str = "exploratory", *, checkpoint_interval_steps: int | None = None, resume_from: str | Path | None = None, interrupt_after_steps: int | None = None, cancel_after_steps: int | None = None, measurement_key: str | None = None, safety_checker: Callable[[Mapping[str, float]], Any] | None = None, qualification_checker: Callable[[list[Mapping[str, Any]]], tuple[bool, list[str]]] | None = None, action_policy: ActionPolicy | None = None, safety_plugins: tuple[Any, ...] | None = None, validity_plugins: tuple[Any, ...] | None = None, qualification_plugins: tuple[Any, ...] | None = None, options: RunOptions | None = None, time_model: str | None = None) -> RunResult:
         if options is not None:
             if not isinstance(options, RunOptions):
                 raise TypeError("options must be a RunOptions instance")
@@ -466,6 +472,26 @@ class Runner:
             qualification_plugins = tuple(qualification_plugins or ())
         if mode not in {"exploratory", "formal_comparison"}:
             raise ValueError("mode must be 'exploratory' or 'formal_comparison'")
+        # Who owns the clock is a declared execution fact, so it is checked
+        # before anything touches the filesystem: a refused route must leave no
+        # run directory, no temporary package, and no partial evidence behind.
+        # The caller (CLI) may pass the registration's declaration explicitly
+        # because an object with ``__slots__`` cannot be annotated in place.
+        declared_time_model = (
+            time_model if time_model is not None else getattr(plant, "time_model", TIME_MODEL_STEPPED)
+        )
+        time_model = str(declared_time_model)
+        if time_model not in TIME_MODELS:
+            raise ValueError(
+                f"plant {spec.plant_id!r} declares unknown time_model {time_model!r}; "
+                f"expected one of {list(TIME_MODELS)}"
+            )
+        if time_model == TIME_MODEL_WHOLE_RUN:
+            raise ValueError(
+                f"plant {spec.plant_id!r} declares time_model {time_model!r}; the "
+                "whole-run execution route is not implemented in this release, so "
+                f"run {spec.run_id!r} was not started"
+            )
         # Interaction surface: both default to None, so the ordinary in-process
         # caller pays nothing for progress or cancellation support.
         progress_policy = options.progress if options is not None else None
@@ -760,6 +786,7 @@ class Runner:
                     "plant_id": spec.plant_id,
                     "controller_id": spec.controller_id,
                     "mode": mode,
+                    "time_model": time_model,
                     "steps_total": n_steps,
                     "start_step_index": next_step_index,
                     "duration_s": spec.timebase.duration_s,
@@ -1108,8 +1135,8 @@ class Runner:
         )
         # One derivation drives both the manifest field and the terminal event,
         # so a client can never be told a level the package does not carry.
-        evidence_level = _derive_evidence_level(status, mode, worktree, environment, plant_manifest, qualification)
-        manifest = {"schema_version": spec.schema_version, "experiment_id": spec.experiment_id, "run_id": spec.run_id, "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), **git_fields, "provenance": provenance, "worktree_analysis": worktree_manifest, "worktree_analysis_sha256": worktree_evidence_sha256, "run_mode": mode, "applicability": _applicability_manifest(applicability_plugin, applicability_report), "environment": environment, "plant": plant_manifest, "controller": controller_manifest, "action_policy": _action_policy_manifest(selected_action_policy), "contracts": {k: v["hash"] for k, v in spec.contracts.items()}, "timebase": spec.timebase.to_dict(), "initial_state": spec.initial_state.to_dict(), "random_seed": spec.seed, "artifacts": {}, "status": status, "qualification": qualification, "safety": {"passed": safety_passed, "checks": safety_report.to_dict(), "validity": validity_report.to_dict(), "applicability": _applicability_manifest(applicability_plugin, applicability_report)}, "evidence_level": evidence_level, "error": error, "failure": failure, "recovery": recovery_provenance, "abandoned_runs": abandoned_runs, "capabilities": {"plant": capabilities[0].to_dict(), "controller": capabilities[1].to_dict()} if capabilities else {}, "checks": {"safety": safety_report.to_dict(), "validity": validity_report.to_dict(), "qualification": qualification_report.to_dict(), "applicability": applicability_report.to_dict(), "plugins": {"safety": [plugin_identity(item) for item in safety_chain], "validity": [plugin_identity(item) for item in validity_chain], "qualification": [plugin_identity(item) for item in qualification_chain], "applicability": [plugin_identity(item) for item in applicability_chain]}}, "audit": {"call_count": len(audit.calls)}, "state_transition_matrix": machine.allowed_transitions(), "state_transitions": machine.transitions}
+        evidence_level = _derive_evidence_level(status, mode, worktree, environment, plant_manifest, qualification, time_model=time_model)
+        manifest = {"schema_version": spec.schema_version, "experiment_id": spec.experiment_id, "run_id": spec.run_id, "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), **git_fields, "provenance": provenance, "worktree_analysis": worktree_manifest, "worktree_analysis_sha256": worktree_evidence_sha256, "time_model": time_model, "run_mode": mode, "applicability": _applicability_manifest(applicability_plugin, applicability_report), "environment": environment, "plant": plant_manifest, "controller": controller_manifest, "action_policy": _action_policy_manifest(selected_action_policy), "contracts": {k: v["hash"] for k, v in spec.contracts.items()}, "timebase": spec.timebase.to_dict(), "initial_state": spec.initial_state.to_dict(), "random_seed": spec.seed, "artifacts": {}, "status": status, "qualification": qualification, "safety": {"passed": safety_passed, "checks": safety_report.to_dict(), "validity": validity_report.to_dict(), "applicability": _applicability_manifest(applicability_plugin, applicability_report)}, "evidence_level": evidence_level, "error": error, "failure": failure, "recovery": recovery_provenance, "abandoned_runs": abandoned_runs, "capabilities": {"plant": capabilities[0].to_dict(), "controller": capabilities[1].to_dict()} if capabilities else {}, "checks": {"safety": safety_report.to_dict(), "validity": validity_report.to_dict(), "qualification": qualification_report.to_dict(), "applicability": applicability_report.to_dict(), "plugins": {"safety": [plugin_identity(item) for item in safety_chain], "validity": [plugin_identity(item) for item in validity_chain], "qualification": [plugin_identity(item) for item in qualification_chain], "applicability": [plugin_identity(item) for item in applicability_chain]}}, "audit": {"call_count": len(audit.calls)}, "state_transition_matrix": machine.allowed_transitions(), "state_transitions": machine.transitions}
         writer.write_json("logs/run.json", {"status": status, "error": error, "sample_count": len(samples)})
         # Complete the immutable publication summary while the run is still
         # hidden in the writer's temporary directory.  Publication then moves
@@ -1308,36 +1335,43 @@ def _derive_evidence_level(
     environment: Mapping[str, Any],
     plant: Mapping[str, Any],
     qualification: Mapping[str, Any],
+    time_model: str = TIME_MODEL_STEPPED,
 ) -> str:
-    """Derive the recorded evidence level from the actual run evidence."""
+    """Derive the recorded evidence level from the actual run evidence.
+
+    ``time_model`` prices the route that produced the samples: a route whose
+    execution the kernel cannot observe at the requested cadence is capped by
+    ``cap_evidence_level`` instead of being reported at a level its evidence
+    does not support.  ``diagnostic_only`` stays terminal either way.
+    """
 
     if status not in {"RUN_OK", "QUALIFIED"}:
         return "diagnostic_only"
     if mode != "formal_comparison":
-        return "functional"
+        return cap_evidence_level("functional", time_model)
     if str(getattr(worktree, "status", "unknown")) != "clean":
-        return "limited"
+        return cap_evidence_level("limited", time_model)
     if str(environment.get("status")) != "known":
-        return "limited"
+        return cap_evidence_level("limited", time_model)
     backends = environment.get("backends", ())
     if not isinstance(backends, (list, tuple)) or any(
         not isinstance(item, Mapping) or str(item.get("status")) != "known"
         for item in backends
     ):
-        return "limited"
+        return cap_evidence_level("limited", time_model)
     identity = plant.get("identity")
     implementation = identity.get("implementation") if isinstance(identity, Mapping) else None
     review = implementation.get("review") if isinstance(implementation, Mapping) else None
     if not isinstance(review, Mapping) or review.get("status") != "reviewed":
-        return "limited"
+        return cap_evidence_level("limited", time_model)
     verification = plant.get("verification")
     if not isinstance(verification, Mapping) or verification.get("status") != "verified":
-        return "limited"
+        return cap_evidence_level("limited", time_model)
     if qualification.get("level") == "failed":
         return "diagnostic_only"
     if qualification.get("level") == "limited":
-        return "limited"
-    return "comparable"
+        return cap_evidence_level("limited", time_model)
+    return cap_evidence_level("comparable", time_model)
 
 
 def _require_formal_evidence(spec: ExperimentSpec, worktree: Any, git: Any, plant: Mapping[str, Any], controller: Mapping[str, Any], environment: Mapping[str, Any]) -> None:

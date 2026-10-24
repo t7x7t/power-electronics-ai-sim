@@ -40,11 +40,11 @@ pe-sim list-plants
 ```
 
 The answer carries `"schema": "pe-sim.plant-catalog.v1"` and one entry per
-registered plant: `plant_id`, `backend_id`, `class_name`, `schedule_keys`,
-`config_keys`, `trust_level`, `export_eligible`. `config_keys: null` means the
-factory validates its own keys, not that any key is accepted. The catalog
-exposes declarations only; the factory stays in-process. `pe-sim list-runs`
-serves the same purpose for packages already produced.
+registered plant: `plant_id`, `backend_id`, `class_name`, `time_model`,
+`schedule_keys`, `config_keys`, `trust_level`, `export_eligible`. `config_keys:
+null` means the factory validates its own keys, not that any key is accepted.
+The catalog exposes declarations only; the factory stays in-process.
+`pe-sim list-runs` serves the same purpose for packages already produced.
 
 ## 2. Progress events
 
@@ -82,7 +82,7 @@ Event payloads:
 
 | Event | `data` fields |
 | --- | --- |
-| `run.started` | `plant_id`, `controller_id`, `mode`, `steps_total`, `start_step_index`, `duration_s`, `control_period_s` |
+| `run.started` | `plant_id`, `controller_id`, `mode`, `time_model`, `steps_total`, `start_step_index`, `duration_s`, `control_period_s` |
 | `run.progress` | `step_index` (completed window), `sample_count`, `steps_total`, `time_s` (simulation time), `fraction`, `wall_time_s` |
 | `run.finished` | `status`, `run_dir`, `sample_count`, `qualification_level`, `evidence_level`, `error`, `failure_category` |
 

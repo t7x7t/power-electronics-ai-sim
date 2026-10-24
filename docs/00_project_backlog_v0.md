@@ -680,6 +680,37 @@ pytest -q tests/test_error_codes.py tests/test_inspection.py `
   tests/test_attestation.py --basetemp .tmp/pytest-stage23
 ```
 
+### Stage 24 time model and engine boundary (0.5.8)
+
+Roadmap Phase A2 contract (`docs/43_kernel_roadmap_v1.md`). D1 is recorded as
+**dual ownership, priced by evidence**: the kernel owns time for stepped
+adapters and enforces constraints per window; an engine that owns its own time
+axis is admitted only at `limited` evidence with post-hoc trace checks.
+
+- `pe_sim.time_model` defines `stepped` / `whole_run`, the
+  `pe-sim.trace-contract.v1` cadence/coverage contract, the structural
+  `WholeRunPlant` protocol, and the post-hoc trace validator.
+- `PlantRegistration.time_model` is declared, validated, and reported by
+  `pe-sim list-plants`. The CLI checks the adapter shape for the declared
+  route: six stepped methods or `trace_contract`/`run_whole`.
+- The Runner records `manifest["time_model"]`, announces it in `run.started`,
+  and caps every success level through `cap_evidence_level`. Formal comparison
+  remains stepped-only.
+- The whole-run **execution route is not implemented in this release**. The
+  Runner refuses `whole_run` before any filesystem action, so a declaration
+  cannot silently produce a mis-run package.
+
+What remains: the executable whole-run route and the first real whole-run
+engine (T1), which is excluded from this phase. See
+`docs/46_time_model_and_engine_boundary_v1.md`.
+
+Acceptance evidence:
+
+```text
+pytest -q tests/test_time_model.py tests/test_time_model_integration.py `
+  tests/test_plant_registry.py --basetemp .tmp/pytest-stage24
+```
+
 ### Future compact diagnostic mechanism
 
 The current Stage 6 checks are intentionally a runtime integrity gate. A later

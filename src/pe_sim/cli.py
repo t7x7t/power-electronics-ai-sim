@@ -18,6 +18,7 @@ from .runner import RunOptions
 from .runtime import FakePIController, Runner
 from .builtin_plants import PlantBuildContext, load_builtin_plants
 from .plant_registry import PlantRegistration, plant_catalog, resolve
+from .time_model import TIME_MODEL_STEPPED, TIME_MODEL_WHOLE_RUN, TIME_MODELS
 from .backends import (
     BackendConfigError,
     BackendNotFoundError,
@@ -83,7 +84,7 @@ def _emit_rejection(status: str, code: str, error: str, **extra: Any) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Auditable power-electronics simulation runtime")
-    parser.add_argument("--version", action="version", version="0.5.7")
+    parser.add_argument("--version", action="version", version="0.5.8")
     sub = parser.add_subparsers(dest="command")
     run = sub.add_parser("run", help="run an experiment from JSON config")
     run.add_argument("config", type=Path)
@@ -296,7 +297,13 @@ def main(argv: list[str] | None = None) -> int:
                 progress=ProgressPolicy(sink=_stderr_event_sink) if args.progress else None,
                 cancellation=FileCancelToken(args.cancel_file) if args.cancel_file is not None else None,
             )
-            result = Runner().run(spec, plant, controller, options=options)
+            result = Runner().run(
+                spec,
+                plant,
+                controller,
+                options=options,
+                time_model=registration.time_model,
+            )
         elif args.command == "git-status":
             print(json.dumps(analyze_git_worktree(args.path).to_dict(), sort_keys=True))
             return 0
@@ -516,13 +523,46 @@ def _validate_schedule_keys(document: dict[str, object], registration: PlantRegi
             )
 
 
+# The declared time model decides which callables the adapter must expose.
+# These are shape facts only: no engine, topology, or vendor name appears here.
+_STEPPED_ADAPTER_METHODS = ("capabilities", "reset", "observe", "advance", "snapshot", "restore")
+_WHOLE_RUN_ADAPTER_METHODS = ("trace_contract", "run_whole")
+
+
 def _validate_plant_adapter(registration: PlantRegistration, plant: object) -> None:
-    """Reject a runtime adapter that does not match the declared registration."""
+    """Reject a runtime adapter that does not match the declared registration.
+
+    An adapter must declare the same time model as its registration and expose
+    the callables that model requires: a stepped adapter is driven by the kernel
+    clock, a whole-run adapter owns its own time axis.  Only callables are
+    inspected, so a third-party adapter never has to match an engine name.
+    """
 
     actual = type(plant).__name__
     if actual != registration.class_name:
         raise ValueError(
             f"plant {registration.plant_id!r} built {actual!r}, expected {registration.class_name!r}"
+        )
+    actual_time_model = getattr(plant, "time_model", None)
+    if actual_time_model is not None and str(actual_time_model) != registration.time_model:
+        raise ValueError(
+            f"plant {registration.plant_id!r} declares time_model {actual_time_model!r}, "
+            f"but its registration declares {registration.time_model!r}"
+        )
+    if registration.time_model == TIME_MODEL_STEPPED:
+        required = _STEPPED_ADAPTER_METHODS
+    elif registration.time_model == TIME_MODEL_WHOLE_RUN:
+        required = _WHOLE_RUN_ADAPTER_METHODS
+    else:
+        raise ValueError(
+            f"plant {registration.plant_id!r} declares unknown time_model "
+            f"{registration.time_model!r}; expected one of {list(TIME_MODELS)}"
+        )
+    missing = [name for name in required if not callable(getattr(plant, name, None))]
+    if missing:
+        raise ValueError(
+            f"plant {registration.plant_id!r} declares time_model "
+            f"{registration.time_model!r} but is missing required callables: {missing}"
         )
 
 
@@ -591,6 +631,11 @@ def _build_plant(
     plant = registration.factory(dict(config), context)
     if hasattr(plant, "__dict__"):
         plant.trust_level = registration.trust_level
+        # A factory may declare its own route; the registration is only the
+        # fallback.  Overwriting here would hide a disagreement from
+        # ``_validate_plant_adapter``.
+        if not hasattr(plant, "time_model"):
+            plant.time_model = registration.time_model
     return plant
 
 

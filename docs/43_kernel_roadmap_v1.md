@@ -42,10 +42,14 @@ never regress.
 
 **Current position:** Phase A is partially complete. **A1** - engine
 registration as data, entry-point discovery, and adapter trust levels - shipped
-in 0.5.4 and satisfies gate G-A for stepped engines. **A2** - the time-model
-abstraction for engines that cannot be stepped - is blocked on decision D1.
-Phase B is complete: items 1-4 shipped in 0.5.5-0.5.7. Everything shipped
-before 0.5.4 is groundwork covered by §4, not a completed phase.
+in 0.5.4 and is the registration half of gate G-A; the gate itself stays open
+until T1 is met. **A2** - the time-model
+abstraction - has its decision (D1), trace contract, and engine boundary
+delivered in 0.5.8 (`docs/46_time_model_and_engine_boundary_v1.md`); the
+whole-run execution route is declared but not implemented, so **T1 still
+fails** until a second engine exercises it. Phase B is complete: items 1-4
+shipped in 0.5.5-0.5.7. Everything shipped before 0.5.4 is groundwork covered
+by §4, not a completed phase.
 
 ```mermaid
 graph LR
@@ -87,7 +91,12 @@ the first, and the existing engine's evidence level is unchanged.
 `tests/test_plant_extension_gate.py`: a plant registered at runtime runs through
 the CLI with no kernel change, its trust level is recorded in the manifest, and
 an entry-point distribution cannot grant itself a reviewed trust level or export
-eligibility. Steps 1-3 belong to A2 and remain blocked on D1.
+eligibility. Steps 1-3 are delivered as a contract in 0.5.8: D1 is recorded,
+`pe_sim.time_model` declares stepped vs whole-run ownership, the trace contract
+and whole-run protocol are defined, and the evidence pricing is executable.
+The whole-run **execution route** remains unimplemented and is refused by the
+Runner; it lands with the first whole-run engine, which is excluded from this
+phase.
 
 **Excluded:** implementing the second engine; choosing resampling parameters;
 performance work.
@@ -207,13 +216,40 @@ depends on them starts. A phase does not begin on an unresolved decision.
 
 | ID | Decision | Blocks | Status |
 | --- | --- | --- | --- |
-| D1 | Who owns time: kernel-stepped / engine-whole-run / dual with priced evidence | Phase A | **pending** |
+| D1 | Who owns time: kernel-stepped / engine-whole-run / dual with priced evidence | Phase A | **decided 2026-10-25: dual with priced evidence** |
 | D2 | Third-party adapters run in-process or behind a process boundary | Phase A trust levels | **decided 2026-10-24: in-process, priced by trust level** |
 | D3 | Run store root: working directory or user scope | Phase C | pending |
 | D4 | Reading older packages: migrate on read, or read-with-policy | Phase C | pending |
 
 D1 and D2 are prerequisites for Phase A. D3 and D4 may be decided later but
 must be settled before Phase C starts.
+
+### D1 record: dual ownership, priced by evidence
+
+**Decision.** The kernel owns time for stepped adapters and enforces safety,
+validity, and applicability per window; those runs remain eligible for
+`comparable`. An engine that owns its own time axis (whole-run) is admitted
+only at `limited` evidence with post-hoc trace checks, and it is not eligible
+for formal comparison.
+
+**Why.** `docs/43` §5 already prices the routes: in-run enforcement is what
+makes the strong level mean something (I1). Accepting a whole-run trace at
+`comparable` would redefine the level; refusing it entirely would reject real
+engines for a reason unrelated to evidence quality. Dual ownership records the
+trade-off instead of hiding it.
+
+**What is delivered now.** The declaration (`PlantRegistration.time_model`),
+the trace contract (`pe-sim.trace-contract.v1`), the whole-run protocol, the
+post-hoc validator, and the pricing functions in 0.5.8. The whole-run
+execution route is refused, explicitly and before any filesystem change.
+
+**Revisit when** a whole-run engine exposes window or checkpoint callbacks
+that restore in-run enforcement, or a trace-level enforcement policy is
+reviewed on its own terms.
+
+**Interface impact.** `time_model` is data; the stepped protocol is unchanged;
+the whole-run protocol is additive. See
+`docs/46_time_model_and_engine_boundary_v1.md`.
 
 ### D2 record: in-process adapters, priced by trust
 
