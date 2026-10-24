@@ -1,2 +1,5 @@
 # Integrity-checked JSON fixtures must keep identical bytes on every checkout.
 tests/fixtures/visualization_service/**/*.json text eol=lf
+# A published run package is byte-identical evidence; its hashes cover the exact
+# bytes, so never normalize line endings inside a fixture package.
+tests/fixtures/older_packages/** -text

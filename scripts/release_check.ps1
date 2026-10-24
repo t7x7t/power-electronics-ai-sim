@@ -8,6 +8,7 @@ param(
     [string]$PythonVersion = "3.12",
     [string]$VirtualEnvironment,
     [string]$NgspiceExecutable,
+    [string]$OlderPackage,
     [switch]$ReuseVirtualEnvironment,
     [switch]$PreflightOnly
 )
@@ -58,7 +59,13 @@ function Initialize-ReleasePython {
         New-Item -ItemType Directory -Force -Path (Split-Path $venv) | Out-Null
         $creator = $PythonExecutable
         $creatorArgs = @("-$PythonVersion", "-m", "venv", $venv)
-        if ($PythonExecutable -eq "py" -and -not (Get-Command py -ErrorAction SilentlyContinue)) {
+        if (Test-Path -LiteralPath $PythonExecutable -PathType Leaf) {
+            # An explicit interpreter path already fixes the version; the
+            # "-3.12" argument belongs to the py launcher, not python.exe.
+            $creator = (Resolve-Path -LiteralPath $PythonExecutable).Path
+            $creatorArgs = @("-m", "venv", $venv)
+        }
+        elseif ($PythonExecutable -eq "py" -and -not (Get-Command py -ErrorAction SilentlyContinue)) {
             $creator = "python"
             $creatorArgs = @("-m", "venv", $venv)
         }
@@ -342,6 +349,18 @@ try {
     }
 
     Test-FormalDemoEvidence
+
+    # T4: an installed release must read an older release's package and state
+    # cross-release comparability instead of assuming it.
+    $olderPackagePath = if ($OlderPackage) { $OlderPackage } else { Join-Path $RepositoryRoot "tests\fixtures\older_packages\v0.5.9-buck" }
+    $upgradeEvidenceRoot = Join-Path $EvidenceDirectory "upgrade-gate"
+    Invoke-NativeGate "upgrade-gate" "powershell" @(
+        "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $RepositoryRoot "scripts\upgrade_check.ps1"),
+        "-EvidenceDirectory", $upgradeEvidenceRoot,
+        "-PythonExecutable", $PythonPath,
+        "-OlderPackage", $olderPackagePath
+    ) | Out-Null
+
     if ($NgspiceExecutable) {
         $ngspicePath = [System.IO.Path]::GetFullPath($NgspiceExecutable)
         if (-not (Test-Path -LiteralPath $ngspicePath -PathType Leaf)) {

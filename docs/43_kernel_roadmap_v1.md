@@ -21,7 +21,7 @@ That goal is only useful if it can be checked. The design must pass:
 | T1 | Add a physical engine by writing an adapter and registering it, with **zero** edits to kernel modules | **passes** (0.5.10) |
 | T2 | Add a topology without editing CLI allow-lists or schema enums | fails |
 | T3 | An agent can discover capabilities, start, observe progress, cancel, and read evidence using only versioned contracts | **passes** (0.5.7) |
-| T4 | An installed release reads a package from an older release and states cross-version comparability honestly | fails |
+| T4 | An installed release reads a package from an older release and states cross-version comparability honestly | **passes** (0.5.11) |
 | T5 | No self-declared or modified implementation can reach `comparable` | **passes** (0.5.2) |
 | T6 | A user who does not read source can run, view, and verify | fails |
 
@@ -45,8 +45,11 @@ engine registration as data, entry-point discovery, and adapter trust levels -
 shipped in 0.5.4. **A2** - the time-model abstraction - delivered its decision
 (D1), trace contract, and engine boundary in 0.5.8, and its **execution route
 plus a second engine in 0.5.10** (`docs/46`). Phase B is complete: items 1-4
-shipped in 0.5.5-0.5.7. Phase C is partially complete (D3/D4 + read-with-policy
-in 0.5.9; extras and the upgrade gate remain). Phase D has not started.
+shipped in 0.5.5-0.5.7. Phase C is substantially complete: D3/D4 and
+read-with-policy shipped in 0.5.9, and the **upgrade gate (T4) in 0.5.11**.
+Only install-time extras (blocked by the `docs/28` release policy) and the
+schema migration registry (deferred to the first schema bump) remain. Phase D
+has not started.
 Everything shipped before 0.5.4 is groundwork covered by §4, not a completed
 phase.
 
@@ -178,11 +181,15 @@ its cross-version comparability is stated by the evidence rather than assumed.
 
 **Status:** D3 and D4 are decided and the first compatibility increment shipped
 in 0.5.9: read-with-policy verdicts in `inspect-run` and an explicit discovery
-root (`docs/47_compatibility_policy_v1.md`). Install-time extras remain open:
-`docs/28` deliberately keeps PySpice out of dependencies/extras, so item 1 needs
-a release-policy decision. The schema migration registry is deliberately
-deferred to the first schema bump. **T4 still fails** until an upgrade gate runs
-an installed release against an older package.
+root (`docs/47_compatibility_policy_v1.md`). The **upgrade gate shipped in
+0.5.11**, so **T4 passes**: `scripts/upgrade_check.ps1` builds and installs the
+checkout into an isolated environment, reads a package produced by the v0.5.9
+release, and requires `compare-runs` to report
+`compatibility.cross_version_comparison = "not_assessed"` rather than implying
+cross-release equality. Install-time extras remain open: `docs/28` deliberately
+keeps PySpice out of dependencies/extras, so item 1 needs a release-policy
+decision. The schema migration registry is deliberately deferred to the first
+schema bump.
 
 ### Phase D - Lower barrier
 
@@ -324,7 +331,7 @@ would change the bytes a verifier attested and silently invalidate old
 attestations.
 
 **Status.** Implemented in 0.5.9 (`pe_sim.compatibility`,
-`inspect-run.summary.compatibility`). No schema bump exists yet, so the schema
+`inspect-run.compatibility`). No schema bump exists yet, so the schema
 migration registry is deliberately not created.
 
 ## 7. Scope guard

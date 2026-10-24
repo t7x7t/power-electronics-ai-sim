@@ -85,7 +85,7 @@ def _emit_rejection(status: str, code: str, error: str, **extra: Any) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Auditable power-electronics simulation runtime")
-    parser.add_argument("--version", action="version", version="0.5.10")
+    parser.add_argument("--version", action="version", version="0.5.11")
     sub = parser.add_subparsers(dest="command")
     run = sub.add_parser("run", help="run an experiment from JSON config")
     run.add_argument("config", type=Path)

@@ -442,6 +442,13 @@ Three properties are machine checked rather than left to convention:
   The report records the policy and its digest, and defaults are unchanged:
   with no policy the historical absolute-only behaviour is reproduced exactly.
   Sample grid alignment is still positional and remains open.
+- **Cross-release comparability.** `compare-runs` says whether two packages may
+  be compared at all. Same schema and same source commit keeps the historical
+  payload; a different commit or schema adds
+  `compatibility.cross_version_comparison: not_assessed`, and an unreadable
+  package adds `unsupported` with an `unknown` outcome.
+  `scripts/upgrade_check.ps1` installs the checkout into an isolated
+  environment and exercises this against a package produced by v0.5.9.
 
 See
 [docs/41_kernel_compatibility_surface_v1.md](docs/41_kernel_compatibility_surface_v1.md).

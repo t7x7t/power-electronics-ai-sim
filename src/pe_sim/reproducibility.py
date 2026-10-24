@@ -7,17 +7,17 @@ environments produce ``unknown`` rather than a successful comparison.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 import json
 import hashlib
 from itertools import combinations
 import math
 import re
-from dataclasses import field
 from typing import Any, Mapping, Sequence
 
 from .artifacts import ArtifactWriter, artifact_index, manifest_digest, package_digest
+from .compatibility import assess_package_compatibility
 from .jsonutil import stable_sha256
 
 
@@ -433,6 +433,7 @@ class ReproducibilityReport:
     difference_summary: Mapping[str, int] = field(default_factory=dict)
     scope: str = "same_machine"
     tolerance_policy: Mapping[str, Any] | None = None
+    compatibility: Mapping[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -465,10 +466,102 @@ class ReproducibilityReport:
         # payload, so the policy is only serialized when a caller declared one.
         if self.tolerance_policy is not None:
             payload["tolerance_policy"] = dict(self.tolerance_policy)
+        # Same rule for the compatibility note: it is only present when there
+        # is something to say (different schema, different release, or a
+        # package the reader cannot trust).
+        if self.compatibility is not None:
+            payload["compatibility"] = dict(self.compatibility)
         return payload
 
 
+def _cross_version_note(left: Path, right: Path) -> dict[str, Any] | None:
+    """Say whether two packages may be compared across versions.
+
+    D4 is read-with-policy: a package from another schema version is readable,
+    not comparable.  The same distinction applies to packages written by a
+    different release, because a release change can alter numerics even when
+    the schema is unchanged.  ``None`` means the two packages are at the same
+    schema version and the same source commit, so the historical payload is
+    left untouched.
+    """
+
+    try:
+        left_manifest = _load_json(left / "manifest.json")
+        right_manifest = _load_json(right / "manifest.json")
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    left_verdict = assess_package_compatibility(left_manifest)
+    right_verdict = assess_package_compatibility(right_manifest)
+    left_commit = left_manifest.get("source_commit") if isinstance(left_manifest, Mapping) else None
+    right_commit = right_manifest.get("source_commit") if isinstance(right_manifest, Mapping) else None
+    if left_verdict.status == "incompatible" or right_verdict.status == "incompatible":
+        return {
+            "cross_version_comparison": "unsupported",
+            "left": left_verdict.to_dict(),
+            "right": right_verdict.to_dict(),
+            "reasons": [
+                "at least one package is not readable at the reader's schema version",
+            ],
+            "limitations": [
+                "a package the reader cannot trust cannot be compared; the outcome is unknown, not a numeric result",
+            ],
+        }
+    if left_verdict.status == "read_only" or right_verdict.status == "read_only":
+        return {
+            "cross_version_comparison": "not_assessed",
+            "left": left_verdict.to_dict(),
+            "right": right_verdict.to_dict(),
+            "reasons": [
+                "the packages declare different schema versions; they are readable under the D4 policy but not directly comparable",
+            ],
+            "limitations": [
+                "absent fields are not inferred, so a numeric match cannot be read as model agreement",
+            ],
+        }
+    if left_commit != right_commit:
+        return {
+            "cross_version_comparison": "not_assessed",
+            "left": left_verdict.to_dict(),
+            "right": right_verdict.to_dict(),
+            "reasons": [
+                "the packages were produced by different source commits "
+                f"({left_commit or 'unknown'} vs {right_commit or 'unknown'}) at the "
+                f"same schema version {left_verdict.reader_schema}",
+            ],
+            "limitations": [
+                "same schema version makes a package readable, not comparable across releases: "
+                "a release change can alter numerics, so a difference cannot be attributed to the model alone",
+            ],
+        }
+    return None
+
+
 def compare_runs(
+    left: str | Path,
+    right: str | Path,
+    *,
+    tolerance: float = 1e-9,
+    tolerance_policy: ToleranceSpec | Mapping[str, Any] | None = None,
+) -> ReproducibilityReport:
+    """Compare two published runs and state their cross-version comparability.
+
+    The comparison body is unchanged for packages at the same schema version
+    and the same source commit.  Otherwise the report carries an additive
+    ``compatibility`` block that says ``not_assessed`` or ``unsupported``
+    instead of letting a numeric outcome imply an equality the evidence does
+    not support.
+    """
+
+    report = _compare_runs_impl(
+        left, right, tolerance=tolerance, tolerance_policy=tolerance_policy
+    )
+    note = _cross_version_note(_run_dir(left), _run_dir(right))
+    if note is None:
+        return report
+    return replace(report, compatibility=note)
+
+
+def _compare_runs_impl(
     left: str | Path,
     right: str | Path,
     *,

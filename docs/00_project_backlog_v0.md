@@ -718,8 +718,8 @@ different schema version without touching it.
 
 - `pe_sim.compatibility` classifies a manifest as `current`, `read_only`, or
   `incompatible`, names both versions, and carries
-  `may_rewrite: false`. `inspect-run` reports the verdict under
-  `summary.compatibility`; package integrity remains a separate `status`.
+  `may_rewrite: false`. `inspect-run` reports the verdict in the top-level
+  `compatibility` field; package integrity remains a separate `status`.
 - `pe_sim.run_store` resolves discovery as explicit path ->
   `PE_SIM_RUNS_ROOT` -> `./runs`; `list-runs` and `visualization-serve` use it.
   Resolution never creates a directory.
@@ -781,8 +781,47 @@ Still open on this route: resampling, checkpoint/resume, in-run enforcement
 callbacks, a reviewed identity pin for the engine (`not_pinned`), and workbench
 export eligibility.
 
-### Future compact diagnostic mechanism
+### Stage 27 upgrade gate and cross-release comparability (0.5.11)
 
+Roadmap Phase C completion (`docs/43_kernel_roadmap_v1.md`, test T4). Reading a
+package and comparing it are now two separate, explicit verdicts.
+
+- `compare_runs` adds an additive `compatibility` block only when there is
+  something to say: different schema (`not_assessed`), different producer
+  `source_commit` (`not_assessed`), or an unreadable package (`unsupported`,
+  outcome `unknown`). Packages from the same commit serialize exactly the
+  payload they serialized before.
+- `scripts/upgrade_check.ps1` is the gate: clean commit -> build wheel ->
+  isolated venv -> pinned requirements -> installed `--version` matches ->
+  `inspect-run` an older package -> `list-runs` its directory -> produce a
+  package with the installed release -> `compare-runs` across releases ->
+  require `cross_version_comparison: not_assessed` -> write
+  `upgrade-evidence.json` (`pe-sim.upgrade-evidence.v1`).
+- The fixture `tests/fixtures/older_packages/v0.5.9-buck` was produced by the
+  v0.5.9 release itself (commit `ed45521…`), so the gate exercises a real
+  older package rather than a hand-written manifest.
+- `scripts/release_check.ps1` runs the gate as its `upgrade-gate` step and
+  accepts `-OlderPackage` to point at another fixture.
+
+Fixed along the way: `collect_git_provenance` treated a detached HEAD as
+"provenance unavailable" because `git symbolic-ref -q` exits non-zero there.
+Detached checkouts (common in CI and release worktrees) now record
+`branch: "detached"` with a real commit.
+
+Still open: install-time extras (blocked by `docs/28`) and the schema migration
+registry (deferred to the first schema bump).
+
+Acceptance evidence:
+
+```text
+pytest -q tests/test_upgrade_gate.py tests/test_compatibility.py `
+  tests/test_reproducibility_integrity.py tests/test_stage9_reproducibility.py `
+  --basetemp .tmp/pytest-stage27
+powershell -NoProfile -File scripts/upgrade_check.ps1 `
+  -EvidenceDirectory .tmp/upgrade-evidence -PythonExecutable <python-3.12.7>
+```
+
+### Future compact diagnostic mechanism
 The current Stage 6 checks are intentionally a runtime integrity gate. A later
 increment should add a small, backend-neutral diagnostic contract so users can
 understand and repair common failures without turning the infrastructure into a

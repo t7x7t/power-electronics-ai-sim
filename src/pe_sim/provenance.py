@@ -162,6 +162,29 @@ def _git(path: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
+def _git_optional(path: Path, *args: str) -> str | None:
+    """Run a Git query whose non-zero exit is an answer, not a failure.
+
+    ``git symbolic-ref -q HEAD`` exits 1 on a detached HEAD.  That is a normal
+    state in CI and in a release checkout, so it must not turn the whole run's
+    provenance into ``unknown``.
+    """
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(path), *args],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (FileNotFoundError, OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip()
+
+
 def collect_git_provenance(path: str | Path | None = None) -> GitProvenance:
     """Collect commit, branch and clean/dirty status without mutating Git.
 
@@ -176,7 +199,7 @@ def collect_git_provenance(path: str | Path | None = None) -> GitProvenance:
         commit = _git(root, "rev-parse", "HEAD")
         if not commit:
             raise RuntimeError("empty git revision")
-        branch = _git(root, "symbolic-ref", "--short", "-q", "HEAD") or "detached"
+        branch = _git_optional(root, "symbolic-ref", "--short", "-q", "HEAD") or "detached"
         porcelain = _git(root, "status", "--porcelain", "--untracked-files=all")
     except (FileNotFoundError, OSError, RuntimeError, subprocess.SubprocessError) as exc:
         return GitProvenance(limitations=(f"Git provenance unavailable: {exc}",))

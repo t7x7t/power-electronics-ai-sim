@@ -62,6 +62,22 @@ loopback read-only visualization service against a checked-in contract fixture
 and uses the independent standard-library consumer against that route.  It
 stops only the service process it created before exit.
 
+Since 0.5.11 the gate also runs the **upgrade gate**
+(`scripts/upgrade_check.ps1`) as its `upgrade-gate` step. That step builds the
+checkout as a wheel, installs it into its own isolated environment, reads a
+package produced by the previous release, produces a package with the installed
+release, and requires the comparison report to declare
+`compatibility.cross_version_comparison = "not_assessed"`. The default fixture
+is `tests/fixtures/older_packages/v0.5.9-buck`; pass `-OlderPackage` to point
+at another package. The step writes `upgrade-evidence.json`
+(`pe-sim.upgrade-evidence.v1`) inside the evidence directory, and a failed
+check is release-blocking like any other gate.
+
+`-PythonExecutable` accepts either a launcher (`py`) or an absolute path to a
+`python.exe`. A path is used directly, because the `-3.12` argument is a
+launcher-only argument; the exact version is still verified by
+`toolchain-exact`.
+
 The script does not commit, stash, reset, tag, publish, create, or modify a
 source run package.  It will preserve its diagnostics even when the working
 tree is dirty, but it cannot pass or verify formal demonstration evidence in
