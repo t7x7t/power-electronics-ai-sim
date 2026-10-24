@@ -35,6 +35,24 @@ The admitted version ranges, exact locally verified Python toolchain, and
 clean-install policy are defined separately in
 [docs/28_release_toolchain_policy_v0.md](docs/28_release_toolchain_policy_v0.md).
 
+## Quick start (installed package)
+
+A user who does not read source can run, view, and verify with three documented
+commands. `pe-sim demo` writes a bundled reference experiment, runs it through
+the same path as `pe-sim run`, and prints the read-only next steps:
+
+```powershell
+pe-sim demo .\my-demo
+pe-sim inspect-run .\my-demo\runs\<run_id> --compact
+pe-sim visualization-serve --runs-root .\my-demo\runs
+```
+
+The demo is an exploratory run of a project-owned averaged reference model. It
+records `evidence_level: functional`; it is not a physical, formal-comparison,
+or hardware claim. The consumer creates one configuration file and otherwise
+only reads. See
+[docs/48_user_workflow_v1.md](docs/48_user_workflow_v1.md).
+
 ## Generic Runner entry point
 
 The low-friction Python entry point uses the standard audited runner defaults:

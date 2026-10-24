@@ -1,0 +1,24 @@
+{
+  "schema_version": "0.1",
+  "experiment_id": "boost_pi_step",
+  "run_id": "boost-reference",
+  "plant_id": "boost",
+  "controller_id": "pi",
+  "plant_config": {
+    "input_voltage_v": 12.0,
+    "inductance_h": 0.0001,
+    "capacitance_f": 0.00047,
+    "load_resistance_ohm": 10.0,
+    "integration_step_s": 0.000001
+  },
+  "controller_config": {"kp": 0.2},
+  "timebase": {"unit": "s", "control_period_s": 0.00001, "duration_s": 0.0001},
+  "initial_state": {"mode": "cold_start"},
+  "input_schedule": [],
+  "seed": 0,
+  "contracts": {
+    "safety": {"id": "default-safety", "hash": "c8af0de8cfeec979bf5fd17dbf1c819df90d6fc5a95fc3a2f53d84271ba0ef58"},
+    "qualification": {"id": "default-qualification", "hash": "a3ef375ff21b886d76977854178c77a5bd397e551170fe13e4db9e606f9f121e"}
+  },
+  "output": {"directory": "runs", "retention": "keep"}
+}

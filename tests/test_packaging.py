@@ -39,6 +39,16 @@ def test_reviewed_identities_are_packaged():
     assert resources.files("pe_sim").joinpath("reviewed_identities.json").is_file()
 
 
+def test_demo_templates_are_packaged_and_match_the_examples():
+    """A packaged user must be able to run `pe-sim demo` with no checkout."""
+
+    for name in ("buck", "boost"):
+        packaged = resources.files("pe_sim.templates").joinpath(f"{name}_pi_step.json")
+        assert packaged.is_file()
+        example = REPOSITORY / "examples" / f"{name}_pi_step" / "config.json"
+        assert packaged.read_bytes() == example.read_bytes()
+
+
 def test_environment_check_falls_back_to_the_working_checkout(tmp_path, monkeypatch):
     from pe_sim import environment
 

@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import sys
+import time
 from typing import Any, Mapping
 
 from .applicability import ApplicabilityPolicy
@@ -13,7 +14,7 @@ from .cancellation import FileCancelToken
 from .contracts import ExperimentSpec, validate_experiment_document
 from .error_codes import RequestRejected, rejection_document
 from .qualification_rules import QualificationRulePack
-from .run_events import RUN_RESULT_SCHEMA, ProgressPolicy
+from .run_events import DEMO_RESULT_SCHEMA, RUN_RESULT_SCHEMA, ProgressPolicy
 from .run_store import discovery_root
 from .runner import RunOptions
 from .runtime import FakePIController, Runner
@@ -85,7 +86,7 @@ def _emit_rejection(status: str, code: str, error: str, **extra: Any) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Auditable power-electronics simulation runtime")
-    parser.add_argument("--version", action="version", version="0.5.11")
+    parser.add_argument("--version", action="version", version="0.5.12")
     sub = parser.add_subparsers(dest="command")
     run = sub.add_parser("run", help="run an experiment from JSON config")
     run.add_argument("config", type=Path)
@@ -129,6 +130,19 @@ def main(argv: list[str] | None = None) -> int:
         metavar="PATH",
         help="cancel the run when this path exists; checked once per control window",
     )
+    demo = sub.add_parser(
+        "demo",
+        help="run a bundled reference experiment without writing a configuration first",
+    )
+    demo.add_argument(
+        "directory",
+        nargs="?",
+        type=Path,
+        default=Path("pe-sim-demo"),
+        help="directory that receives config.json and runs/ (default: ./pe-sim-demo)",
+    )
+    demo.add_argument("--name", default="buck", help="bundled template name, for example buck or boost")
+    demo.add_argument("--run-id", default=None, help="override the generated demo run id")
     status = sub.add_parser("git-status", help="inspect Git worktree readiness without modifying it")
     status.add_argument("path", nargs="?", type=Path, default=Path.cwd())
     environment = sub.add_parser("environment-check", help="check the verified and supported Python environment")
@@ -271,58 +285,22 @@ def main(argv: list[str] | None = None) -> int:
         load_builtin_plants()
         if args.command == "backend":
             return _run_backend_command(args)
+        if args.command == "demo":
+            return _run_demo(args)
         if args.command == "run":
-            document = json.loads(args.config.read_text(encoding="utf-8"))
-            # Validate the serialized contract before the compatibility reader
-            # constructs an ExperimentSpec.  This prevents unknown or misspelled
-            # fields from being silently ignored at the CLI boundary.
-            validate_experiment_document(document)
-            registration = _select_registration(document, args.backend)
-            _validate_schedule_keys(document, registration)
-            if args.mode == "formal_comparison" and registration.time_model == TIME_MODEL_WHOLE_RUN:
-                # The kernel cannot enforce constraints while the engine owns
-                # the clock, so a whole-run route can never be a formal
-                # comparison.  Refuse before building an adapter or a run
-                # directory so the reason is branchable and nothing is left
-                # behind (docs/45).
-                raise RequestRejected(
-                    "formal_comparison_rejected",
-                    f"plant_id {registration.plant_id!r} declares time_model "
-                    f"{TIME_MODEL_WHOLE_RUN!r}; formal comparison requires in-run "
-                    "enforcement, which this route cannot provide",
-                )
-            spec = ExperimentSpec.from_dict(document)
-            backend = registration.backend_id
-            plant = _build_plant(
-                registration,
-                spec.plant_config,
-                PlantBuildContext(
-                    timebase=spec.timebase,
-                    ngspice_executable=args.ngspice,
-                    model_builder=args.model_builder,
-                ),
-            )
-            _validate_plant_adapter(registration, plant)
-            controller = _build_controller(spec)
-            qualification_plugins = (
-                ()
-                if args.no_standard_qualification
-                else (QualificationRulePack.standard(plant=plant),)
-            )
-            options = RunOptions(
+            code, payload = _execute_experiment(
+                args.config,
+                backend=args.backend,
                 mode=args.mode,
-                applicability=ApplicabilityPolicy(mode=args.applicability),
-                qualification_plugins=qualification_plugins,
-                progress=ProgressPolicy(sink=_stderr_event_sink) if args.progress else None,
-                cancellation=FileCancelToken(args.cancel_file) if args.cancel_file is not None else None,
+                applicability=args.applicability,
+                ngspice=args.ngspice,
+                model_builder=args.model_builder,
+                no_standard_qualification=args.no_standard_qualification,
+                progress=args.progress,
+                cancel_file=args.cancel_file,
             )
-            result = Runner().run(
-                spec,
-                plant,
-                controller,
-                options=options,
-                time_model=registration.time_model,
-            )
+            print(json.dumps(payload, sort_keys=True))
+            return code
         elif args.command == "git-status":
             print(json.dumps(analyze_git_worktree(args.path).to_dict(), sort_keys=True))
             return 0
@@ -473,27 +451,146 @@ def main(argv: list[str] | None = None) -> int:
         code = exc.code if isinstance(exc, RequestRejected) else "invalid_request"
         _emit_rejection("CONFIG_REJECTED", code, str(exc))
         return 2
+
+
+def _execute_experiment(
+    config: Path,
+    *,
+    backend: str | None,
+    mode: str,
+    applicability: str,
+    ngspice: str | None,
+    model_builder: str,
+    no_standard_qualification: bool,
+    progress: bool,
+    cancel_file: Path | None,
+) -> tuple[int, dict[str, Any]]:
+    """Run one experiment document and return its terminal result.
+
+    This is the single documented ``run`` path.  ``pe-sim demo`` calls it too,
+    so the zero-configuration entry point cannot drift from the normal CLI.
+    """
+
+    document = json.loads(config.read_text(encoding="utf-8"))
+    # Validate the serialized contract before the compatibility reader
+    # constructs an ExperimentSpec.  This prevents unknown or misspelled
+    # fields from being silently ignored at the CLI boundary.
+    validate_experiment_document(document)
+    registration = _select_registration(document, backend)
+    _validate_schedule_keys(document, registration)
+    if mode == "formal_comparison" and registration.time_model == TIME_MODEL_WHOLE_RUN:
+        # The kernel cannot enforce constraints while the engine owns the
+        # clock, so a whole-run route can never be a formal comparison.  Refuse
+        # before building an adapter or a run directory so the reason is
+        # branchable and nothing is left behind (docs/45).
+        raise RequestRejected(
+            "formal_comparison_rejected",
+            f"plant_id {registration.plant_id!r} declares time_model "
+            f"{TIME_MODEL_WHOLE_RUN!r}; formal comparison requires in-run "
+            "enforcement, which this route cannot provide",
+        )
+    spec = ExperimentSpec.from_dict(document)
+    plant = _build_plant(
+        registration,
+        spec.plant_config,
+        PlantBuildContext(
+            timebase=spec.timebase,
+            ngspice_executable=ngspice,
+            model_builder=model_builder,
+        ),
+    )
+    _validate_plant_adapter(registration, plant)
+    controller = _build_controller(spec)
+    qualification_plugins = (
+        ()
+        if no_standard_qualification
+        else (QualificationRulePack.standard(plant=plant),)
+    )
+    options = RunOptions(
+        mode=mode,
+        applicability=ApplicabilityPolicy(mode=applicability),
+        qualification_plugins=qualification_plugins,
+        progress=ProgressPolicy(sink=_stderr_event_sink) if progress else None,
+        cancellation=FileCancelToken(cancel_file) if cancel_file is not None else None,
+    )
+    result = Runner().run(
+        spec,
+        plant,
+        controller,
+        options=options,
+        time_model=registration.time_model,
+    )
+    payload = {
+        "schema": RUN_RESULT_SCHEMA,
+        "status": result.status,
+        "run_id": spec.run_id,
+        "run_dir": str(result.run_dir),
+        "backend": registration.backend_id,
+        "plant_id": spec.plant_id,
+        "plant_class": type(plant).__name__,
+        "evidence_level": result.evidence_level,
+        "failure_category": result.failure_category,
+        "qualification": result.qualification,
+    }
+    # A completed and qualified run is the normal successful CLI outcome.
+    # Keep RUN_OK accepted for compatibility with callers that disable or
+    # defer post-run qualification in a custom integration.
+    return (0 if result.status in {"RUN_OK", "QUALIFIED"} else 1), payload
+
+
+def _run_demo(args) -> int:
+    """Write a bundled experiment document, run it, and describe the next steps.
+
+    The demo reads only package data and public contracts: it creates no
+    adapter, bypasses no check, and grants the caller no authority beyond
+    starting a normal experimental run.
+    """
+
+    from importlib import resources
+
+    directory = Path(args.directory).expanduser()
+    directory.mkdir(parents=True, exist_ok=True)
+    template = resources.files("pe_sim.templates").joinpath(f"{args.name}_pi_step.json")
+    if not template.is_file():
+        raise RequestRejected(
+            "invalid_request",
+            f"no bundled demo template named {args.name!r}; shipped templates are "
+            "the JSON documents under pe_sim/templates",
+        )
+    document = json.loads(template.read_text(encoding="utf-8"))
+    run_id = args.run_id or time.strftime("demo-%Y%m%d-%H%M%S", time.gmtime())
+    document["run_id"] = str(run_id)
+    document["output"]["directory"] = str((directory / "runs").resolve())
+    config_path = directory / "config.json"
+    config_path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+
+    code, payload = _execute_experiment(
+        config_path,
+        backend=None,
+        mode="exploratory",
+        applicability="default",
+        ngspice=None,
+        model_builder="native",
+        no_standard_qualification=False,
+        progress=False,
+        cancel_file=None,
+    )
     print(
         json.dumps(
             {
-                "schema": RUN_RESULT_SCHEMA,
-                "status": result.status,
-                "run_id": spec.run_id,
-                "run_dir": str(result.run_dir),
-                "backend": backend,
-                "plant_id": spec.plant_id,
-                "plant_class": type(plant).__name__,
-                "evidence_level": result.evidence_level,
-                "failure_category": result.failure_category,
-                "qualification": result.qualification,
+                "schema": DEMO_RESULT_SCHEMA,
+                "name": args.name,
+                "config": str(config_path),
+                "run": payload,
+                "next": [
+                    f"pe-sim inspect-run {payload['run_dir']}",
+                    f"pe-sim visualization-serve --runs-root {directory / 'runs'}",
+                ],
             },
             sort_keys=True,
         )
     )
-    # A completed and qualified run is the normal successful CLI outcome.
-    # Keep RUN_OK accepted for compatibility with callers that disable or
-    # defer post-run qualification in a custom integration.
-    return 0 if result.status in {"RUN_OK", "QUALIFIED"} else 1
+    return code
 
 
 def _stderr_event_sink(event: Mapping[str, Any]) -> None:

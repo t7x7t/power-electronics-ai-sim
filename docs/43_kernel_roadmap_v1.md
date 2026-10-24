@@ -19,11 +19,11 @@ That goal is only useful if it can be checked. The design must pass:
 | # | Test | Today |
 | --- | --- | --- |
 | T1 | Add a physical engine by writing an adapter and registering it, with **zero** edits to kernel modules | **passes** (0.5.10) |
-| T2 | Add a topology without editing CLI allow-lists or schema enums | fails |
+| T2 | Add a topology without editing CLI allow-lists or schema enums | **passes** (0.5.4; guarded 0.5.12) |
 | T3 | An agent can discover capabilities, start, observe progress, cancel, and read evidence using only versioned contracts | **passes** (0.5.7) |
 | T4 | An installed release reads a package from an older release and states cross-version comparability honestly | **passes** (0.5.11) |
 | T5 | No self-declared or modified implementation can reach `comparable` | **passes** (0.5.2) |
-| T6 | A user who does not read source can run, view, and verify | fails |
+| T6 | A user who does not read source can run, view, and verify | **passes** (0.5.12) |
 
 T5 is the property that makes the rest worth having, and it is the one that must
 never regress.
@@ -48,8 +48,9 @@ plus a second engine in 0.5.10** (`docs/46`). Phase B is complete: items 1-4
 shipped in 0.5.5-0.5.7. Phase C is substantially complete: D3/D4 and
 read-with-policy shipped in 0.5.9, and the **upgrade gate (T4) in 0.5.11**.
 Only install-time extras (blocked by the `docs/28` release policy) and the
-schema migration registry (deferred to the first schema bump) remain. Phase D
-has not started.
+schema migration registry (deferred to the first schema bump) remain. **Phase D
+shipped in 0.5.12**, so T6 passes. Test T2 has passed since 0.5.4 (a topology is
+registered, never listed) and is now guarded by a structural test.
 Everything shipped before 0.5.4 is groundwork covered by §4, not a completed
 phase.
 
@@ -203,6 +204,17 @@ authority.
 
 **Gate G-D:** T6 passes for a documented workflow, and the consumer holds no
 authority beyond reading contracts.
+
+**Status:** delivered in 0.5.12 (`docs/48_user_workflow_v1.md`). `pe-sim demo`
+writes a bundled experiment document from package data and runs it through the
+same path as `pe-sim run`; `visualization-serve` is the read-only view;
+`inspect-run` and the attestation commands are the verification path. The demo
+prints a `pe-sim.run-demo.v1` document whose `next` entries are read-only
+commands. **Gate G-D is met:** the consumer creates one configuration file in a
+directory the caller names, starts one experimental run, and otherwise only
+reads. `tests/test_user_workflow.py` and `tests/test_packaging.py` hold the
+workflow to that boundary, including that the bundled templates ship in the
+wheel and match `examples/` byte for byte.
 
 ## 4. Already sufficient - do not rebuild
 

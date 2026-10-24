@@ -205,7 +205,10 @@ function Test-GitClean {
 
 function Test-ExactToolchain {
     $probe = "import importlib.metadata as m, json, sys; print(json.dumps({'python': '.'.join(map(str, sys.version_info[:3])), 'pytest': m.version('pytest'), 'jsonschema': m.version('jsonschema'), 'numpy': m.version('numpy')}))"
-    $probeOk = Invoke-NativeGate "python-toolchain-probe" "python" @("-c", $probe)
+    # The probe must inspect the isolated release interpreter.  Running a bare
+    # "python" would audit whatever happens to be on PATH instead of the
+    # environment that will run the tests and the demos.
+    $probeOk = Invoke-NativeGate "python-toolchain-probe" $script:PythonPath @("-c", $probe)
     if (-not $probeOk) {
         Add-Record "toolchain-exact" "fail" 1 "Python package versions could not be inspected" "" "" | Out-Null
         return $false

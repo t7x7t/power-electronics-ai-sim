@@ -821,6 +821,43 @@ powershell -NoProfile -File scripts/upgrade_check.ps1 `
   -EvidenceDirectory .tmp/upgrade-evidence -PythonExecutable <python-3.12.7>
 ```
 
+### Stage 28 lower-barrier user workflow and topology guard (0.5.12)
+
+Roadmap Phase D completion (`docs/43_kernel_roadmap_v1.md`, gate G-D, test T6),
+plus a structural guard for T2.
+
+- `pe-sim demo [DIR]` reads a bundled experiment document from
+  `pe_sim.templates`, writes `DIR/config.json` with a generated `run_id` and a
+  run directory under `DIR/runs`, and runs it through the **same** path as
+  `pe-sim run`. It prints `pe-sim.run-demo.v1` containing the normal
+  `pe-sim.run-result.v1` payload plus read-only next steps
+  (`inspect-run`, `visualization-serve`).
+- Templates ship as package data and are kept byte-identical to `examples/` by
+  `tests/test_packaging.py`, so an installed wheel supports the demo without a
+  checkout.
+- The demo refuses an unknown template with the branchable `invalid_request`
+  code, and `--name` is not an allow-list: a new bundled template is a new data
+  file, not a CLI edit.
+- T2 guard: `tests/test_user_workflow.py` asserts that `plant_id` is not an
+  enum in the experiment schema and that no kernel module (`cli.py`,
+  `runtime.py`, `plant_registry.py`) holds a literal topology list. Extension by
+  registration was already proven by `tests/test_plant_extension_gate.py`.
+- Authority boundary: the consumer creates one configuration file it named and
+  starts one exploratory run; every other step is read-only. It receives no
+  Runner, Plant, Controller, plugin, or mutation authority.
+
+Acceptance evidence:
+
+```text
+pytest -q tests/test_user_workflow.py tests/test_packaging.py `
+  tests/test_cli_run_interaction.py tests/test_plant_extension_gate.py `
+  --basetemp .tmp/pytest-stage28
+pe-sim demo .tmp/demo-check
+```
+
+Still open: a browser UI (withdrawn), a remote API, authentication, and
+multi-user operation.
+
 ### Future compact diagnostic mechanism
 The current Stage 6 checks are intentionally a runtime integrity gate. A later
 increment should add a small, backend-neutral diagnostic contract so users can

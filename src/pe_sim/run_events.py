@@ -35,6 +35,9 @@ RUN_EVENT_SCHEMA = "pe-sim.run-event.v1"
 #: Schema tag carried by the terminal result printed by the CLI.
 RUN_RESULT_SCHEMA = "pe-sim.run-result.v1"
 
+#: Schema tag carried by the zero-configuration ``pe-sim demo`` result.
+DEMO_RESULT_SCHEMA = "pe-sim.run-demo.v1"
+
 EVENT_RUN_STARTED = "run.started"
 EVENT_RUN_PROGRESS = "run.progress"
 EVENT_RUN_FINISHED = "run.finished"
@@ -168,6 +171,7 @@ def progress_due(
 
 
 __all__ = [
+    "DEMO_RESULT_SCHEMA",
     "EVENT_RUN_FINISHED",
     "EVENT_RUN_PROGRESS",
     "EVENT_RUN_STARTED",
