@@ -200,7 +200,12 @@ class CheckFailureError(RuntimeError):
     def __init__(self, message: str, report: CheckReport, *, phase: str):
         self.report = report
         self.phase = phase
-        finding = next((item for item in report.findings if not item.passed), None)
+        # A failed run must be classified by the finding that stopped it, not
+        # by an earlier advisory finding that shares the report.  Fall back to
+        # the first failure when no finding is blocking (qualification).
+        finding = next((item for item in report.findings if item.blocking), None)
+        if finding is None:
+            finding = next((item for item in report.findings if not item.passed), None)
         self.finding = finding
         if finding is not None:
             self.category = finding.category

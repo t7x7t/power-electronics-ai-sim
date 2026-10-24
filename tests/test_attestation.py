@@ -9,6 +9,8 @@ import subprocess
 
 from pe_sim.artifacts import package_digest
 from pe_sim.attestation import (
+    ATTESTATION_VERIFICATION_SCHEMA,
+    ATTESTATION_WRITE_SCHEMA,
     attest_run,
     build_payload,
     payload_digest,
@@ -69,6 +71,21 @@ def test_attestation_is_written_outside_the_package_and_does_not_change_it(tmp_p
     assert result.attestation_path is not None
     assert not Path(result.attestation_path).resolve().is_relative_to(run_dir.resolve())
     assert package_digest(run_dir, manifest) == before
+
+
+def test_attestation_views_are_schema_tagged(tmp_path):
+    run_dir, _, _ = _published_buck_run(tmp_path)
+    result = attest_run(run_dir, attestations_dir=tmp_path / "attestations", anchor=False)
+
+    written = result.to_dict()
+    assert written["schema"] == ATTESTATION_WRITE_SCHEMA
+    assert next(iter(written)) == "schema"
+
+    verification = verify_attestation(run_dir, result.attestation_path, check_git=False)
+    verified = verification.to_dict()
+    assert verified["status"] == "ok"
+    assert verified["schema"] == ATTESTATION_VERIFICATION_SCHEMA
+    assert next(iter(verified)) == "schema"
 
 
 def test_tampered_sample_bytes_are_detected(tmp_path):

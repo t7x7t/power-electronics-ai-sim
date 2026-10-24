@@ -1,7 +1,7 @@
 # Run Interaction Contract v1
 
-**Status:** binding for the CLI surface shipped in 0.5.6. The Python names are
-classified **experimental** (`docs/12_public_contracts_stage3_v1.md`
+**Status:** binding for the CLI surface shipped in 0.5.6-0.5.7. The Python
+names are classified **experimental** (`docs/12_public_contracts_stage3_v1.md`
 rules); the wire schemas below are versioned and additive-only within v1.
 
 **Purpose.** Define how a client that did not write the simulation code -
@@ -11,7 +11,8 @@ reads the terminal outcome without reading the run directory or importing
 
 Roadmap context: Phase B items 1 and 2 of
 `docs/43_kernel_roadmap_v1.md`. Item 3 (enumeration) is `pe_sim.catalog` and
-`pe-sim list-runs`. Item 4 (stable error codes) is not part of this document.
+`pe-sim list-runs`. Item 4 (stable error codes) is specified in
+`docs/45_error_and_rejection_codes_v1.md`.
 
 ## 1. The request
 
@@ -102,12 +103,16 @@ The CLI prints exactly one JSON object to stdout:
   "plant_id": "buck",
   "plant_class": "BuckPlant",
   "evidence_level": "functional",
+  "failure_category": null,
   "qualification": { "passed": true, "level": "full", "...": "..." }
 }
 ```
 
 - `evidence_level` is the value recorded in the published manifest; it is
   derived once and reused, so the client and the package cannot disagree.
+- `failure_category` is the manifest's `failure.category` (null when the run
+  did not fail). Its vocabulary and the rejection envelope used for exit-2
+  refusals are in `docs/45_error_and_rejection_codes_v1.md`.
 - Exit codes are unchanged: `0` for `RUN_OK`/`QUALIFIED`, `1` for any other
   completed run status, `2` for a rejected request
   (`CONFIG_REJECTED`, `FORMAL_COMPARISON_REJECTED`,
@@ -189,7 +194,9 @@ exercise the gate with no access beyond documented contracts:
 5. enumerate with `list-runs` and verify with `inspect-run` the cancelled
    package;
 6. confirm a broken sink changes neither the samples nor the status, and that
-   the cancellation request file is untouched.
+   the cancellation request file is untouched;
+7. receive a `pe-sim.rejection.v1` envelope with a branchable `error_code`
+   when the request itself is refused (`tests/test_error_codes.py`).
 
 ## 8. Related documents
 

@@ -74,6 +74,8 @@ from .credibility import (
     assess_manifest,
 )
 from .attestation import (
+    ATTESTATION_VERIFICATION_SCHEMA,
+    ATTESTATION_WRITE_SCHEMA,
     AnchorRecord,
     AttestationDocument,
     AttestationPayload,
@@ -88,7 +90,14 @@ from .attestation import (
     verify_attestation,
     verify_git_anchor,
 )
-from .inspection import RunInspection, RunInspectionError, inspect_run
+from .error_codes import (
+    KERNEL_FAILURE_CODES,
+    REJECTION_SCHEMA,
+    REQUEST_REJECTION_CODES,
+    RequestRejected,
+    rejection_document,
+)
+from .inspection import INSPECTION_SCHEMA, RunInspection, RunInspectionError, inspect_run
 from .catalog import CatalogError, RunCatalog, RunEntry, scan_runs
 from .cancellation import CallbackCancelToken, CancelToken, FileCancelToken
 from .run_events import (

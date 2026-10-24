@@ -65,6 +65,9 @@ class RunResult:
     #: clients that only need to know how strong the result is; ``None`` only
     #: for results constructed by older callers.
     evidence_level: str | None = None
+    #: The failure category from the manifest's ``failure`` block, or ``None``
+    #: when the run did not fail.  The CLI forwards it without reinterpretation.
+    failure_category: str | None = None
 
 
 # Private aliases preserve the old implementation names for downstream code.
@@ -1135,7 +1138,13 @@ class Runner:
                 else None,
             },
         )
-        return RunResult(run_dir, status, qualification, evidence_level)
+        return RunResult(
+            run_dir,
+            status,
+            qualification,
+            evidence_level,
+            failure.get("category") if isinstance(failure, Mapping) else None,
+        )
 
 
 def _advance_segments(plant: Any, action: float, duration: float, external: Mapping[str, Any], plant_step: float | None, audit: _Audit, step_index: int, *, expected_end_s: float | None = None, tolerance_s: float = 1e-12) -> PlantObservation | None:

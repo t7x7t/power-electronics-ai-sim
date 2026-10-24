@@ -293,6 +293,7 @@ recorded failure evidence. A package can be intact while its run failed:
 `status` reports package integrity, while `run_status` and `run_ok` report the
 execution outcome separately. It also reports a read-only `credibility`
 assessment and the `qualification.level` (`full`, `limited`, or `failed`).
+Its output is tagged `pe-sim.run-inspection.v1`.
 
 To discover what exists before verifying anything:
 
@@ -334,6 +335,13 @@ A cancelled run is published as `INCOMPLETE` with a checkpoint and failure
 category `cancelled`, which is distinct from an operator interrupt. The wire
 contract is
 [docs/44_run_interaction_contract_v1.md](docs/44_run_interaction_contract_v1.md).
+
+A refused request is a `pe-sim.rejection.v1` object with a stable
+`error_code` (`invalid_request`, `unknown_plant`, `backend_mismatch`,
+`unknown_backend`, `formal_comparison_rejected`, `run_inspection_rejected`),
+and a failed run exposes `failure_category` in the terminal result. Branch on
+those codes, never on the `error` text. The vocabulary is in
+[docs/45_error_and_rejection_codes_v1.md](docs/45_error_and_rejection_codes_v1.md).
 
 ## Applicability and authenticity
 

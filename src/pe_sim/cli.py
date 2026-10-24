@@ -11,6 +11,7 @@ from .applicability import ApplicabilityPolicy
 from .attestation import attest_run, verify_attestation
 from .cancellation import FileCancelToken
 from .contracts import ExperimentSpec, validate_experiment_document
+from .error_codes import RequestRejected, rejection_document
 from .qualification_rules import QualificationRulePack
 from .run_events import RUN_RESULT_SCHEMA, ProgressPolicy
 from .runner import RunOptions
@@ -74,9 +75,15 @@ def _cli_tolerance_policy(relative_tolerance: float, signal_tolerances: list[str
     return None
 
 
+def _emit_rejection(status: str, code: str, error: str, **extra: Any) -> None:
+    """Print one versioned rejection envelope; the caller owns the exit code."""
+
+    print(json.dumps(rejection_document(status, code, error, extra), sort_keys=True))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Auditable power-electronics simulation runtime")
-    parser.add_argument("--version", action="version", version="0.5.6")
+    parser.add_argument("--version", action="version", version="0.5.7")
     sub = parser.add_subparsers(dest="command")
     run = sub.add_parser("run", help="run an experiment from JSON config")
     run.add_argument("config", type=Path)
@@ -422,16 +429,23 @@ def main(argv: list[str] | None = None) -> int:
             parser.print_help()
             return 0
     except RunInspectionError as exc:
-        print(json.dumps({"status": "RUN_INSPECTION_REJECTED", "error": str(exc)}, sort_keys=True))
+        _emit_rejection("RUN_INSPECTION_REJECTED", "run_inspection_rejected", str(exc))
         return 2
     except FormalComparisonError as exc:
-        print(json.dumps({"status": "FORMAL_COMPARISON_REJECTED", "error": str(exc), "worktree_analysis": exc.analysis.to_dict()}, sort_keys=True))
+        _emit_rejection(
+            "FORMAL_COMPARISON_REJECTED",
+            "formal_comparison_rejected",
+            str(exc),
+            worktree_analysis=exc.analysis.to_dict(),
+        )
         return 2
-    except (OSError, RuntimeError, ValueError) as exc:
+    except (OSError, RuntimeError, ValueError, TypeError) as exc:
         # Configuration and preflight errors are machine-readable and must not
         # start a partial run. JSONDecodeError is a ValueError subclass and is
-        # therefore covered here as well.
-        print(json.dumps({"status": "CONFIG_REJECTED", "error": str(exc)}, sort_keys=True))
+        # therefore covered here as well. TypeError covers adapter protocol
+        # violations so they surface as JSON rather than as a traceback.
+        code = exc.code if isinstance(exc, RequestRejected) else "invalid_request"
+        _emit_rejection("CONFIG_REJECTED", code, str(exc))
         return 2
     print(
         json.dumps(
@@ -444,6 +458,7 @@ def main(argv: list[str] | None = None) -> int:
                 "plant_id": spec.plant_id,
                 "plant_class": type(plant).__name__,
                 "evidence_level": result.evidence_level,
+                "failure_category": result.failure_category,
                 "qualification": result.qualification,
             },
             sort_keys=True,
@@ -473,11 +488,12 @@ def _select_registration(document: dict[str, object], requested: str | None) -> 
     try:
         registration = resolve(plant_id)
     except KeyError as exc:
-        raise ValueError(str(exc)) from exc
+        raise RequestRejected("unknown_plant", str(exc)) from exc
     backend = requested or registration.backend_id
     if backend != registration.backend_id:
-        raise ValueError(
-            f"plant_id {plant_id!r} requires --backend {registration.backend_id!r}, not {backend!r}"
+        raise RequestRejected(
+            "backend_mismatch",
+            f"plant_id {plant_id!r} requires --backend {registration.backend_id!r}, not {backend!r}",
         )
     return registration
 
@@ -656,7 +672,7 @@ def _run_backend_command(args) -> int:
         try:
             descriptor = get_backend(args.name)
         except KeyError as exc:
-            print(json.dumps({"status": "UNKNOWN_BACKEND", "error": str(exc)}, sort_keys=True))
+            _emit_rejection("UNKNOWN_BACKEND", "unknown_backend", str(exc))
             return 2
         platform = args.platform or current_platform()
         print(
@@ -686,7 +702,7 @@ def _run_backend_command(args) -> int:
         try:
             descriptor = get_backend(args.name)
         except KeyError as exc:
-            print(json.dumps({"status": "UNKNOWN_BACKEND", "error": str(exc)}, sort_keys=True))
+            _emit_rejection("UNKNOWN_BACKEND", "unknown_backend", str(exc))
             return 2
         candidates = scan_for_backend(descriptor, args.root, max_depth=args.max_depth)
         payload = {
@@ -711,7 +727,7 @@ def _run_backend_command(args) -> int:
         try:
             descriptor = get_backend(args.name)
         except KeyError as exc:
-            print(json.dumps({"status": "UNKNOWN_BACKEND", "error": str(exc)}, sort_keys=True))
+            _emit_rejection("UNKNOWN_BACKEND", "unknown_backend", str(exc))
             return 2
         config_path = args.config if args.config is not None else user_config_path()
         if descriptor.kind == "library":
@@ -769,7 +785,15 @@ def _run_backend_command(args) -> int:
                 written = write_user_config(descriptor, resolution.executable, config_path=args.config)
             except BackendConfigError as exc:
                 payload["config_write_error"] = str(exc)
-                print(json.dumps(payload, indent=2, sort_keys=True))
+                extra = {key: value for key, value in payload.items() if key != "status"}
+                # The envelope status describes the refusal, not the backend
+                # evidence the payload happened to carry at this point.
+                _emit_rejection(
+                    "CONFIG_REJECTED",
+                    "invalid_request",
+                    str(exc),
+                    **extra,
+                )
                 return 2
             payload["config_written"] = str(written)
             payload["next_steps"] = [
@@ -782,14 +806,10 @@ def _run_backend_command(args) -> int:
             ]
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0 if evidence.get("status") == "known" else 1
-    print(
-        json.dumps(
-            {
-                "status": "USAGE",
-                "error": "backend requires one of: list, guide, setup, doctor, scan, config-path, template",
-            },
-            sort_keys=True,
-        )
+    _emit_rejection(
+        "USAGE",
+        "invalid_request",
+        "backend requires one of: list, guide, setup, doctor, scan, config-path, template",
     )
     return 2
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from pe_sim.inspection import inspect_run
+from pe_sim.inspection import INSPECTION_SCHEMA, inspect_run
 
 from test_workbench_export import _published_buck_run
 
@@ -34,6 +34,10 @@ def test_inspect_run_verifies_a_published_package(tmp_path):
     assert "vout" in result.summary["samples"]["signals"]
     assert result.summary["artifact_index_verified"] is True
     assert result.summary["hashes"] == manifest["hashes"]
+
+    document = result.to_dict()
+    assert document["schema"] == INSPECTION_SCHEMA
+    assert next(iter(document)) == "schema"
 
 
 def test_inspect_run_detects_a_tampered_package(tmp_path):

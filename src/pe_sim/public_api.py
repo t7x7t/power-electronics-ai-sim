@@ -314,6 +314,17 @@ EXPERIMENTAL_API: frozenset[str] = frozenset(
         "CancelToken",
         "CallbackCancelToken",
         "FileCancelToken",
+        # rejection and failure codes: the branchable vocabulary for a client.
+        # Experimental until a client has depended on it for a release.
+        "KERNEL_FAILURE_CODES",
+        "REJECTION_SCHEMA",
+        "REQUEST_REJECTION_CODES",
+        "RequestRejected",
+        "rejection_document",
+        # evidence-reading views: schema tags for inspect-run / attest outputs.
+        "INSPECTION_SCHEMA",
+        "ATTESTATION_VERIFICATION_SCHEMA",
+        "ATTESTATION_WRITE_SCHEMA",
         # attestation: record internals below the verification verdict.
         "AnchorRecord",
         "AttestationDocument",

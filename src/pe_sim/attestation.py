@@ -35,6 +35,14 @@ from .jsonutil import stable_sha256
 
 ATTESTATION_SCHEMA_VERSION = "pe-sim.attestation.v1"
 ANCHOR_SCHEMA_VERSION = "pe-sim.attestation-anchor.v1"
+
+#: Schema tag for the ``verify-attestation`` view.  It labels the answer, not
+#: the attestation document, whose own version stays ``ATTESTATION_SCHEMA_VERSION``.
+ATTESTATION_VERIFICATION_SCHEMA = "pe-sim.attestation-verification.v1"
+
+#: Schema tag for the ``attest-run`` write result.
+ATTESTATION_WRITE_SCHEMA = "pe-sim.attestation-write.v1"
+
 ATTESTATION_DIRNAME = "attestations"
 ANCHOR_INDEX_NAME = "anchor-index.jsonl"
 DEFAULT_INDEX_RELATIVE = f"{ATTESTATION_DIRNAME}/{ANCHOR_INDEX_NAME}"
@@ -275,6 +283,7 @@ class AttestationVerification:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "schema": ATTESTATION_VERIFICATION_SCHEMA,
             "status": self.status,
             "trust_level": self.trust_level,
             "signature_status": self.signature_status,
@@ -319,6 +328,7 @@ class AttestationWriteResult:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "schema": ATTESTATION_WRITE_SCHEMA,
             "status": self.status,
             "run_id": self.run_id,
             "run_dir": self.run_dir,

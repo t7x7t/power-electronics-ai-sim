@@ -644,6 +644,42 @@ pytest -q tests/test_run_events.py tests/test_cli_run_interaction.py `
   tests/test_plant_registry.py --basetemp .tmp/pytest-stage22
 ```
 
+### Stage 23 error and rejection codes (0.5.7)
+
+Roadmap Phase B item 4 (`docs/43_kernel_roadmap_v1.md`). This closes Phase B
+and the T3 test: every failure a client can meet is now branchable without
+matching prose.
+
+- `pe_sim.error_codes` defines `pe-sim.rejection.v1`. Every CLI exit-2 refusal
+  carries `schema`, `status`, `error_code`, and a human `error` string, while
+  keeping the pre-0.5.7 `status` values.
+- Six rejection codes: `invalid_request`, `unknown_plant`, `backend_mismatch`,
+  `unknown_backend`, `formal_comparison_rejected`,
+  `run_inspection_rejected`. `TypeError` from an adapter protocol violation is
+  now `invalid_request`, not a traceback.
+- `KERNEL_FAILURE_CODES` documents the categories the kernel and its built-in
+  observation-validity / model-envelope checks can write to
+  `manifest["failure"]["category"]`. It is documentation, not a whitelist:
+  adapter/plugin categories pass through unchanged, and clients must treat
+  unknown values as unverified. A raised check now takes its category from the
+  first **blocking** finding rather than an earlier warning.
+- `pe-sim.run-result.v1` adds `failure_category` (null on success), matching the
+  manifest and the `run.finished` event.
+- The evidence-reading views are schema-tagged: `inspect-run`
+  (`pe-sim.run-inspection.v1`), `verify-attestation`
+  (`pe-sim.attestation-verification.v1`), and `attest-run`
+  (`pe-sim.attestation-write.v1`). The package and manifest remain the
+  authority.
+
+The contract is `docs/45_error_and_rejection_codes_v1.md`.
+
+Acceptance evidence:
+
+```text
+pytest -q tests/test_error_codes.py tests/test_inspection.py `
+  tests/test_attestation.py --basetemp .tmp/pytest-stage23
+```
+
 ### Future compact diagnostic mechanism
 
 The current Stage 6 checks are intentionally a runtime integrity gate. A later

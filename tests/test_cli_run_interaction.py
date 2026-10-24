@@ -74,6 +74,7 @@ def test_cli_prints_a_versioned_terminal_result(tmp_path, capsys, monkeypatch):
         "limited",
         "comparable",
     }
+    assert payload["failure_category"] is None
     assert captured.err == "", "no interaction surface is paid for unless requested"
 
 
@@ -108,6 +109,7 @@ def test_cli_cancel_file_stops_the_run_and_leaves_the_request_in_place(
     result = json.loads(captured.out)
 
     assert result["status"] == "INCOMPLETE"
+    assert result["failure_category"] == "cancelled"
     assert "cancelled" in result["qualification"]["reasons"]
     run_dir = Path(result["run_dir"])
     assert (run_dir / "checkpoint.json").exists()

@@ -20,7 +20,7 @@ That goal is only useful if it can be checked. The design must pass:
 | --- | --- | --- |
 | T1 | Add a physical engine by writing an adapter and registering it, with **zero** edits to kernel modules | fails |
 | T2 | Add a topology without editing CLI allow-lists or schema enums | fails |
-| T3 | An agent can discover capabilities, start, observe progress, cancel, and read evidence using only versioned contracts | fails |
+| T3 | An agent can discover capabilities, start, observe progress, cancel, and read evidence using only versioned contracts | **passes** (0.5.7) |
 | T4 | An installed release reads a package from an older release and states cross-version comparability honestly | fails |
 | T5 | No self-declared or modified implementation can reach `comparable` | **passes** (0.5.2) |
 | T6 | A user who does not read source can run, view, and verify | fails |
@@ -44,9 +44,8 @@ never regress.
 registration as data, entry-point discovery, and adapter trust levels - shipped
 in 0.5.4 and satisfies gate G-A for stepped engines. **A2** - the time-model
 abstraction for engines that cannot be stepped - is blocked on decision D1.
-Phase B is partially complete: items 1-3 shipped in 0.5.5-0.5.6, item 4 (error
-codes) remains. Everything shipped before 0.5.4 is groundwork covered by §4,
-not a completed phase.
+Phase B is complete: items 1-4 shipped in 0.5.5-0.5.7. Everything shipped
+before 0.5.4 is groundwork covered by §4, not a completed phase.
 
 ```mermaid
 graph LR
@@ -114,25 +113,27 @@ Work:
 and enumerate results using only documented contracts; nothing in this surface
 can mutate a published package.
 
-**Status:** items 1, 2, and 3 are delivered. The read-only query surface
-(item 3) shipped in 0.5.5 as `pe_sim.catalog` plus `pe-sim list-runs`. Items 1
-and 2 shipped in 0.5.6: `pe_sim.run_events` defines schema-tagged
-`run.started` / `run.progress` / `run.finished` events and a rate-limited
-`ProgressPolicy`; `pe_sim.cancellation` turns cancellation into a polled
-contract instead of the `cancel_after_steps` test hook; the CLI exposes
-`--progress` (JSON lines on stderr) and `--cancel-file`. `pe-sim list-plants`
-exposes the registered plant declarations, so "discover capabilities" needs no
-Python import. The wire contract is
-`docs/44_run_interaction_contract_v1.md`.
+**Status:** complete as of 0.5.7. The read-only query surface (item 3) shipped
+in 0.5.5 as `pe_sim.catalog` plus `pe-sim list-runs`. Items 1 and 2 shipped in
+0.5.6: `pe_sim.run_events` defines schema-tagged `run.started` /
+`run.progress` / `run.finished` events and a rate-limited `ProgressPolicy`;
+`pe_sim.cancellation` turns cancellation into a polled contract instead of the
+`cancel_after_steps` test hook; the CLI exposes `--progress` (JSON lines on
+stderr) and `--cancel-file`. `pe-sim list-plants` exposes the registered plant
+declarations. Item 4 shipped in 0.5.7: `pe_sim.error_codes` defines the
+`pe-sim.rejection.v1` envelope with six branchable codes, the kernel failure
+vocabulary, and schema tags on the `inspect-run` / `attest-run` /
+`verify-attestation` views. Contracts: `docs/44_run_interaction_contract_v1.md`
+and `docs/45_error_and_rejection_codes_v1.md`.
 
 **Gate G-B is met** for the CLI client, evidenced by
-`tests/test_cli_run_interaction.py` and `tests/test_run_events.py`: start,
-observe, cancel, receive a versioned terminal result, enumerate with
-`list-runs`, and verify the cancelled package with `inspect-run` - all through
-documented contracts. Cancellation and progress write nothing into a
-published package, and a broken progress sink changes neither samples nor
-status. Item 4 (stable error codes) remains, so T3 stays "fails" until a
-client can branch on codes rather than match prose.
+`tests/test_cli_run_interaction.py`, `tests/test_run_events.py` and
+`tests/test_error_codes.py`: start, observe, cancel, receive a versioned
+terminal result, branch on an error code, enumerate with `list-runs`, and
+verify the cancelled package with `inspect-run` - all through documented
+contracts. Cancellation and progress write nothing into a published package,
+and a broken progress sink changes neither samples nor status. **T3 now
+passes.**
 
 **Excluded:** UI; remote access; multi-user operation; authentication.
 

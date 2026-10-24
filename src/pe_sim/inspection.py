@@ -24,6 +24,12 @@ from .artifacts import artifact_index, manifest_digest, package_digest
 from .credibility import CredibilityPolicy, assess_credibility
 
 
+#: Schema tag for the read-only view returned by ``pe-sim inspect-run``.  It
+#: labels this JSON view only: the authoritative evidence remains the
+#: published package plus its manifest.
+INSPECTION_SCHEMA = "pe-sim.run-inspection.v1"
+
+
 class RunInspectionError(ValueError):
     """Raised when a run directory cannot be inspected at all."""
 
@@ -37,6 +43,7 @@ class RunInspection:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "schema": INSPECTION_SCHEMA,
             "run_dir": str(self.run_dir),
             "status": self.status,
             "problems": list(self.problems),
