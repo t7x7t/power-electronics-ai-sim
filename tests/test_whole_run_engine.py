@@ -270,7 +270,10 @@ def test_registration_and_catalog_report_the_whole_run_route():
     assert entry["time_model"] == "whole_run"
     assert entry["class_name"] == "WholeRunBuckPlant"
     assert entry["trust_level"] == "reference"
-    assert entry["export_eligible"] is False
+    # The whole-run engine now declares a reviewed topology exporter, so a
+    # published whole-run package is displayable like the stepped packages.
+    assert entry["export_eligible"] is True
+    assert entry["topology_export"] is True
     assert entry["schedule_keys"] == ["time_s", "vref"]
 
     registration = get_plant(BACKEND_ID)

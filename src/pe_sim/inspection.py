@@ -305,6 +305,10 @@ def inspect_run(
         if isinstance(manifest.get("qualification"), Mapping)
         else None
     )
+    # The recorded evidence level is part of the evidence a reader needs; it is
+    # copied from the manifest, not recomputed, so a reader can compare it with
+    # the terminal result the producer printed.
+    summary["evidence_level"] = manifest.get("evidence_level")
     summary["credibility"] = assessment.to_dict()
     if attestation_section is not None:
         summary["attestation"] = attestation_section

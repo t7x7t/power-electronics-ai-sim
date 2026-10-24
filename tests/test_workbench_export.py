@@ -33,6 +33,7 @@ def _published_buck_run(root):
             "identity": {
                 "topology": "buck",
                 "kind": "ideal_averaged_reference",
+                "implementation": {"module": "pe_sim.reference_plants", "class": "BuckPlant"},
                 "parameters": {
                     "input_voltage_v": 12.0,
                     "inductance_h": 100e-6,

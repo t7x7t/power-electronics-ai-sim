@@ -71,11 +71,13 @@ the verified pin set (`numpy==1.26.4`) does not support the Python 3.13 runtime
 used by this checkout. Adding a `pyspice` extra now would either contradict that
 policy or produce an extra that fails to install on the tested interpreter.
 
-**Disposition:** item 1 is **not delivered**. Resolving it needs a
-release-policy decision (a separate wheel or requirements handoff, or a
-compatible pin set). The compatibility and discovery work does not depend on it,
-and `environment-check` behaviour is unchanged. 0.5.11 records the same
-decision rather than quietly adding an extra that would contradict `docs/28`.
+**Disposition:** item 1 is **not delivered as a package extra**; that still needs
+a release-policy decision (a separate wheel or requirements handoff, or a
+compatible pin set). Since 0.5.13 the discoverability half ships as
+`pe_sim.capabilities` / `pe-sim capabilities`, which reports every optional
+capability, its status in the current process, and how to enable it without
+reading the repository (`docs/49_optional_capabilities_v1.md`). `environment-check`
+behaviour is unchanged.
 
 ## 4. Upgrade gate (T4, delivered in 0.5.11)
 

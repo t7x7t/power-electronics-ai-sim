@@ -23,11 +23,18 @@ A plant declares which time model it uses.  The kernel reads that declaration
 and routes the run; it never decides what a plant is.  Both time models are
 executable, and the whole-run route is priced at a lower evidence level rather
 than hidden from the catalogue.
+
+A plant that can be displayed also declares a ``topology_exporter``: a small
+function that rebuilds the reviewed display descriptor from the parameters a
+run recorded in its manifest.  The exporter reads recorded data only, so it
+never instantiates an unpaid solver and never claims that the recorded run is
+correct.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from types import SimpleNamespace
 from typing import Any, Mapping
 
 from .backends import (
@@ -45,6 +52,12 @@ from .plant_registry import PlantRegistration, register_plant, registered_plants
 from .reference_plants import BuckPlant, BoostPlant
 from .runtime import FakeLoadPlant, FakePlant
 from .time_model import TIME_MODEL_WHOLE_RUN
+from .topology import (
+    TopologyDescriptor,
+    buck_topology_descriptor,
+    export_topology_descriptor,
+    ngspice_buck_topology_descriptor,
+)
 
 
 @dataclass(frozen=True)
@@ -105,6 +118,25 @@ _WHOLE_RUN_BUCK_DEFAULTS: dict[str, object] = {
     "output_max": 1.0,
     "anti_windup": True,
 }
+
+# The display descriptors render only these recorded parameters.  They are
+# listed here so an incomplete manifest is refused instead of being drawn with
+# missing values; the descriptor builders themselves stay in ``pe_sim.topology``.
+_AVERAGED_TOPOLOGY_PARAMETERS: tuple[str, ...] = (
+    "input_voltage_v",
+    "inductance_h",
+    "capacitance_f",
+    "load_resistance_ohm",
+    "integration_step_s",
+)
+_SWITCHING_TOPOLOGY_PARAMETERS: tuple[str, ...] = (
+    "input_voltage_v",
+    "inductance_h",
+    "capacitance_f",
+    "load_resistance_ohm",
+    "switching_frequency_hz",
+    "control_period_s",
+)
 
 
 def _reject_unknown_keys(plant_id: str, config: Mapping[str, Any], allowed: frozenset[str]) -> None:
@@ -198,6 +230,91 @@ def _build_ngspice_buck(config: Mapping[str, Any], context: PlantBuildContext) -
     )
 
 
+# ---------------------------------------------------------------------------
+# Workbench topology exporters
+#
+# An exporter receives exactly what a published package recorded and returns
+# the reviewed descriptor for the plant class that produced that package.  It
+# is not a second model: the graph builders live in ``pe_sim.topology`` and are
+# reused here, so a descriptor cannot drift from the circuit the class defines.
+# ---------------------------------------------------------------------------
+
+
+def _recorded_parameters(
+    parameters: Mapping[str, Any], names: tuple[str, ...]
+) -> dict[str, float]:
+    """Read the numeric parameters a display descriptor renders.
+
+    Missing or non-numeric values are refused rather than defaulted: a
+    descriptor built from guessed values would misstate the run it names.
+    """
+
+    missing = [name for name in names if name not in parameters]
+    if missing:
+        raise ValueError("plant parameters are incomplete: " + ", ".join(sorted(missing)))
+    return {name: float(parameters[name]) for name in names}
+
+
+def _export_averaged_topology(
+    plant_type: type, parameters: Mapping[str, Any]
+) -> TopologyDescriptor:
+    """Rebuild an averaged-reference descriptor through its reviewed plant view.
+
+    The plant view is constructed from the recorded parameters so the same
+    constructor validation that a live run used also guards the export.  No
+    solver is started and no run is repeated.
+    """
+
+    values = _recorded_parameters(parameters, _AVERAGED_TOPOLOGY_PARAMETERS)
+    return export_topology_descriptor(plant_type(**values))
+
+
+def _export_buck_topology(parameters: Mapping[str, Any]) -> TopologyDescriptor:
+    """Display the project-owned averaged Buck reference."""
+
+    return _export_averaged_topology(BuckPlant, parameters)
+
+
+def _export_boost_topology(parameters: Mapping[str, Any]) -> TopologyDescriptor:
+    """Display the project-owned averaged Boost reference."""
+
+    return _export_averaged_topology(BoostPlant, parameters)
+
+
+def _export_ngspice_buck_topology(parameters: Mapping[str, Any]) -> TopologyDescriptor:
+    """Display the reviewed switching-level Buck graph from recorded parameters.
+
+    The result is a descriptor identity, not a netlist: it makes no claim that
+    a simulator was installed, that the recorded run executed this exact
+    circuit, or that the switching waveform was numerically correct.
+    """
+
+    values = _recorded_parameters(parameters, _SWITCHING_TOPOLOGY_PARAMETERS)
+    return ngspice_buck_topology_descriptor(SimpleNamespace(**values))
+
+
+def _export_whole_run_buck_topology(parameters: Mapping[str, Any]) -> TopologyDescriptor:
+    """Display the averaged Buck graph for the whole-run engine's package.
+
+    The circuit is the reviewed averaged Buck one, so the graph is reused;
+    only the metadata changes, because the engine owns its own PI loop and its
+    model claim is not the stepped reference's.  The descriptor describes the
+    declared model, not the quality of the run.
+    """
+
+    values = _recorded_parameters(parameters, _AVERAGED_TOPOLOGY_PARAMETERS)
+    base = buck_topology_descriptor(SimpleNamespace(**values))
+    return replace(
+        base,
+        metadata={
+            **dict(base.metadata),
+            "model_kind": WholeRunBuckPlant.model_kind,
+            "backend": WholeRunBuckPlant.backend_id,
+            "time_model": WholeRunBuckPlant.time_model,
+        },
+    )
+
+
 _BUILTIN_REGISTRATIONS: tuple[PlantRegistration, ...] = (
     PlantRegistration(
         plant_id="fake",
@@ -228,6 +345,7 @@ _BUILTIN_REGISTRATIONS: tuple[PlantRegistration, ...] = (
         config_keys=_REFERENCE_PLANT_CONFIG_KEYS,
         trust_level="reference",
         export_eligible=True,
+        topology_exporter=_export_buck_topology,
     ),
     PlantRegistration(
         plant_id="boost",
@@ -238,6 +356,7 @@ _BUILTIN_REGISTRATIONS: tuple[PlantRegistration, ...] = (
         config_keys=_REFERENCE_PLANT_CONFIG_KEYS,
         trust_level="reference",
         export_eligible=True,
+        topology_exporter=_export_boost_topology,
     ),
     PlantRegistration(
         plant_id="ngspice-buck",
@@ -248,6 +367,7 @@ _BUILTIN_REGISTRATIONS: tuple[PlantRegistration, ...] = (
         config_keys=None,
         trust_level="reference",
         export_eligible=True,
+        topology_exporter=_export_ngspice_buck_topology,
     ),
     PlantRegistration(
         plant_id="whole-run-buck",
@@ -257,8 +377,9 @@ _BUILTIN_REGISTRATIONS: tuple[PlantRegistration, ...] = (
         schedule_keys=_BASE_SCHEDULE_KEYS,
         config_keys=frozenset(_WHOLE_RUN_BUCK_DEFAULTS),
         trust_level="reference",
-        export_eligible=False,
+        export_eligible=True,
         time_model=TIME_MODEL_WHOLE_RUN,
+        topology_exporter=_export_whole_run_buck_topology,
     ),
 )
 

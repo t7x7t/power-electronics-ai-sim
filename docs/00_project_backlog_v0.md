@@ -858,6 +858,41 @@ pe-sim demo .tmp/demo-check
 Still open: a browser UI (withdrawn), a remote API, authentication, and
 multi-user operation.
 
+### Stage 29 declared topology export and capability report (0.5.13)
+
+Two remaining places where a consumer still had to know a module or a list are
+now declarations.
+
+- `PlantRegistration.topology_exporter` turns the workbench projection into
+  registration data. `workbench_export` resolves the recorded `plant.id`
+  through the registry and requires three declarations: `export_eligible`, a
+  matching recorded class name, and an exporter that returns a
+  `TopologyDescriptor`. The module no longer names a topology; it retries one
+  lazy `load_builtin_plants()` so a library caller without the CLI composition
+  root still works.
+- `whole-run-buck` is now `export_eligible=True` and declares an exporter, so a
+  whole-run package produces the same three read-only contracts. The trace
+  reader accepts either recorded column spelling (`inductor_current` /
+  `inductor_current_a`, `action` / `duty`) instead of encoding a plant list.
+- `pe_sim.capabilities` (`pe-sim capabilities`) reports every optional
+  capability, whether it is usable in the current process, and how to enable
+  it. `--require ID` makes the command scriptable. It is explicitly not run
+  evidence: it starts no simulator, writes no file, and its statuses are
+  per-process.
+
+Acceptance evidence:
+
+```text
+pytest -q tests/test_topology_export_registration.py tests/test_capabilities.py `
+  tests/test_workbench_export.py tests/test_workbench_export_ngspice.py `
+  tests/test_plant_registry.py tests/test_end_to_end_matrix.py `
+  --basetemp .tmp/pytest-stage29
+pe-sim capabilities --compact
+```
+
+Still open: an actual install-time extra (needs the `docs/28` policy decision)
+and the schema migration registry.
+
 ### Future compact diagnostic mechanism
 The current Stage 6 checks are intentionally a runtime integrity gate. A later
 increment should add a small, backend-neutral diagnostic contract so users can

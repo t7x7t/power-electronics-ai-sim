@@ -17,29 +17,26 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from .artifacts import artifact_index, manifest_digest, package_digest
+from .catalog import recorded_plant_class
 from .outputs import OutputCollector, OutputDefinition, OutputRegistry
-from .reference_plants import BoostPlant, BuckPlant
-from .topology import TopologyDescriptor, export_topology_descriptor
+from .plant_registry import PlantRegistration, resolve
+from .topology import TopologyDescriptor
 from .traces import SamplingPolicy, SignalDefinition, SignalRegistry, TraceCollector, TraceDataset, TraceProvenance
 
 
 _FIXTURE_FILENAMES = ("topology.json", "trace.json", "outputs.json")
 _PUBLISHED_STATUSES = frozenset({"RUN_OK", "QUALIFIED", "COMPARABLE"})
-_PLANT_PARAMETERS = (
-    "input_voltage_v",
-    "inductance_h",
-    "capacitance_f",
-    "load_resistance_ohm",
-    "integration_step_s",
-)
-_SWITCHING_PLANT_PARAMETERS = (
-    "input_voltage_v",
-    "inductance_h",
-    "capacitance_f",
-    "load_resistance_ohm",
-    "switching_frequency_hz",
-    "control_period_s",
-)
+
+# The trace contract names a physical quantity, not a package's column
+# spelling.  Stepped adapters record ``inductor_current`` and ``action``; a
+# whole-run engine records ``inductor_current_a`` and ``duty`` for the same
+# quantities.  One reader accepts either spelling, so neither the trace schema
+# nor the plant registration has to encode a column list.
+_TRACE_SOURCE_COLUMNS: dict[str, tuple[str, ...]] = {
+    "plant.vout": ("vout",),
+    "plant.inductor_current": ("inductor_current", "inductor_current_a"),
+    "controller.duty": ("action", "duty"),
+}
 
 
 class WorkbenchExportError(ValueError):
@@ -148,52 +145,81 @@ def _published_manifest(run_dir: Path) -> Mapping[str, Any]:
     return manifest
 
 
-def _topology_descriptor(manifest: Mapping[str, Any]) -> TopologyDescriptor:
-    """Build the reviewed descriptor for a supported published plant family.
+def _registration_for(plant_id: Any) -> PlantRegistration:
+    """Resolve the plant that recorded this package, or fail closed.
 
-    The exporter never instantiates an unpaid solver: the averaged reference is
-    reconstructed from manifest parameters, while the switching reference only
-    needs its reviewed descriptor builder. Unknown families fail closed.
+    A published package may be read without the CLI composition root (a
+    library caller, a test, or a service), so one lazy ``load_builtin_plants()``
+    retry happens before the lookup is allowed to fail.  Nothing is invented: a
+    package whose plant is not registered in this process is not exportable.
+    """
+
+    if not isinstance(plant_id, str) or not plant_id:
+        raise WorkbenchExportError(f"no reviewed workbench topology exporter for {plant_id!r}")
+    try:
+        return resolve(plant_id)
+    except KeyError:
+        pass
+    # Imported lazily because the composition root imports adapters, and this
+    # module must stay importable on its own.
+    from .builtin_plants import load_builtin_plants
+
+    try:
+        load_builtin_plants()
+    except ValueError as exc:
+        raise WorkbenchExportError(
+            f"no reviewed workbench topology exporter for {plant_id!r}: {exc}"
+        ) from exc
+    try:
+        return resolve(plant_id)
+    except KeyError:
+        raise WorkbenchExportError(
+            f"no reviewed workbench topology exporter for {plant_id!r}"
+        ) from None
+
+
+def _topology_descriptor(manifest: Mapping[str, Any]) -> TopologyDescriptor:
+    """Project a published package's recorded parameters through its plant.
+
+    The export decision is a registration decision: this module names no plant,
+    engine, or topology.  A registration may export only when it declares
+    ``export_eligible``, declares a ``topology_exporter``, and its declared
+    ``class_name`` matches the class the package recorded.  The resulting
+    descriptor is a display identity; it is not evidence that the run was
+    numerically correct or that a solver executed the drawn circuit.
     """
 
     plant = _mapping(manifest.get("plant"), "manifest plant")
     plant_id = plant.get("id")
     identity = _mapping(plant.get("identity"), "manifest plant identity")
     parameters = _mapping(identity.get("parameters"), "manifest plant parameters")
-    kind = identity.get("kind")
+    registration = _registration_for(plant_id)
 
-    if kind == "ngspice_switching_reference":
-        if identity.get("topology") != "buck":
-            raise WorkbenchExportError(f"no reviewed workbench topology exporter for {plant_id!r}")
-        missing = set(_SWITCHING_PLANT_PARAMETERS) - set(parameters)
-        if missing:
-            raise WorkbenchExportError(
-                "manifest plant parameters are incomplete: " + ", ".join(sorted(missing))
-            )
-        try:
-            values = {name: float(parameters[name]) for name in _SWITCHING_PLANT_PARAMETERS}
-        except (TypeError, ValueError) as exc:
-            raise WorkbenchExportError(f"manifest plant parameters are invalid: {exc}") from exc
-        from types import SimpleNamespace
-        from .topology import ngspice_buck_topology_descriptor
-
-        return ngspice_buck_topology_descriptor(SimpleNamespace(**values))
-
-    if (
-        plant_id not in {"buck", "boost"}
-        or identity.get("topology") != plant_id
-        or kind != "ideal_averaged_reference"
-    ):
-        raise WorkbenchExportError(f"no reviewed workbench topology exporter for {plant_id!r}")
-    missing = set(_PLANT_PARAMETERS) - set(parameters)
-    if missing:
-        raise WorkbenchExportError("manifest plant parameters are incomplete: " + ", ".join(sorted(missing)))
+    if not registration.export_eligible:
+        raise WorkbenchExportError(
+            f"plant {registration.plant_id!r} is not eligible for workbench export"
+        )
+    recorded_class = recorded_plant_class(plant)
+    if recorded_class != registration.class_name:
+        raise WorkbenchExportError(
+            f"plant {registration.plant_id!r} recorded class {recorded_class!r}, "
+            f"but the registration declares {registration.class_name!r}"
+        )
+    exporter = registration.topology_exporter
+    if exporter is None:
+        raise WorkbenchExportError(
+            f"plant {registration.plant_id!r} declares no workbench topology exporter"
+        )
     try:
-        kwargs = {name: float(parameters[name]) for name in _PLANT_PARAMETERS}
-        plant_view = BuckPlant(**kwargs) if plant_id == "buck" else BoostPlant(**kwargs)
+        descriptor = exporter(parameters)
     except (TypeError, ValueError) as exc:
         raise WorkbenchExportError(f"manifest plant parameters are invalid: {exc}") from exc
-    return export_topology_descriptor(plant_view)
+    if not isinstance(descriptor, TopologyDescriptor):
+        raise WorkbenchExportError(
+            f"plant {registration.plant_id!r} topology exporter returned "
+            f"{type(descriptor).__name__}, expected a TopologyDescriptor"
+        )
+    return descriptor
 
 
 def _provenance(manifest: Mapping[str, Any]) -> TraceProvenance:
@@ -212,6 +238,15 @@ def _provenance(manifest: Mapping[str, Any]) -> TraceProvenance:
             "working_tree_status": manifest.get("working_tree_status", "unknown"),
         },
     )
+
+
+def _sample_value(row: Mapping[str, Any], signal_id: str) -> Any:
+    """Return the recorded column for one logical signal, or raise ``KeyError``."""
+
+    for column in _TRACE_SOURCE_COLUMNS[signal_id]:
+        if column in row:
+            return row[column]
+    raise KeyError(_TRACE_SOURCE_COLUMNS[signal_id][0])
 
 
 def _samples_to_trace(samples: Any, provenance: TraceProvenance) -> TraceDataset:
@@ -236,12 +271,12 @@ def _samples_to_trace(samples: Any, provenance: TraceProvenance) -> TraceDataset
         try:
             time_s = float(row["time_s"])
             values = {
-                "plant.vout": float(row["vout"]),
-                "plant.inductor_current": float(row["inductor_current"]),
-                "controller.duty": float(row["action"]),
+                "plant.vout": float(_sample_value(row, "plant.vout")),
+                "plant.inductor_current": float(_sample_value(row, "plant.inductor_current")),
+                "controller.duty": float(_sample_value(row, "controller.duty")),
             }
         except (KeyError, TypeError, ValueError) as exc:
-            raise WorkbenchExportError(f"samples.json row {index} lacks a usable Buck/Boost observation: {exc}") from exc
+            raise WorkbenchExportError(f"samples.json row {index} lacks a usable plant observation: {exc}") from exc
         if not math.isfinite(time_s) or time_s < 0 or not all(math.isfinite(value) for value in values.values()):
             raise WorkbenchExportError(f"samples.json row {index} contains non-finite values")
         if previous_time is not None and time_s < previous_time:
@@ -293,7 +328,7 @@ def export_run_to_workbench_fixture(
     *,
     overwrite: bool = False,
 ) -> WorkbenchFixtureExport:
-    """Create derived workbench files from a verified published Buck/Boost run.
+    """Create derived workbench files from a verified published run.
 
     ``destination`` must be outside ``run_dir``. Existing fixture files are
     rejected unless ``overwrite`` is explicit. No source-package file is
@@ -333,11 +368,11 @@ def export_run_to_workbench_fixture(
 
 
 def load_run_workbench_contracts(run_dir: str | Path) -> WorkbenchContracts:
-    """Verify a published Buck/Boost run and return display contracts in memory.
+    """Verify a published run and return display contracts in memory.
 
     This is the read-only boundary used by local services and exporters.  It
-    never writes to the run directory and only accepts the reviewed reference
-    plant identities handled by this module.
+    never writes to the run directory and only accepts plant families whose
+    registration declares an export-eligible, class-matched topology exporter.
     """
 
     source = Path(run_dir).resolve()
@@ -360,7 +395,7 @@ def load_run_workbench_contracts(run_dir: str | Path) -> WorkbenchContracts:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Export a verified Buck/Boost run as read-only workbench fixtures.")
+    parser = argparse.ArgumentParser(description="Export a verified published run as read-only workbench fixtures.")
     parser.add_argument("run_dir", type=Path, help="published run-package directory")
     parser.add_argument("destination", type=Path, help="derived fixture directory outside the run package")
     parser.add_argument("--overwrite", action="store_true", help="replace the three existing derived fixture files")

@@ -417,9 +417,11 @@ def test_load_builtin_plants_is_idempotent_and_complete():
     for plant_id, trust_level in _EXPECTED_TRUST.items():
         registration = get_plant(plant_id)
         assert registration.trust_level == trust_level
-        # The whole-run route is executable but has no reviewed workbench
-        # export yet, so it declares that instead of pretending otherwise.
-        assert registration.export_eligible is (plant_id != "whole-run-buck")
+        # The whole-run route now declares a reviewed topology exporter, so it
+        # is export-eligible; the fixture plants are eligible but publish no
+        # display topology.
+        assert registration.export_eligible is True
+        assert registration.topology_exporter is not None or plant_id in ("fake", "fake-load")
         assert registration.class_name.endswith("Plant")
 
 

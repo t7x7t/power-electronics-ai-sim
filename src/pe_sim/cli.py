@@ -11,6 +11,7 @@ from typing import Any, Mapping
 from .applicability import ApplicabilityPolicy
 from .attestation import attest_run, verify_attestation
 from .cancellation import FileCancelToken
+from .capabilities import capability_report
 from .contracts import ExperimentSpec, validate_experiment_document
 from .error_codes import RequestRejected, rejection_document
 from .qualification_rules import QualificationRulePack
@@ -86,7 +87,7 @@ def _emit_rejection(status: str, code: str, error: str, **extra: Any) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Auditable power-electronics simulation runtime")
-    parser.add_argument("--version", action="version", version="0.5.12")
+    parser.add_argument("--version", action="version", version="0.5.13")
     sub = parser.add_subparsers(dest="command")
     run = sub.add_parser("run", help="run an experiment from JSON config")
     run.add_argument("config", type=Path)
@@ -156,6 +157,18 @@ def main(argv: list[str] | None = None) -> int:
         default="executable",
         help="provenance profile used with --backend-executable",
     )
+    capabilities = sub.add_parser(
+        "capabilities",
+        help="report optional capabilities without starting a simulator",
+    )
+    capabilities.add_argument(
+        "--require",
+        action="append",
+        default=[],
+        metavar="CAPABILITY_ID",
+        help="require this capability to be installed; repeatable",
+    )
+    capabilities.add_argument("--compact", action="store_true", help="emit single-line JSON")
     backend = sub.add_parser("backend", help="inspect external simulator discovery and configuration")
     backend_sub = backend.add_subparsers(dest="backend_command")
     backend_sub.add_parser("list", help="list registered backends and their status")
@@ -314,6 +327,25 @@ def main(argv: list[str] | None = None) -> int:
             result = check_recommended_environment(args.requirements, args.pyproject, backend_adapters=adapters)
             print(json.dumps(result.to_dict(), sort_keys=True))
             return 0 if result.status == "pass" else 1
+        elif args.command == "capabilities":
+            report = capability_report()
+            known = {str(item["capability_id"]) for item in report["capabilities"]}
+            required = list(dict.fromkeys(args.require))
+            unknown = [item for item in required if item not in known]
+            if unknown:
+                _emit_rejection(
+                    "CONFIG_REJECTED",
+                    "invalid_request",
+                    "unknown capability id(s): " + ", ".join(unknown),
+                    known_capabilities=sorted(known),
+                )
+                return 2
+            print(json.dumps(report, sort_keys=True, indent=None if args.compact else 2))
+            statuses = {
+                str(item["capability_id"]): str(item["status"])
+                for item in report["capabilities"]
+            }
+            return 0 if all(statuses[item] == "installed" for item in required) else 1
         elif args.command == "compare-runs":
             policy = _cli_tolerance_policy(args.relative_tolerance, args.signal_tolerance)
             if policy is None:

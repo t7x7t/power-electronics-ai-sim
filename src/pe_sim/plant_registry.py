@@ -22,6 +22,12 @@ Trust is declared, never inferred.  The registry records ``trust_level`` and
 ``export_eligible`` as supplied by the registration; it never branches on the
 value of a declaration, and it never upgrades a third-party plant to a
 reviewed one.
+
+The optional ``topology_exporter`` is the registration's own projection from
+recorded manifest parameters to the reviewed display descriptor.  The registry
+keeps the callable in-process and reports only whether one was declared, so a
+consumer can decide *whether* a plant is displayable without this module
+gaining knowledge of any topology.
 """
 
 from __future__ import annotations
@@ -65,6 +71,9 @@ class PlantRegistration:
     ``trust_level`` is a declaration for reporting; it is never used to decide
     how the kernel behaves.  ``time_model`` is likewise a declaration: the
     registry reports who owns the clock and never branches on the value.
+    ``topology_exporter`` is an optional ``parameters -> descriptor`` callable
+    owned by the registration; ``None`` means the plant publishes no display
+    topology, and the catalog reports that as ``topology_export: false``.
     """
 
     plant_id: str
@@ -79,6 +88,10 @@ class PlantRegistration:
     #: to the requested endpoint; ``whole_run`` means the engine owns its time
     #: axis.  Both are recorded as data; only the evidence cap differs.
     time_model: str = TIME_MODEL_STEPPED
+    #: Builds the reviewed display descriptor from the parameters a run records
+    #: in its manifest.  The registry validates that it is callable and reports
+    #: whether it exists; it never calls it and never imports a topology module.
+    topology_exporter: Callable[[Mapping[str, Any]], Any] | None = None
 
 
 _REGISTRATIONS: dict[str, PlantRegistration] = {}
@@ -134,6 +147,11 @@ def _validated(registration: PlantRegistration) -> PlantRegistration:
         )
     if not isinstance(registration.export_eligible, bool):
         raise TypeError(f"plant_id {plant_id!r} export_eligible must be a bool")
+    if registration.topology_exporter is not None and not callable(registration.topology_exporter):
+        raise TypeError(
+            f"plant_id {plant_id!r} topology_exporter must be callable or None, "
+            f"got {type(registration.topology_exporter).__name__}"
+        )
     return replace(
         registration,
         schedule_keys=_freeze_keys("schedule_keys", registration.schedule_keys),
@@ -213,6 +231,9 @@ def plant_catalog(*, discover: bool = False) -> dict[str, Any]:
             else sorted(registration.config_keys),
             "trust_level": registration.trust_level,
             "export_eligible": registration.export_eligible,
+            # A capability flag, never the callable: the catalog stays JSON-safe
+            # and a client cannot acquire an in-process builder from it.
+            "topology_export": registration.topology_exporter is not None,
         }
         for _, registration in sorted(_REGISTRATIONS.items())
     ]

@@ -27,10 +27,17 @@ def _run(root, run_id="buck-demo"):
     manifest = {
         "run_id": run_id, "status": "QUALIFIED", "run_mode": "exploratory",
         "source_commit": "a" * 40,
-        "plant": {"id": "buck", "identity": {"topology": "buck", "kind": "ideal_averaged_reference", "parameters": {
-            "input_voltage_v": 12.0, "inductance_h": 100e-6, "capacitance_f": 470e-6,
-            "load_resistance_ohm": 10.0, "integration_step_s": 1e-6,
-        }}},
+        "plant": {"id": "buck", "identity": {
+            "topology": "buck",
+            "kind": "ideal_averaged_reference",
+            # A real package records which class produced it; the exporter
+            # refuses a registration that does not match it.
+            "implementation": {"module": "pe_sim.reference_plants", "class": "BuckPlant"},
+            "parameters": {
+                "input_voltage_v": 12.0, "inductance_h": 100e-6, "capacitance_f": 470e-6,
+                "load_resistance_ohm": 10.0, "integration_step_s": 1e-6,
+            },
+        }},
     }
     manifest["artifacts"] = artifact_index(run)
     manifest["manifest_sha256"] = manifest_digest(manifest)

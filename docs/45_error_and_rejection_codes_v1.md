@@ -119,6 +119,11 @@ JSON, `summary["compatibility"]` on the Python object)
 read-with-policy verdict, not an integrity claim; see
 `docs/47_compatibility_policy_v1.md`.
 
+Since 0.5.13, `inspect-run` also copies the recorded `evidence_level` and
+`qualification_level` from the package. Both are read from the manifest, not
+recomputed, so a reader can compare the view with the terminal result the
+producer printed. A view never upgrades a level.
+
 ## 5. Versioning
 
 - A new rejection code or failure category may be added within v1; clients

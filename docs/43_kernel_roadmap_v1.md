@@ -19,7 +19,7 @@ That goal is only useful if it can be checked. The design must pass:
 | # | Test | Today |
 | --- | --- | --- |
 | T1 | Add a physical engine by writing an adapter and registering it, with **zero** edits to kernel modules | **passes** (0.5.10) |
-| T2 | Add a topology without editing CLI allow-lists or schema enums | **passes** (0.5.4; guarded 0.5.12) |
+| T2 | Add a topology without editing CLI allow-lists or schema enums | **passes** (0.5.4; export path data-driven 0.5.13) |
 | T3 | An agent can discover capabilities, start, observe progress, cancel, and read evidence using only versioned contracts | **passes** (0.5.7) |
 | T4 | An installed release reads a package from an older release and states cross-version comparability honestly | **passes** (0.5.11) |
 | T5 | No self-declared or modified implementation can reach `comparable` | **passes** (0.5.2) |
@@ -46,9 +46,10 @@ shipped in 0.5.4. **A2** - the time-model abstraction - delivered its decision
 (D1), trace contract, and engine boundary in 0.5.8, and its **execution route
 plus a second engine in 0.5.10** (`docs/46`). Phase B is complete: items 1-4
 shipped in 0.5.5-0.5.7. Phase C is substantially complete: D3/D4 and
-read-with-policy shipped in 0.5.9, and the **upgrade gate (T4) in 0.5.11**.
-Only install-time extras (blocked by the `docs/28` release policy) and the
-schema migration registry (deferred to the first schema bump) remain. **Phase D
+read-with-policy shipped in 0.5.9, the **upgrade gate (T4) in 0.5.11**, and the
+capability discoverability half of item 1 in 0.5.13. Only install-time extras
+themselves (blocked by the `docs/28` release policy) and the schema migration
+registry (deferred to the first schema bump) remain. **Phase D
 shipped in 0.5.12**, so T6 passes. Test T2 has passed since 0.5.4 (a topology is
 registered, never listed) and is now guarded by a structural test.
 Everything shipped before 0.5.4 is groundwork covered by §4, not a completed
@@ -189,7 +190,10 @@ release, and requires `compare-runs` to report
 `compatibility.cross_version_comparison = "not_assessed"` rather than implying
 cross-release equality. Install-time extras remain open: `docs/28` deliberately
 keeps PySpice out of dependencies/extras, so item 1 needs a release-policy
-decision. The schema migration registry is deliberately deferred to the first
+decision. The part of item 1 that does not need that decision shipped in
+0.5.13: `pe_sim.capabilities` reports each optional capability, its status in
+the current process, and how to enable it (`docs/49_optional_capabilities_v1.md`).
+The schema migration registry is deliberately deferred to the first
 schema bump.
 
 ### Phase D - Lower barrier

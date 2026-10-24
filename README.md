@@ -47,6 +47,12 @@ pe-sim inspect-run .\my-demo\runs\<run_id> --compact
 pe-sim visualization-serve --runs-root .\my-demo\runs
 ```
 
+`pe-sim capabilities` reports every optional capability (PySpice netlist builder,
+external ngspice, the visualization service, Git anchoring), whether it is
+usable in the current process, and how to enable it. `--require <id>` makes it a
+scriptable preflight check. See
+[docs/49_optional_capabilities_v1.md](docs/49_optional_capabilities_v1.md).
+
 The demo is an exploratory run of a project-owned averaged reference model. It
 records `evidence_level: functional`; it is not a physical, formal-comparison,
 or hardware claim. The consumer creates one configuration file and otherwise
@@ -490,6 +496,14 @@ Entry-point registrations are forced to `trust_level = "third-party"` and
 `export_eligible = False`, and the trust level is recorded at
 `manifest.plant.trust_level`. Importing `pe_sim.plant_registry` never starts a
 simulator and never imports a plugin.
+
+A registration also declares how its packages may be displayed: a
+`topology_exporter` callable projects the parameters a run recorded into the
+reviewed `TopologyDescriptor`. `export-workbench` resolves the recorded plant
+through the registry and requires `export_eligible`, a matching recorded class
+name, and an exporter; an unregistered or mismatched plant fails closed before
+anything is written. Adding a displayable topology is a registration, not an
+edit to the exporter.
 
 A registration also declares `time_model`. `stepped` (the default) means the
 kernel owns the clock and can enforce constraints per window; those runs remain
