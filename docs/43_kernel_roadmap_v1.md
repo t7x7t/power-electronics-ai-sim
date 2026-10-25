@@ -168,8 +168,11 @@ keeps packages produced by an earlier one.
 
 Work:
 
-1. Optional capabilities declared as install-time extras, so a packaged user can
-   enable them without reading the repository.
+1. Optional capabilities declared so a packaged user can enable them without
+   reading the repository. Decided in `adr/0003-install-time-extras.md`
+   (decision E1): discovery is the capability report, and the installation
+   handoff is a pinned requirements file; optional simulator frontends are not
+   package extras.
 2. Schema migration policy - read old, write new - with an explicit registry
    created at the first schema bump rather than retrofitted at the second. This
    was honoured: schema `0.2` and `pe_sim.schema_registry` shipped together.
@@ -189,13 +192,14 @@ root (`docs/47_compatibility_policy_v1.md`). The **upgrade gate shipped in
 checkout into an isolated environment, reads a package produced by the v0.5.9
 release, and requires `compare-runs` to report
 `compatibility.cross_version_comparison = "not_assessed"` rather than implying
-cross-release equality. Install-time extras remain open: `docs/28` deliberately
-keeps PySpice out of dependencies/extras, so item 1 needs a release-policy
-decision. The part of item 1 that does not need that decision shipped in
-0.5.13: `pe_sim.capabilities` reports each optional capability, its status in
-the current process, and how to enable it (`docs/49_optional_capabilities_v1.md`).
-Schema `0.2` and the migration registry shipped in 0.6.0, so item 2 is delivered;
-item 1 (an actual extra) is the only Phase C item still blocked on policy.
+cross-release equality. Item 1 is **closed in 0.6.1**: `pe-sim capabilities`
+reports each optional capability, its status, and how to enable it, while ADR
+0003 records that `test` is the only install-time extra and that PySpice is a
+manual, pinned installation rather than an extra. The decision names the
+conditions under which a future extra may be added, and
+`tests/test_release_policy.py` enforces the mechanical half. Schema `0.2` and
+the migration registry shipped in 0.6.0, so item 2 is delivered. **Phase C is
+complete**; D3/D4 and the extras decision are the durable policy outcomes.
 
 ### Phase D - Lower barrier
 

@@ -4,9 +4,11 @@
 verdicts, explicit discovery root). The **upgrade gate landed in 0.5.11**: an
 installed release reads an older release's package and states cross-release
 comparability honestly, so test **T4 passes**. Install-time capability extras
-remain deferred by the existing release policy (§3). The **schema migration
-registry exists as of schema `0.2`** (§5): the compatibility verdict now
-distinguishes an older package with a registered path from one without.
+are **decided, not deferred** (decision E1, ADR 0003): `test` is the only
+extra, and optional simulator frontends use the capability report plus a pinned
+requirements handoff. The **schema migration registry exists as of schema
+`0.2`** (§5): the compatibility verdict now distinguishes an older package with
+a registered path from one without.
 
 ## 1. Decisions
 
@@ -64,21 +66,22 @@ the *interpretation* that is limited.
 Patch suffixes (`0.1.4`) are ignored for ordering; a different major or minor is
 not.
 
-## 3. Install-time extras: deferred by an existing policy
+## 3. Install-time extras: decided by recorded policy
 
-The roadmap's Phase C item 1 asks for capability extras. `docs/28` explicitly
-states that PySpice is "deliberately not a package dependency or extra", and
-the verified pin set (`numpy==1.26.4`) does not support the Python 3.13 runtime
-used by this checkout. Adding a `pyspice` extra now would either contradict that
-policy or produce an extra that fails to install on the tested interpreter.
+The roadmap's Phase C item 1 asked for capability extras. The decision (E1,
+[`adr/0003-install-time-extras.md`](adr/0003-install-time-extras.md)) is that
+`test` is the **only** extra, and an optional simulator frontend is not an
+extra when it would cross the license boundary, break the declared Python
+range, or corrupt the `environment-check` verdict. PySpice meets all three
+conditions, so it stays a manual installation through
+`requirements-pyspice-tested.txt`.
 
-**Disposition:** item 1 is **not delivered as a package extra**; that still needs
-a release-policy decision (a separate wheel or requirements handoff, or a
-compatible pin set). Since 0.5.13 the discoverability half ships as
-`pe_sim.capabilities` / `pe-sim capabilities`, which reports every optional
-capability, its status in the current process, and how to enable it without
-reading the repository (`docs/49_optional_capabilities_v1.md`). `environment-check`
-behaviour is unchanged.
+**Disposition:** item 1 is **closed as delivered in its supportable form** -
+discovery through `pe_sim.capabilities` / `pe-sim capabilities` plus a pinned
+requirements handoff (`docs/49_optional_capabilities_v1.md`) - and the extra
+itself is **declined by recorded policy**, not postponed. `environment-check`
+behaviour is unchanged. A future extra needs a new ADR; the mechanical rules
+are enforced by `tests/test_release_policy.py`.
 
 ## 4. Upgrade gate (T4, delivered in 0.5.11)
 
@@ -123,8 +126,8 @@ by the v0.5.9 release itself (commit `ed45521…`), not hand-written.
 
 ## 5. What is not done
 
-- **Install-time extras**: deferred; see §3. `docs/28` keeps PySpice out of
-  dependencies and extras.
+- **New install-time extras**: declined by decision E1 with criteria for
+  revisiting; see §3. `test` remains the only extra.
 - **Schema migration registry**: created with the first bump (`0.1 -> 0.2`,
   `pe_sim.schema_registry`). It maps the old qualification ladder on a
   reader-side copy and never rewrites a package; `docs/50_evidence_vocabulary_v2.md`

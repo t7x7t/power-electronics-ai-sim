@@ -47,5 +47,10 @@ The machine-readable output contract is
 `schemas/stage12-evidence-classification.schema.json` (schema
 `stage12-evidence-classification-v2`, which adds the `scope` field).
 
+For one reader-side conclusion that combines this evidence level with the
+qualification level and the credibility assessment, see
+`docs/51_claim_conclusion_v1.md`. The Stage 12 classifier and the claim view
+read the same vocabulary; neither upgrades evidence.
+
 This is an evidence-boundary tool only. It does not validate physical model
 correctness, hardware safety, thermal limits, or product compliance.

@@ -1,12 +1,13 @@
 # Optional Capabilities v1
 
-**Status:** Phase C item 1 deliverable, limited to discovery. The project still
-declares **no install-time extras**; `docs/28_release_toolchain_policy_v0.md`
-keeps PySpice out of dependencies and extras, and
-`docs/34_pyspice_optional_backend_v0.md` records why. This document defines a
-versioned, machine-readable report so a packaged user can discover optional
-capabilities, see whether each one is usable here, and learn the documented
-action that enables it without reading source.
+**Status:** Phase C item 1 deliverable. Discovery is this report; the install
+decision is ADR 0003 (decision E1): `test` is the only declared extra and
+optional simulator frontends use a pinned requirements handoff.
+`docs/28_release_toolchain_policy_v0.md` records the policy and
+`docs/34_pyspice_optional_backend_v0.md` records why PySpice is separate. This
+document defines a versioned, machine-readable report so a packaged user can
+discover optional capabilities, see whether each one is usable here, and learn
+the documented action that enables it without reading source.
 
 ## 1. What a capability report is
 
@@ -139,16 +140,17 @@ pe-sim attest-run <run-dir>
 `--no-anchor` remains available when Git is absent, but then the attestation is
 not anchored and the capability should not be expected to report `installed`.
 
-## 4. Why there is still no PySpice extra
+## 4. Why PySpice is not an extra (decision E1)
 
-Adding a `pyspice` extra would contradict the existing release policy
-(`docs/28`) and the licensing rationale in `docs/34`: PySpice is GPLv3, the
-core package is MIT, and `environment-check` treats declared extras as expected
-packages. The verified pin set also keeps `numpy==1.26.4`, which has no Python
-3.13 wheel. Resolving this needs a separate release-policy decision, for
-example a separate wheel or requirements handoff. The capability report does
-not change `pyproject.toml`, does not add an extra, and does not alter
-`environment-check` behaviour or its document schema.
+The absence of a `pyspice` extra is a **recorded decision**, not an open item
+([`adr/0003-install-time-extras.md`](adr/0003-install-time-extras.md)): PySpice
+is GPLv3, the core package is MIT, `environment-check` treats declared extras
+as expected packages, and the verified pin set keeps `numpy==1.26.4`, which has
+no Python 3.13 wheel while `requires-python` includes 3.13. The supported path
+is the pinned requirements file plus this report. A future extra must meet the
+criteria in ADR 0003; `tests/test_release_policy.py` enforces the mechanical
+rules. The capability report does not change `pyproject.toml`, does not add an
+extra, and does not alter `environment-check` behaviour or its document schema.
 
 ## 5. CLI exit codes
 

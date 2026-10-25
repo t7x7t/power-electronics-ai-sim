@@ -22,6 +22,7 @@ from typing import Any, Mapping
 
 from .artifacts import artifact_index, manifest_digest, package_digest
 from .checks import normalize_check_level
+from .claim import derive_claim
 from .compatibility import assess_package_compatibility
 from .contracts import CURRENT_SCHEMA_VERSION
 from .credibility import CredibilityPolicy, assess_credibility
@@ -338,8 +339,19 @@ def inspect_run(
     summary["credibility"] = assessment.to_dict()
     if attestation_section is not None:
         summary["attestation"] = attestation_section
-    status = "ok" if not problems else "invalid"
-    return RunInspection(directory, status, tuple(problems), summary)
+    package_status = "ok" if not problems else "invalid"
+    # One reader-side conclusion, so a caller does not have to combine the
+    # evidence, qualification, and credibility fields by hand.  It is derived
+    # from the values above and can only be weaker than the recorded evidence.
+    summary["claim"] = derive_claim(
+        integrity=package_status,
+        run_status=summary["run_status"],
+        evidence_level=summary["evidence_level"],
+        qualification_level=summary["qualification_level"],
+        credibility=assessment.status,
+        compatibility=summary["compatibility"]["status"],
+    ).to_dict()
+    return RunInspection(directory, package_status, tuple(problems), summary)
 
 
 __all__ = ["RunInspection", "RunInspectionError", "inspect_run"]

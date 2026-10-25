@@ -53,11 +53,12 @@ python -m pip install -e .
 
 The Buck reference additionally requires a separate **PySpice 1.5** installation
 for circuit construction. PySpice is GPLv3 and is deliberately not a package
-dependency or extra. Use `requirements-pyspice-tested.txt` in a dedicated
-Python 3.10-3.12 environment so `numpy==1.26.4` stays compatible with the
-selected `scipy`/`matplotlib`/`contourpy` versions; run `python -m pip check`
-before acceptance. The reference command is documented in `docs/34` and
-`docs/35`. ngspice remains a separately installed external executable.
+dependency or extra (decision E1 below). Use `requirements-pyspice-tested.txt`
+in a dedicated Python 3.10-3.12 environment so `numpy==1.26.4` stays compatible
+with the selected `scipy`/`matplotlib`/`contourpy` versions; run
+`python -m pip check` before acceptance. The reference command is documented in
+`docs/34` and `docs/35`. ngspice remains a separately installed external
+executable.
 
 For the locally verified test set, install the exact pins in a fresh Python
 environment before installing the project test extra:
@@ -71,6 +72,33 @@ The test extra intentionally retains compatibility ranges for ordinary
 development. A release gate uses the pinned reference file and records the
 installed versions so a changed resolver result cannot be mistaken for the
 verified combination.
+
+## Install-time extras policy (decision E1, 2026-10-25)
+
+**`test` is the only declared extra.** Optional simulator frontends are not
+package extras. This is a recorded decision, not an unfinished item; see
+[`adr/0003-install-time-extras.md`](adr/0003-install-time-extras.md).
+
+PySpice stays a manual installation through
+`requirements-pyspice-tested.txt`, discovered by `pe-sim capabilities`
+(`docs/49`). Declaring a `pyspice` extra would be unsound here for three
+independent reasons:
+
+1. PySpice is GPLv3 while this repository is MIT; an extra presents a
+   copyleft runtime as a supported variant of an MIT package (ADR 0002,
+   `docs/34`).
+2. `requires-python` includes Python 3.13, but the verified pin set keeps
+   `numpy==1.26.4`, which has no 3.13 wheel; an unpinned extra resolves to a
+   combination that fails `pip check`.
+3. `environment-check` treats declared extras as expected packages. A
+   `pyspice` extra would report a missing package in every correct MIT-only
+   installation.
+
+A new extra is allowed only when it installs cleanly across the declared
+Python range, passes `pip check`, keeps the license boundary reviewed, does not
+change the base `environment-check` verdict, and updates
+`docs/49_optional_capabilities_v1.md` plus this section in the same commit.
+The mechanical rules are enforced by `tests/test_release_policy.py`.
 
 ## What a release check must record
 

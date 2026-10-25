@@ -336,12 +336,22 @@ identity, `implementation.review.status`, first/last window digests, and any
 recorded failure evidence. A package can be intact while its run failed:
 `status` reports package integrity, while `run_status` and `run_ok` report the
 execution outcome separately. It also reports a read-only `credibility`
-assessment, the `qualification.level` (`full`, `limited`, or `failed`), and a
-`compatibility` verdict (`current`, `read_only`, or `incompatible`).
-Compatibility is a reading policy, not an integrity claim: an older package can
-still verify while `read_only` says its cross-version comparability is not
-assessed, and `may_rewrite` is always false. Its output is tagged
-`pe-sim.run-inspection.v1`. The policy is in
+assessment, the `qualification_level` (`assessed`, `partial`, or `failed`), the
+recorded `evidence_level` (`diagnostic_only`, `functional`, `limited`, or
+`comparable`), and a `compatibility` verdict (`current`, `read_only`, or
+`incompatible`). Compatibility is a reading policy, not an integrity claim: an
+older package can still verify while `read_only` says its cross-version
+comparability is not assessed, and `may_rewrite` is always false.
+
+To avoid combining those fields by hand, the summary includes one `claim`
+object (`pe-sim.claim.v1`) answering "what may I claim?": a conclusion of
+`no_claim`, `exploratory`, `bounded`, or `comparison_eligible`, every input
+that forced a weaker conclusion, and explicit may-claim / may-not-claim
+statements. The conclusion is reader-side and never stronger than any recorded
+input. Its contract is
+[docs/51_claim_conclusion_v1.md](docs/51_claim_conclusion_v1.md). The
+inspection output is tagged `pe-sim.run-inspection.v1`; the compatibility
+policy is in
 [docs/47_compatibility_policy_v1.md](docs/47_compatibility_policy_v1.md).
 
 To discover what exists before verifying anything:
@@ -449,7 +459,7 @@ Three properties are machine checked rather than left to convention:
 
 - **Public API tiers.** `src/pe_sim/public_api.py` splits the top-level surface
   into `stable` (81 names an adapter author or evidence verifier depends on) and
-  `experimental` (197 names reachable but not promised).
+  `experimental` (202 names reachable but not promised).
   `tests/fixtures/public_api.json` freezes the stable list, so adding or
   removing a stable name fails a test until the baseline is updated in the same
   commit.

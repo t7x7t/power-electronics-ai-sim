@@ -164,8 +164,8 @@ _PYSPICE = _CapabilityDefinition(
         "isolated environment and run `pip check` there instead"
     ),
     limitations=(
-        "PySpice is not a package extra by release policy (docs/28); it is a "
-        "separate, manual installation",
+        "PySpice is not a package extra by recorded policy (decision E1, "
+        "ADR 0003); it is a separate, manual installation",
         "the verified pin set in requirements-pyspice-tested.txt excludes "
         "Python 3.13",
         "the probe only locates the module; PySpice is not imported, no "

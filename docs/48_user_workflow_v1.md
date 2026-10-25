@@ -74,8 +74,10 @@ it is not a second implementation of the runtime.
 
 A demo is an exploratory run of a reference model. It records
 `evidence_level: functional` and whatever qualification level the rule pack
-derives (typically `limited` with `duty_varying` for a short step). It is **not**
-a formal comparison, a physical validation, or a hardware approval.
+derives (typically `partial` with `duty_varying` for a short step). The
+`inspect-run` claim conclusion for such a package is `exploratory`. It is **not**
+a formal comparison, a physical validation, or a hardware approval. The claim
+contract is `docs/51_claim_conclusion_v1.md`.
 
 ## 4. Distribution
 

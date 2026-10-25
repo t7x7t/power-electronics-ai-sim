@@ -125,3 +125,4 @@ pytest -q tests/test_evidence_vocabulary.py tests/test_schema_registry.py `
 | `docs/45_error_and_rejection_codes_v1.md` | evidence-reading views |
 | `docs/46_time_model_and_engine_boundary_v1.md` | route evidence caps |
 | `docs/47_compatibility_policy_v1.md` | read-with-policy and the registry |
+| `docs/51_claim_conclusion_v1.md` | one reader-side conclusion combining evidence, qualification, and credibility |

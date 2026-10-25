@@ -334,6 +334,12 @@ EXPERIMENTAL_API: frozenset[str] = frozenset(
         "INSPECTION_SCHEMA",
         "ATTESTATION_VERIFICATION_SCHEMA",
         "ATTESTATION_WRITE_SCHEMA",
+        # claim conclusion: one read-only answer to "what may I claim?".
+        "CLAIM_CONCLUSIONS",
+        "CLAIM_RULE_VERSION",
+        "CLAIM_SCHEMA",
+        "ClaimConclusion",
+        "derive_claim",
         # time model and engine boundary (Phase A2): who owns the clock, what a
         # trace contract promises, and how a route is priced.  The whole-run
         # execution route is declared but not implemented yet.

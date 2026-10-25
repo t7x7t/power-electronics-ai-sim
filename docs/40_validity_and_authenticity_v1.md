@@ -156,7 +156,10 @@ not_credible > limited > unknown > credible
 
 There is no numeric score. `inspect-run` adds
 `summary.credibility` and `summary.qualification_level`; the package
-`status` remains an integrity-only field.
+`status` remains an integrity-only field. Combining the evidence level,
+qualification level, and credibility status, the same view adds one read-only
+`summary.claim` conclusion (`docs/51_claim_conclusion_v1.md`) so a caller does
+not have to combine those fields by hand.
 
 `manifest.evidence_level` is now derived: failed runs are
 `diagnostic_only`, exploratory/limited-evidence runs are `functional` or

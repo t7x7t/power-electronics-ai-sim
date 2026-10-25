@@ -434,9 +434,11 @@ the two remaining credibility questions:
 - **Applicability:** adapters may declare a `ModelClaim` and
   `ParameterProvenance`; the Runner records or enforces the declared envelope
   according to `RunOptions.applicability`. Qualification now distinguishes
-  `full`, `limited`, and `failed`. A standard rule pack adds steady-state,
-  analytical-equilibrium, and numerical-health checks. Successful solver logs
-  are classified into bounded numerical-health evidence.
+  `full`, `limited`, and `failed` (renamed to `assessed` / `partial` / `failed`
+  in 0.6.0; see `docs/50_evidence_vocabulary_v2.md`). A standard rule pack
+  adds steady-state, analytical-equilibrium, and numerical-health checks.
+  Successful solver logs are classified into bounded numerical-health
+  evidence.
 - **Credibility:** `inspect-run` now calculates a read-only factor assessment
   (`credible`, `limited`, `unknown`, `not_credible`) and exposes
   `qualification.level`. It never changes the integrity-only `status`.
