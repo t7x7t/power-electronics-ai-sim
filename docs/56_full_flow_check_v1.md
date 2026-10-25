@@ -65,8 +65,11 @@ outcome `partial` without failing a step:
 | --- | --- |
 | `environment` supports the interpreter but does not reproduce the verified pin set | the declared range is supported; only the exact release toolchain is a narrower statement (`docs/28`) |
 | `compare` returns `unknown` because the source worktree is dirty | `compare-runs` refuses a reproducibility verdict from an uncommitted tree; the two runs still completed |
+| `audit` reports `L1_pending` | the check writes the attestation outside Git, so no anchor exists until a human commits it; anchoring is a separate act |
 
-Run the check from a clean tree with the exact toolchain to obtain `pass`.
+Run the check from a clean tree with the exact toolchain to remove the first two.
+The audit limitation is inherent to a check that must not write into Git, so a
+full `pass` requires the operator to commit the attestation and re-verify.
 
 ## Boundaries
 
