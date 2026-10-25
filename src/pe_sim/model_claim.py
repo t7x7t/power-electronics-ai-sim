@@ -43,6 +43,17 @@ _PARAMETER_REVIEW_STATUSES = ("unreviewed", "reviewed", "not_applicable")
 
 _PATH_LIKE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\|/|\.\.?[\\/])|[\\/]")
 
+#: A declaration error is reported verbatim, so it is bounded.  An adapter can
+#: raise an arbitrary message, and the manifest must stay readable.
+_MAX_DECLARATION_ERROR = 200
+
+
+def _bounded_error(value: Any) -> str:
+    text = str(value)
+    if len(text) <= _MAX_DECLARATION_ERROR:
+        return text
+    return text[: _MAX_DECLARATION_ERROR - 3] + "..."
+
 
 def _numeric(value: Any, name: str, *, allow_none: bool = False) -> float | None:
     if value is None and allow_none:
@@ -401,20 +412,22 @@ class ParameterRecord:
         value = self.value
         if value is not None:
             if isinstance(value, bool) or not isinstance(value, (int, float)):
-                value = None
-            else:
-                value = float(value)
-                if not math.isfinite(value):
-                    value = None
+                raise ValueError(
+                    f"parameter {self.name!r} value must be a finite number or None"
+                )
+            value = float(value)
+            if not math.isfinite(value):
+                raise ValueError(f"parameter {self.name!r} value must be finite")
         object.__setattr__(self, "value", value)
         uncertainty = self.uncertainty
         if uncertainty is not None:
             if isinstance(uncertainty, bool) or not isinstance(uncertainty, (int, float)):
-                uncertainty = None
-            else:
-                uncertainty = float(uncertainty)
-                if not math.isfinite(uncertainty):
-                    uncertainty = None
+                raise ValueError(
+                    f"parameter {self.name!r} uncertainty must be a finite number or None"
+                )
+            uncertainty = float(uncertainty)
+            if not math.isfinite(uncertainty):
+                raise ValueError(f"parameter {self.name!r} uncertainty must be finite")
         object.__setattr__(self, "uncertainty", uncertainty)
         reference = self.reference
         if reference is not None:
@@ -467,11 +480,11 @@ class ParameterProvenance:
 
     @classmethod
     def unknown(cls, reason: str) -> "ParameterProvenance":
-        return cls(status="unknown", declaration_error=str(reason))
+        return cls(status="unknown", declaration_error=_bounded_error(reason))
 
     @classmethod
     def invalid(cls, error: str) -> "ParameterProvenance":
-        return cls(status="declaration_invalid", declaration_error=str(error))
+        return cls(status="declaration_invalid", declaration_error=_bounded_error(error))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -514,19 +527,38 @@ def normalise_parameter_provenance(value: Any) -> ParameterProvenance:
     if isinstance(value, Mapping) and "records" in value:
         raw_records = value.get("records")
         status = str(value.get("status", ""))
+        declared_error = value.get("declaration_error")
     else:
         raw_records = value
         status = ""
+        declared_error = None
     if isinstance(raw_records, (str, bytes)) or not isinstance(raw_records, Sequence):
         raise TypeError("parameter provenance records must be an array")
-    records: list[ParameterRecord] = []
-    for item in raw_records:
-        if isinstance(item, ParameterRecord):
-            records.append(item)
-        elif isinstance(item, Mapping):
-            records.append(ParameterRecord.from_mapping(item))
-        else:
-            raise TypeError("parameter provenance records must be objects")
+    # A status token is a declaration, not a hint.  Inferring one from the
+    # records turned an unregistered token such as ``trusted`` into
+    # ``declared`` and hid the malformed declaration behind a clean summary;
+    # docs/40 section 2.1 requires ``declaration_invalid`` instead.
+    if status == "declaration_invalid":
+        return ParameterProvenance.invalid(
+            str(declared_error or "adapter declared an invalid parameter provenance")
+        )
+    if status and status not in {"declared", "partial"}:
+        return ParameterProvenance.invalid(
+            f"unsupported parameter provenance status: {status!r}"
+        )
+    try:
+        records: list[ParameterRecord] = []
+        for item in raw_records:
+            if isinstance(item, ParameterRecord):
+                records.append(item)
+            elif isinstance(item, Mapping):
+                records.append(ParameterRecord.from_mapping(item))
+            else:
+                raise TypeError("parameter provenance records must be objects")
+    except ValueError as exc:
+        # A record that cannot represent its declared value is a malformed
+        # declaration, not a reason to drop the value silently.
+        return ParameterProvenance.invalid(f"{type(exc).__name__}: {exc}")
     if not records:
         return ParameterProvenance.unknown("adapter declared an empty parameter provenance")
     sources = {item.source for item in records}

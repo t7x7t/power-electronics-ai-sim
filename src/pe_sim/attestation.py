@@ -18,7 +18,6 @@ from dataclasses import dataclass, replace
 import json
 import os
 from pathlib import Path
-import re
 import subprocess
 import tempfile
 import time
@@ -27,6 +26,7 @@ from typing import Any, Mapping, Protocol, runtime_checkable
 from .artifacts import (
     artifact_index,
     canonical_json,
+    validate_run_id,
     verify_package,
 )
 from .jsonutil import stable_sha256
@@ -48,16 +48,6 @@ DEFAULT_INDEX_RELATIVE = f"{ATTESTATION_DIRNAME}/{ANCHOR_INDEX_NAME}"
 
 TRUST_LEVELS = ("none", "L1_pending", "L1_anchored")
 SIGNATURE_STATUSES = ("not_signed", "valid", "invalid", "unknown")
-
-_SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9_.-]+$")
-_WINDOWS_RESERVED = {
-    "CON",
-    "PRN",
-    "AUX",
-    "NUL",
-    *(f"COM{index}" for index in range(1, 10)),
-    *(f"LPT{index}" for index in range(1, 10)),
-}
 
 
 class AttestationError(ValueError):
@@ -363,10 +353,12 @@ def _load_json(path: Path, description: str) -> Mapping[str, Any]:
 
 
 def _validate_run_id(run_id: str) -> None:
-    if not run_id or run_id in {".", ".."} or ".." in run_id or not _SAFE_RUN_ID.fullmatch(run_id):
-        raise AttestationError("run_id is not a safe attestation filename component")
-    if run_id.upper() in _WINDOWS_RESERVED or run_id.endswith((" ", ".")):
-        raise AttestationError("run_id is reserved on Windows")
+    """Apply the shared run-id rule and report it as an attestation error."""
+
+    try:
+        validate_run_id(run_id)
+    except ValueError as exc:
+        raise AttestationError(str(exc)) from exc
 
 
 def build_payload(run_dir: str | Path) -> tuple[AttestationPayload, Mapping[str, Any]]:

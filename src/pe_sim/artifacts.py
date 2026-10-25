@@ -58,13 +58,46 @@ def manifest_digest(manifest: Mapping[str, Any]) -> str:
     return sha256_bytes(canonical_json(_without_derived_hashes(manifest)))
 
 
+_RUN_ID_PATTERN = re.compile(r"[A-Za-z0-9_.-]+")
+
+#: Windows reserves these names in every directory, with or without an
+#: extension.  A run directory cannot use them.
+_RESERVED_RUN_IDS = frozenset(
+    {"CON", "PRN", "AUX", "NUL"}
+    | {f"COM{index}" for index in range(1, 10)}
+    | {f"LPT{index}" for index in range(1, 10)}
+)
+
+
+def validate_run_id(run_id: Any) -> str:
+    """Return ``run_id`` when it is safe as a directory and file component.
+
+    This is the only run-id rule in the project.  The write path and the
+    attestation path used to apply different rules, so a formal run could
+    reach ``comparable`` with a package that could never be attested
+    (``CON``, ``AUX``, ``COM1``, ...), and a trailing dot made the filesystem
+    silently rename ``trailing.`` to ``trailing`` while the manifest kept the
+    original string.  A run id that cannot be attested must not be creatable.
+    """
+
+    if not isinstance(run_id, str) or not run_id:
+        raise ValueError("run_id must be a non-empty relative identifier")
+    if run_id in {".", ".."} or ".." in run_id or not _RUN_ID_PATTERN.fullmatch(run_id):
+        raise ValueError(
+            "run_id must contain only letters, digits, '.', '_' and '-' and must "
+            "not traverse directories"
+        )
+    if run_id.upper() in _RESERVED_RUN_IDS:
+        raise ValueError(f"run_id {run_id!r} is a reserved device name on Windows")
+    if run_id.endswith((".", " ")):
+        raise ValueError("run_id must not end with a dot or a space")
+    return run_id
+
+
 def validate_run_location(root: str | Path, run_id: str, *, check_conflict: bool = True) -> Path:
     """Validate a run output path without creating any filesystem state."""
 
-    if not isinstance(run_id, str) or not run_id or run_id in {".", ".."}:
-        raise ValueError("run_id must be a non-empty relative identifier")
-    if Path(run_id).is_absolute() or "/" in run_id or "\\" in run_id or ".." in run_id:
-        raise ValueError("run_id must not be absolute or contain path separators/parent traversal")
+    validate_run_id(run_id)
     root_path = Path(root).expanduser().resolve()
     target = (root_path / run_id).resolve()
     try:
