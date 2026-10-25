@@ -99,3 +99,10 @@ Manifest 或产物路径
 失败结果、合同不匹配结果、dirty/unknown 来源和人工未审查结果只能用于诊断；Agent
 不得自动把它们加入公共库、更新控制器或覆盖基线。任何学习更新都必须保留输入与
 输出 Hash、适配器版本、准入依据和可逆的审计记录。
+## 7. 后续计划：用户授权与变更可见性（Phase E，尚未实现）
+
+Phase E 将增加机器可读的 `change_control` 报告与用户授权记录，使用户能够看到
+Agent 何时修改了 Plant、Runner 或 Controller、修改了哪些文件，并确保未授权修改
+不能产生正式证据。当前规则在该阶段 E1/E2 落地前保持不变；外层工具写权限锁定属于
+产品阶段。设计见 `docs/52_user_change_authorization_v1.md`，阶段定义见
+`docs/43_kernel_roadmap_v1.md` 的 Phase E。

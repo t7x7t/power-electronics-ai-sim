@@ -17,15 +17,21 @@ CI 不能判断模型是否足够接近真实电路、参数是否合理，也�
 
 ## 2. 当前工作流
 
-`.github/workflows/ci.yml` 在 push 和 pull request 上运行，使用 Python 3.10、3.11、3.12 矩阵。每个版本执行：
+`.github/workflows/ci.yml` 在 push、pull request 和手动触发上运行，包含三个 job：
 
-1. 从仓库检出当前提交；
-2. 安装项目及 `[test]` 可选依赖；
-3. 用 Draft 2020-12 校验实验 Schema 和参考配置；
-4. 运行 `tests/` 下的完整测试；
-5. 执行 `pe-sim --help` 和对理想平均 Buck 测试夹具的 smoke run，并确认 Manifest 已生成。
+| Job | 矩阵 | 作用 |
+| --- | --- | --- |
+| `contract` | Ubuntu + Windows × Python 3.10/3.11/3.12 | 使用 `requirements-tested.txt` 的精确 pin 集，执行 Schema 校验、完整测试和 CLI smoke |
+| `next-python` | Ubuntu × Python 3.13 | 使用 `[test]` 范围依赖，验证已声明 Python 上界的兼容性；不是发布工具链 |
+| `package` | Ubuntu × Python 3.12 | 构建 sdist/wheel，`twine check`，在干净 venv 安装 wheel，运行 `demo`/`inspect-run`/`capabilities` |
 
-工作流只使用内置的 Fake/平均 Buck 测试夹具，因此它验证的是公共契约、Runner 生命周期、产物和 fail-closed 行为，不是 PySpice/Ngspice 的物理正确性。
+Windows 加入 `contract` 矩阵的原因：正式发布门禁在 Windows 上运行，CI 不能只测试 Linux。
+
+Python 3.13 job 故意不使用 `requirements-tested.txt`：已验证 pin 集保留
+`numpy==1.26.4`，而该版本没有 Python 3.13 wheel。该 job 记录 `pip freeze`，其结果是
+**兼容性证据**，不是 exact release toolchain 证据。
+
+工作流只使用内置的 Fake/平均 Buck 测试夹具，因此它验证的是公共契约、Runner 生命周期、产物和 fail-closed 行为，不是 PySpice/Ngspice 的物理正确性。真实后端和正式 demo 仍由 `scripts/release_check.ps1` 在显式环境中执行，不进入日常 CI。
 
 ## 3. 已验证的 CI 环境（Verified CI Environment）
 
@@ -44,11 +50,11 @@ runtime package remains dependency-light; PySpice and Ngspice require a
 separate environment review and lock before migration.
 
 The lightweight GitHub Actions matrix uses these pins on Python 3.10, 3.11,
-and 3.12 before it runs the source test suite. This prevents a resolver's
-newest unverified dependency release from being misrepresented as a failure
-of the documented CI surface. The matrix still provides Python-version
-compatibility coverage; the formal local release gate remains the only exact
-release-toolchain record.
+and 3.12 on both Ubuntu and Windows; a separate Python 3.13 job uses the
+range-based `[test]` dependencies and is labelled compatibility evidence. This
+prevents a resolver's newest unverified dependency release from being
+misrepresented as a failure of the documented CI surface. The formal local
+release gate remains the only exact release-toolchain record.
 
 Python 3.10 is supported through the small conditional `tomli` dependency,
 which supplies the standard-library `tomllib` interface used by environment
@@ -74,8 +80,9 @@ python -m pe_sim.cli run examples/buck_pi_step/config.json --backend buck
 
 ## 5. 通过与不通过
 
-- 任意安装、Schema、测试或 CLI 步骤失败，CI 检查失败；变更不应进入已保护的正式分支。
+- 任意安装、Schema、测试、wheel 安装或 CLI 步骤失败，CI 检查失败；变更不应进入已保护的正式分支。
 - CI 通过只说明自动化检查通过，不等同于实验合格、模型有效或硬件就绪。
+- CI 不是发布门禁：真实 ngspice/PySpice 验收和正式 demo 证据仍由 `scripts/release_check.ps1` 与 `scripts/user_acceptance.py` 记录。
 - 真实模型迁移后，应增加独立的 PySpice/Ngspice job；该 job 的依赖、版本和许可证应在引入前单独审查。
 
 ## 6. 与版本和证据的关系

@@ -24,6 +24,7 @@ That goal is only useful if it can be checked. The design must pass:
 | T4 | An installed release reads a package from an older release and states cross-version comparability honestly | **passes** (0.5.11) |
 | T5 | No self-declared or modified implementation can reach `comparable` | **passes** (0.5.2) |
 | T6 | A user who does not read source can run, view, and verify | **passes** (0.5.12) |
+| T7 | Every change since the declared baseline to Plant/Runner/Controller is visible per component, and an unauthorized change cannot produce formal evidence | **planned (Phase E)** |
 
 T5 is the property that makes the rest worth having, and it is the one that must
 never regress.
@@ -45,15 +46,15 @@ engine registration as data, entry-point discovery, and adapter trust levels -
 shipped in 0.5.4. **A2** - the time-model abstraction - delivered its decision
 (D1), trace contract, and engine boundary in 0.5.8, and its **execution route
 plus a second engine in 0.5.10** (`docs/46`). Phase B is complete: items 1-4
-shipped in 0.5.5-0.5.7. Phase C is substantially complete: D3/D4 and
-read-with-policy shipped in 0.5.9, the **upgrade gate (T4) in 0.5.11**, and the
-capability discoverability half of item 1 in 0.5.13. Schema `0.2` and its
-migration registry shipped in 0.6.0. Only install-time extras themselves
-(blocked by the `docs/28` release policy) remain. **Phase D
-shipped in 0.5.12**, so T6 passes. Test T2 has passed since 0.5.4 (a topology is
-registered, never listed) and is now guarded by a structural test.
-Everything shipped before 0.5.4 is groundwork covered by §4, not a completed
-phase.
+shipped in 0.5.5-0.5.7. Phase C is **complete in 0.6.1**: D3/D4 and
+read-with-policy shipped in 0.5.9, the **upgrade gate (T4) in 0.5.11**, schema
+`0.2` and its migration registry in 0.6.0, and install-time extras were decided
+by ADR 0003 (decision E1). **Phase D shipped in 0.5.12**, so T6 passes. Test T2
+has passed since 0.5.4 (a topology is registered, never listed) and is now
+guarded by a structural test. **Phase E is planned, not started**
+(`docs/52_user_change_authorization_v1.md`); it adds T7 without changing the
+current contracts. Everything shipped before 0.5.4 is groundwork covered by §4,
+not a completed phase.
 
 ```mermaid
 graph LR
@@ -224,6 +225,32 @@ directory the caller names, starts one experimental run, and otherwise only
 reads. `tests/test_user_workflow.py` and `tests/test_packaging.py` hold the
 workflow to that boundary, including that the bundled templates ship in the
 wheel and match `examples/` byte for byte.
+
+### Phase E - Change visibility and user authorization (planned)
+
+**Goal:** T7.
+**Why here:** it becomes meaningful only when an agent assists with Plant,
+Runner, and Controller work and a user grants changes.
+
+Work:
+
+1. E1 - visibility: record a per-component `change_control` report (baseline,
+   changed files, status) in the manifest and `inspect-run`; no rejection.
+2. E2 - formal gate: add a user-scoped `pe-sim.user-grant.v1`; reject
+   `formal_comparison` unless every changed component is authorized.
+3. E3 - parameter review: add a digest-bound user confirmation and the read-only
+   parameter/claim view.
+4. E4 - outer enforcement: IDE/MCP write locks, signed grants, and kernel or
+   release identity (UD-06); product phase.
+
+**Gate G-E:** a user can see every Plant/Runner/Controller change and the files
+behind it; an unauthorized change cannot produce formal evidence; exploratory
+runs remain usable with a capped claim.
+
+**Status:** planned; design and open decisions in
+`docs/52_user_change_authorization_v1.md`. Current policy (`docs/03`) is
+unchanged until E1/E2 ship. The kernel requirement is visibility and evidence
+gating only; tool-level write prevention is deferred.
 
 ## 4. Already sufficient - do not rebuild
 
