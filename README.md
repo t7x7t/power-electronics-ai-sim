@@ -333,7 +333,21 @@ pe-sim preview-netlist examples/ngspice_buck_step/config.json --duty 0.5
 
 # Re-verify a published package and summarize its samples and identity.
 pe-sim inspect-run runs/ngspice-buck-reference
+
+# See the recorded parameter set and the claim conclusion together.
+pe-sim parameter-view runs/ngspice-buck-reference --compact
 ```
+
+`parameter-view` projects `pe-sim.parameter-view.v1` from the verified
+manifest: the plant, controller, timebase, action-policy, and solver groups with
+their recorded values, the units and sources that a recorded parameter-provenance
+finding names, the declared action bounds, the parameter-set digest, and the
+embedded claim conclusion. It never executes a model, and `range` stays `null`
+because no parameter range is declared. `pe-sim confirm-parameters` records a
+detached `pe-sim.parameter-confirmation.v1` review outside the package, and
+`pe-sim verify-parameter-confirmation` reports `current`, `stale`,
+`mismatched_run`, `invalid`, or `unknown`. The contract is
+[docs/54_parameter_view_and_confirmation_v1.md](docs/54_parameter_view_and_confirmation_v1.md).
 
 `inspect-run` recomputes the Manifest digest, package digest, artifact index,
 publication marker, and sample monotonicity. It reports the backend, plant

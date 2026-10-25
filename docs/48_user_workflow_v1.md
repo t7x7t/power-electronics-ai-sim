@@ -37,11 +37,20 @@ template name is rejected with the branchable code `invalid_request`.
 
 ```powershell
 pe-sim visualization-serve --runs-root .\my-demo\runs
+pe-sim parameter-view .\my-demo\runs\<run_id> --compact
 ```
 
 The service is read-only and loopback-only. It serves the three published
 visualization contracts for verified packages and rejects every non-GET request.
-It cannot create, modify, repair, or delete a run.
+It cannot create, modify, repair, or delete a run. It also serves
+`GET /v1/runs/<run_id>/parameters`, which returns the read-only parameter view
+of a verified package.
+
+`parameter-view` prints the same `pe-sim.parameter-view.v1` document without a
+server: the recorded parameter groups, their recorded units and sources where a
+parameter-provenance finding names them, the declared action bounds, the
+parameter-set digest, and the embedded `pe-sim.claim.v1` conclusion. Neither
+surface executes a model or re-derives a physical quantity.
 
 ### Verify
 
@@ -49,13 +58,17 @@ It cannot create, modify, repair, or delete a run.
 pe-sim inspect-run .\my-demo\runs\<run_id> --compact
 pe-sim attest-run .\my-demo\runs\<run_id>
 pe-sim verify-attestation .\my-demo\runs\<run_id> --attestation <path>
+pe-sim confirm-parameters .\my-demo\runs\<run_id> --reviewer <name> --statement <text> --output <path>
+pe-sim verify-parameter-confirmation .\my-demo\runs\<run_id> --confirmation <path> --compact
 ```
 
 `inspect-run` recomputes the artifact index and package digest and reports
 `status: ok` only when they match. `attest-run` writes a detached attestation
 outside the package; `verify-attestation` reports `L1_anchored` when the
-attestation is anchored in a clean Git commit. None of these commands rewrites a
-published package.
+attestation is anchored in a clean Git commit. `confirm-parameters` writes a
+detached `pe-sim.parameter-confirmation.v1` record outside the package, and
+`verify-parameter-confirmation` reports `current`, `stale`, `mismatched_run`,
+`invalid`, or `unknown`. None of these commands rewrites a published package.
 
 ## 2. What the consumer may do
 
@@ -64,6 +77,8 @@ published package.
 | `demo` | create a configuration file in a directory the caller names; start one experimental run |
 | `visualization-serve` | read verified packages under the given root; no mutation |
 | `inspect-run` | read; recompute integrity hashes; no mutation |
+| `parameter-view` | read a verified package; no mutation |
+| `confirm-parameters` / `verify-parameter-confirmation` | write one detached confirmation outside the package; no mutation of the package |
 | `attest-run` / `verify-attestation` | write a detached attestation outside the package; no mutation of the package |
 
 A consumer receives no Runner, Plant, Controller, plugin, or mutation authority.

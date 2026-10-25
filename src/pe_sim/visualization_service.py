@@ -10,7 +10,9 @@ import re
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
+from .claim import CLAIM_SCHEMA
 from .outputs import OUTPUT_SCHEMA_VERSION
+from .parameter_view import PARAMETER_VIEW_SCHEMA, ParameterViewError, build_parameter_view
 from .topology import TOPOLOGY_SCHEMA
 from .traces import TRACE_SCHEMA_VERSION
 from .workbench_export import WorkbenchExportError, load_run_workbench_contracts
@@ -167,10 +169,23 @@ def create_server(runs_root: str | Path, host: str = "127.0.0.1", port: int = 87
                     "schema_version": SERVICE_SCHEMA,
                     "read_only": True,
                     "contract_schemas": _CONTRACT_SCHEMAS,
+                    "inspection_schemas": {"parameters": PARAMETER_VIEW_SCHEMA, "claim": CLAIM_SCHEMA},
                     "runs": _published_runs(root),
                 })
                 return
             parts = path.split("/")
+            if len(parts) == 5 and parts[:3] == ["", "v1", "runs"] and parts[4] == "parameters":
+                # Inspection surface: projected from the published manifest on
+                # demand and never written back into the package.
+                run_id = unquote(parts[3])
+                try:
+                    view = build_parameter_view(_safe_run_dir(root, run_id))
+                except ParameterViewError as exc:
+                    raise _error(HTTPStatus.UNPROCESSABLE_ENTITY, "invalid_run", str(exc)) from exc
+                if view["run"]["run_id"] != run_id:
+                    raise _error(HTTPStatus.NOT_FOUND, "run_not_found", "published run was not found")
+                self._send(HTTPStatus.OK, view)
+                return
             if len(parts) == 5 and parts[:3] == ["", "v1", "runs"] and parts[4] in _PLANES:
                 run_id = unquote(parts[3])
                 contracts = load_run_workbench_contracts(_safe_run_dir(root, run_id))

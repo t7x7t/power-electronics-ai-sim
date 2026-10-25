@@ -170,6 +170,7 @@ GET /v1/discovery
 GET /v1/runs/{run_id}/topology
 GET /v1/runs/{run_id}/trace
 GET /v1/runs/{run_id}/outputs
+GET /v1/runs/{run_id}/parameters
 ```
 
 - `GET /health` returns service status and `read_only: true`.
@@ -178,6 +179,9 @@ GET /v1/runs/{run_id}/outputs
 - `GET /v1/runs/{run_id}/topology` returns `TopologyDescriptor` v1.
 - `GET /v1/runs/{run_id}/trace` returns `TraceDataset` v1.
 - `GET /v1/runs/{run_id}/outputs` returns `OutputDataset` v1.
+- `GET /v1/runs/{run_id}/parameters` returns the read-only parameter view
+  `pe-sim.parameter-view.v1` defined by `docs/54`. It is projected from the
+  published manifest on every request and is never written to disk.
 
 `/v1/discovery` lists only verified, displayable reference runs.  Each plane
 route verifies the run package before returning a contract.
@@ -186,6 +190,12 @@ Discovery reports the public contract identifiers exactly as serialized:
 `topology-descriptor-v1`, trace `1.0`, and outputs `1.0`. A discovered
 `run_id` is always both the verified Manifest identity and its routeable
 directory identifier; packages where those identities differ are not served.
+
+`contract_schemas` carries exactly those three visualization contracts.
+Discovery separately reports an `inspection_schemas` object,
+`{"parameters": "pe-sim.parameter-view.v1", "claim": "pe-sim.claim.v1"}`; the
+parameter view and the claim are inspection surfaces, not visualization
+contracts, so they are not added to `contract_schemas`.
 
 `run_id` is a single safe path component. Parent traversal, separators,
 symlinks, unknown routes, and non-GET methods are rejected. The service sends

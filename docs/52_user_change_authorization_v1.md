@@ -197,6 +197,15 @@ reason: controller:pi changed without a valid grant
 - acceptance: the user can review the key parameters without reading source,
   and the confirmation is recorded and anchored.
 
+**Partially delivered in 0.8.0** without a grant: the read-only parameter view
+(`pe-sim.parameter-view.v1`, `pe-sim parameter-view`, and
+`GET /v1/runs/{run_id}/parameters`) and the detached confirmation record
+(`pe-sim.parameter-confirmation.v1`, `confirm-parameters`,
+`verify-parameter-confirmation`) exist and go `stale` on any package or
+parameter change; see `docs/54`. Still open here: binding a confirmation to a
+user grant, requiring it for formal runs, and anchoring it in Git. No parameter
+range is declared, so the view reports `range: null`.
+
 ### E4 - Outer enforcement and signing (product phase)
 
 - IDE/MCP/agent-runtime write locks;

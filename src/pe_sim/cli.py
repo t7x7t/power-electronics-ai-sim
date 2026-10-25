@@ -41,6 +41,13 @@ from .backends import (
 from .dirty import FormalComparisonError, analyze_git_worktree
 from .environment import check_recommended_environment
 from .inspection import RunInspectionError, inspect_run
+from .parameter_confirmation import (
+    ParameterConfirmationError,
+    build_confirmation,
+    verify_confirmation,
+    write_confirmation,
+)
+from .parameter_view import ParameterViewError, build_parameter_view
 from .provenance import ExecutableBackendAdapter
 from .reproducibility import ToleranceSpec, audit_repeated_runs, compare_runs, cross_machine_evidence
 from .baseline import build_baseline_report
@@ -236,6 +243,42 @@ def main(argv: list[str] | None = None) -> int:
     inspect.add_argument("--attestation", type=Path, default=None, help="optional detached attestation to verify")
     inspect.add_argument("--repo", type=Path, default=None, help="Git repository used for anchor verification")
     inspect.add_argument("--require-anchored", action="store_true", help="require trust level L1_anchored")
+    parameter_view = sub.add_parser(
+        "parameter-view",
+        help="show the recorded parameter set of a published run package",
+    )
+    parameter_view.add_argument("run_dir", type=Path)
+    parameter_view.add_argument("--compact", action="store_true", help="emit single-line JSON")
+    confirm_parameters = sub.add_parser(
+        "confirm-parameters",
+        help="write a detached parameter confirmation outside the run package",
+    )
+    confirm_parameters.add_argument("run_dir", type=Path)
+    confirm_parameters.add_argument("--reviewer", required=True, help="name of the person who reviewed the parameters")
+    confirm_parameters.add_argument(
+        "--statement",
+        required=True,
+        help="what was reviewed; a human confirmation statement of at least 10 characters",
+    )
+    confirm_parameters.add_argument(
+        "--output",
+        type=Path,
+        required=True,
+        help="confirmation file path; it must resolve outside the run package",
+    )
+    confirm_parameters.add_argument(
+        "--timestamp",
+        default=None,
+        help="ISO-8601 UTC confirmation time; defaults to the current UTC time",
+    )
+    confirm_parameters.add_argument("--compact", action="store_true", help="emit single-line JSON")
+    verify_parameters = sub.add_parser(
+        "verify-parameter-confirmation",
+        help="verify a detached parameter confirmation against a run package",
+    )
+    verify_parameters.add_argument("run_dir", type=Path)
+    verify_parameters.add_argument("--confirmation", type=Path, required=True, help="detached confirmation file to verify")
+    verify_parameters.add_argument("--compact", action="store_true", help="emit single-line JSON")
     attest = sub.add_parser("attest-run", help="write a detached attestation and Git anchor record")
     attest.add_argument("run_dir", type=Path)
     attest.add_argument("--repo", type=Path, default=None)
@@ -403,6 +446,70 @@ def main(argv: list[str] | None = None) -> int:
                 if args.require_anchored and attestation.get("trust_level") != "L1_anchored":
                     return 2
             return 0
+        elif args.command == "parameter-view":
+            view = build_parameter_view(args.run_dir)
+            print(
+                json.dumps(
+                    view,
+                    sort_keys=True,
+                    indent=None if args.compact else 2,
+                )
+            )
+            return 0
+        elif args.command == "confirm-parameters":
+            confirmation = build_confirmation(
+                args.run_dir,
+                reviewer=args.reviewer,
+                statement=args.statement,
+                confirmed_at_utc=args.timestamp,
+            )
+            written = write_confirmation(
+                args.output, confirmation, run_dir=args.run_dir
+            )
+            print(
+                json.dumps(
+                    {
+                        "status": "written",
+                        "path": str(written) if written is not None else str(args.output),
+                        "run_id": confirmation["run"]["run_id"],
+                        "parameter_set_digest": confirmation["parameter_set"]["digest"],
+                        "confirmation_digest": confirmation["confirmation_digest"],
+                    },
+                    sort_keys=True,
+                    indent=None if args.compact else 2,
+                )
+            )
+            return 0
+        elif args.command == "verify-parameter-confirmation":
+            confirmation_path = Path(args.confirmation)
+            try:
+                confirmation = json.loads(
+                    confirmation_path.read_text(encoding="utf-8-sig")
+                )
+            except (OSError, ValueError) as exc:
+                _emit_rejection(
+                    "RUN_INSPECTION_REJECTED",
+                    "run_inspection_rejected",
+                    f"cannot read parameter confirmation {confirmation_path}: {exc}",
+                    scope="parameter_confirmation",
+                )
+                return 2
+            verification = verify_confirmation(
+                args.run_dir,
+                confirmation,
+                confirmation_path=confirmation_path,
+            )
+            print(
+                json.dumps(
+                    verification,
+                    sort_keys=True,
+                    indent=None if args.compact else 2,
+                )
+            )
+            status = verification.get("status")
+            if status == "unknown":
+                return 2
+            return 0 if status == "current" else 1
         elif args.command == "attest-run":
             result = attest_run(
                 args.run_dir,
@@ -468,6 +575,18 @@ def main(argv: list[str] | None = None) -> int:
             return 0
     except RunInspectionError as exc:
         _emit_rejection("RUN_INSPECTION_REJECTED", "run_inspection_rejected", str(exc))
+        return 2
+    except (ParameterViewError, ParameterConfirmationError) as exc:
+        # A parameter view or confirmation refusal is a run-inspection outcome:
+        # the package was not read or the record was not written.  The extra
+        # ``scope`` field discriminates the two surfaces without adding a new
+        # rejection code to the closed vocabulary.
+        _emit_rejection(
+            "RUN_INSPECTION_REJECTED",
+            "run_inspection_rejected",
+            str(exc),
+            scope="parameter_view" if isinstance(exc, ParameterViewError) else "parameter_confirmation",
+        )
         return 2
     except FormalComparisonError as exc:
         _emit_rejection(
