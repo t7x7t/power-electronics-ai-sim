@@ -565,6 +565,42 @@ def test_verify_without_an_evidence_directory_reports_the_skipped_role(
     assert "release-evidence.json" in checks["artifacts-hashed"]["detail"]
 
 
+def test_verify_searches_every_supplied_evidence_directory(fixture, capsys):
+    _create_approve_stage(fixture)
+    elsewhere = fixture["root"] / "elsewhere"
+    elsewhere.mkdir()
+    empty = fixture["root"] / "empty"
+    empty.mkdir()
+    source = fixture["evidence_file"]
+    target = elsewhere / source.name
+    target.write_bytes(source.read_bytes())
+    source.unlink()
+
+    capsys.readouterr()
+    code = release_record.main(
+        [
+            "verify",
+            str(fixture["record"]),
+            "--dist",
+            str(fixture["dist"]),
+            "--evidence-dir",
+            str(empty),
+            "--evidence-dir",
+            str(elsewhere),
+            "--require-approved",
+            "--json",
+        ]
+    )
+    result = json.loads(capsys.readouterr().out)
+    checks = {check["id"]: check for check in result["checks"]}
+
+    # The gate evidence was recorded in a different directory from the build
+    # output; every supplied --evidence-dir is searched by filename.
+    assert code == 0
+    assert result["status"] == "pass"
+    assert checks["artifacts-hashed"]["status"] == "pass"
+
+
 def test_verify_fails_when_supporting_evidence_changes(fixture, capsys):
     _create_approve_stage(fixture)
     fixture["evidence_file"].write_bytes(

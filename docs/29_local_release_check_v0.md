@@ -103,9 +103,15 @@ python scripts/release_record.py create `
 python scripts/release_record.py approve D:\release-evidence\v0.7.0\release-record.json `
     --reviewer "<reviewer>" --statement "<what was reviewed and accepted>"
 python scripts/release_record.py verify D:\release-evidence\v0.7.0\release-record.json `
-    --dist dist --evidence-dir D:\release-evidence\v0.7.0\gate `
+    --dist dist `
+    --evidence-dir D:\release-evidence\v0.7.0\gate `
+    --evidence-dir D:\release-evidence\v0.7.0\formal-demos `
     --require-approved --require-tag
 ```
+
+`--evidence-dir` is repeatable; each root is searched by filename, so gate
+evidence and formal-demo evidence can stay in the directories their producers
+wrote them to.
 
 `create` writes `approval.status = "pending"` and `signature.status =
 "not_signed"`; it cannot record an approval. `approve` refuses to run when `CI`

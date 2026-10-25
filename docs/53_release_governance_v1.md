@@ -137,7 +137,9 @@ person from writing the same fields by hand, and it is not a signature.
 
 ```powershell
 python scripts/release_record.py verify D:\release-evidence\v0.7.0\release-record.json `
-    --dist dist --evidence-dir D:\release-evidence\v0.7.0\gate `
+    --dist dist `
+    --evidence-dir D:\release-evidence\v0.7.0\gate `
+    --evidence-dir D:\release-evidence\v0.7.0\formal-demos `
     --require-approved --require-tag --json
 ```
 
@@ -151,7 +153,12 @@ different directories and must not be copied together to satisfy a checker:
 | `artifacts[].role` | Directory | Flag |
 | --- | --- | --- |
 | `release_artifact` (wheel, sdist, inventory) | build output | `--dist` |
-| `supporting_evidence` (gate, formal demo, upgrade) | evidence record | `--evidence-dir` |
+| `supporting_evidence` (gate, formal demo, upgrade) | evidence record | `--evidence-dir` (repeatable) |
+
+`--evidence-dir` is repeatable and each root is searched by filename, because
+gate evidence, formal-demo evidence, and upgrade evidence are written to
+different directories by the producers that own them. Copying them into one
+folder to satisfy a checker is neither required nor intended.
 
 Check status vocabulary:
 

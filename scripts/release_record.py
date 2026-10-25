@@ -574,6 +574,16 @@ def _check(check_id: str, status: str, detail: str) -> dict:
     return {"id": check_id, "status": status, "detail": detail}
 
 
+def _as_dirs(value) -> list[Path]:
+    """Normalize a path or a sequence of paths into a list of directories."""
+
+    if value is None:
+        return []
+    if isinstance(value, (str, Path)):
+        return [Path(value)]
+    return [Path(item) for item in value]
+
+
 def _overall_status(checks: list[dict], optional_ids: set[str]) -> str:
     if any(check["status"] == "fail" for check in checks):
         return "fail"
@@ -756,10 +766,11 @@ def verify_record(
     artifacts = artifacts if isinstance(artifacts, list) else []
 
     # 5. artifact hashes.  Release artifacts live with the build output; the
-    # supporting evidence (gate, demo, upgrade) lives in the evidence record
-    # directory.  A role with no supplied directory is reported as not checked,
-    # never silently skipped.
-    if dist_dir is None and evidence_dir is None:
+    # supporting evidence (gate, demo, upgrade) may be spread across several
+    # evidence directories.  A role with no supplied directory is reported as
+    # not checked, never silently skipped.
+    evidence_dirs = _as_dirs(evidence_dir)
+    if dist_dir is None and not evidence_dirs:
         checks.append(
             _check(
                 "artifacts-hashed",
@@ -769,7 +780,6 @@ def verify_record(
         )
     else:
         dist = Path(dist_dir) if dist_dir is not None else None
-        evidence = Path(evidence_dir) if evidence_dir is not None else None
         problems: list[str] = []
         skipped: list[str] = []
         checked = 0
@@ -783,13 +793,21 @@ def verify_record(
             if not isinstance(filename, str) or not filename:
                 problems.append("artifact entry has no filename")
                 continue
-            base = evidence if entry.get("role") == "supporting_evidence" else dist
-            if base is None:
+            if entry.get("role") == "supporting_evidence":
+                bases = evidence_dirs
+            else:
+                bases = [dist] if dist is not None else []
+            if not bases:
                 skipped.append(filename)
                 continue
-            path = base / filename
-            if not path.is_file():
-                problems.append(f"{filename}: missing from {base}")
+            path = next(
+                (base / filename for base in bases if (base / filename).is_file()),
+                None,
+            )
+            if path is None:
+                problems.append(
+                    f"{filename}: missing from {', '.join(str(base) for base in bases)}"
+                )
                 continue
             try:
                 found_sha = _sha256_file(path)
@@ -978,7 +996,7 @@ def verify_record(
     optional_ids = {"approval-binding"}
     if not require_approved:
         optional_ids.add("approval-required")
-    if dist_dir is None or evidence_dir is None:
+    if dist_dir is None or not evidence_dirs:
         optional_ids.add("artifacts-hashed")
     if dist_dir is None:
         optional_ids.add("inventory-binding")
@@ -1428,9 +1446,10 @@ def _build_parser() -> argparse.ArgumentParser:
     verify.add_argument(
         "--evidence-dir",
         metavar="DIR",
+        action="append",
         help=(
-            "directory containing the recorded supporting-evidence filenames "
-            "(gate, formal demo, upgrade)"
+            "directory to search for recorded supporting-evidence filenames "
+            "(gate, formal demo, upgrade); repeatable"
         ),
     )
     verify.add_argument(
