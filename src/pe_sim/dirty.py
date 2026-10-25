@@ -43,6 +43,29 @@ def _git(path: Path, *args: str) -> str:
     ).stdout.rstrip("\r\n")
 
 
+def _git_optional(path: Path, *args: str) -> str | None:
+    """Run a Git query whose non-zero exit is an answer, not a failure.
+
+    ``git symbolic-ref -q HEAD`` exits 1 on a detached HEAD.  CI checkouts and
+    release checkouts are routinely detached, so that state must not turn the
+    whole worktree analysis into ``unknown``.
+    """
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(path), *args],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (FileNotFoundError, OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.rstrip("\r\n")
+
+
 def _category(path: str) -> str:
     p = path.replace("\\", "/").lstrip("./")
     parts = p.split("/")
@@ -67,7 +90,7 @@ def analyze_git_worktree(path: str | Path | None = None) -> DirtyAnalysis:
     try:
         repo_root = Path(_git(root, "rev-parse", "--show-toplevel")).resolve()
         commit = _git(repo_root, "rev-parse", "HEAD")
-        branch = _git(repo_root, "symbolic-ref", "--short", "-q", "HEAD") or "detached"
+        branch = _git_optional(repo_root, "symbolic-ref", "--short", "-q", "HEAD") or "detached"
         porcelain = _git(repo_root, "status", "--porcelain=v1", "--untracked-files=all")
     except (FileNotFoundError, OSError, subprocess.SubprocessError) as exc:
         return DirtyAnalysis(

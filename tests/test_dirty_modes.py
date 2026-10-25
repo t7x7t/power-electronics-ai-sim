@@ -61,3 +61,20 @@ def test_exploratory_runner_records_worktree_analysis(tmp_path, monkeypatch):
     manifest = json.loads((result.run_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["run_mode"] == "exploratory"
     assert manifest["worktree_analysis"]["status"] == "dirty"
+
+
+def test_detached_head_is_clean_and_records_the_commit(tmp_path):
+    """CI checks out a commit in detached HEAD; that is still a clean tree."""
+
+    _repo(tmp_path)
+    commit = _git(tmp_path, "rev-parse", "HEAD").stdout.strip()
+    _git(tmp_path, "checkout", "-q", "--detach", "HEAD")
+
+    analysis = analyze_git_worktree(tmp_path)
+
+    assert analysis.status == "clean"
+    assert analysis.branch == "detached"
+    assert analysis.source_commit == commit
+    assert analysis.reasons == ()
+    assert analysis.to_dict()["formal_comparison_allowed"] is True
+    require_formal_comparison(analysis)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import json
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -55,6 +56,32 @@ def _write(tmp_path: Path, document: dict, name: str) -> Path:
 
 def _payload(capsys) -> dict:
     return json.loads(capsys.readouterr().out)
+
+
+def _dirty_repo(path: Path) -> None:
+    """Create a committed repository and then modify a tracked file.
+
+    The formal rejection test must not depend on the surrounding developer
+    checkout being dirty; CI checks out a clean tree.  A dirty tracked file
+    makes the worktree gate itself the reason for the rejection.
+    """
+
+    def run(*args: str) -> None:
+        subprocess.run(
+            ["git", "-C", str(path), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    run("init", "-q")
+    run("config", "user.email", "test@example.invalid")
+    run("config", "user.name", "Test")
+    tracked = path / "tracked.txt"
+    tracked.write_text("baseline\n", encoding="utf-8")
+    run("add", "tracked.txt")
+    run("commit", "-qm", "baseline")
+    tracked.write_text("modified\n", encoding="utf-8")
 
 
 def test_unknown_plant_is_a_typed_rejection(tmp_path, capsys, monkeypatch):
@@ -111,6 +138,7 @@ def test_missing_run_package_is_run_inspection_rejected(tmp_path, capsys):
 
 
 def test_formal_comparison_rejection_is_typed(tmp_path, capsys, monkeypatch):
+    _dirty_repo(tmp_path)
     config = _write(tmp_path, _document(tmp_path, "formal"), "formal")
     monkeypatch.chdir(tmp_path)
 
