@@ -5,10 +5,11 @@ time and can therefore enforce safety, validity, and applicability constraints
 *per window*.  A whole-run engine owns time itself and returns an entire trace,
 so the kernel can only inspect the result afterwards with post-hoc checks.
 
-Whole-run engines are therefore admitted only at ``limited`` evidence.  This
-release declares the contract but does not implement the whole-run execution
-route, so declaring ``whole_run`` is refused by the Runner rather than silently
-mis-run.
+Whole-run engines are therefore admitted only at ``limited`` evidence.  The
+contract and the executable route are implemented since 0.5.10
+(:mod:`pe_sim.whole_run_route`); a whole-run adapter is still capped at
+``limited``, and a request that cannot be served is refused rather than
+silently mis-run.
 
 The module is deliberately stdlib-only and names no engine, topology, or
 vendor.  It states who owns time and what a trace must satisfy, not how any

@@ -733,6 +733,48 @@ def build_run_review(
 # Rendering
 # ---------------------------------------------------------------------------
 
+#: Control characters that have a short, readable escape.  Backslash comes
+#: first so the escapes introduced afterwards stay unambiguous.
+_CONTROL_ESCAPES = (
+    ("\\", "\\\\"),
+    ("\n", "\\n"),
+    ("\r", "\\r"),
+    ("\t", "\\t"),
+)
+
+
+def _escape_controls(value: Any) -> str:
+    """Escape control characters so one recorded string stays one line.
+
+    The review is the one surface a human reads, and every run id, section
+    title, row label, row value, note, and child title in it can come from the
+    package.  An unescaped newline would let a recorded string write a fake
+    section header or a fake ``claim:`` line, so every dynamic string goes
+    through this helper before it reaches the output.
+
+    The order is fixed: backslash, then ``\\n``, ``\\r``, and ``\\t``, then
+    every remaining C0 control character and ``\\x7f`` as ``\\xNN`` with
+    lowercase hex.  Printable characters, non-ASCII ones included, are never
+    touched: the text renderer's final ASCII step still owns those.  A value
+    without control characters is returned unchanged, so the rendering of an
+    ordinary package stays byte-identical.
+    """
+
+    text = value if isinstance(value, str) else str(value)
+    if not any(
+        ord(character) < 0x20 or ord(character) == 0x7F for character in text
+    ):
+        return text
+    escaped = text
+    for character, replacement in _CONTROL_ESCAPES:
+        escaped = escaped.replace(character, replacement)
+    return "".join(
+        f"\\x{ord(character):02x}"
+        if ord(character) < 0x20 or ord(character) == 0x7F
+        else character
+        for character in escaped
+    )
+
 
 def _ascii(text: str) -> str:
     return text.encode("ascii", "backslashreplace").decode("ascii")
@@ -746,15 +788,18 @@ def _row_marker(row: Mapping[str, Any]) -> str:
 
 
 def _text_section_lines(section: Mapping[str, Any], number: int) -> list[str]:
-    header = f"== {number}. {section.get('title')} =="
+    header = f"== {number}. {_escape_controls(section.get('title'))} =="
     status = section.get("status")
     if status is not None and status != "ok":
-        header += f"  [{status}]"
+        header += f"  [{_escape_controls(status)}]"
     lines = [header]
     for row in section.get("rows") or []:
-        lines.append(f"  - {row.get('label')}: {row.get('value')}{_row_marker(row)}")
+        lines.append(
+            f"  - {_escape_controls(row.get('label'))}: "
+            f"{_escape_controls(row.get('value'))}{_row_marker(row)}"
+        )
     for note in section.get("notes") or []:
-        lines.append(f"  (note: {note})")
+        lines.append(f"  (note: {_escape_controls(note)})")
     lines.extend(_text_child_lines(section.get("children") or [], depth=2))
     return lines
 
@@ -765,18 +810,18 @@ def _text_child_lines(children: Sequence[Mapping[str, Any]], *, depth: int) -> l
     prefix = "-- " if depth == 2 else "- "
     row_indent = indent + 3
     for child in children:
-        header = f"{' ' * indent}{prefix}{child.get('title')}"
+        header = f"{' ' * indent}{prefix}{_escape_controls(child.get('title'))}"
         status = child.get("status")
         if status is not None and status != "ok":
-            header += f"  [{status}]"
+            header += f"  [{_escape_controls(status)}]"
         lines.append(header)
         for row in child.get("rows") or []:
             lines.append(
-                f"{' ' * row_indent}- {row.get('label')}: {row.get('value')}"
-                f"{_row_marker(row)}"
+                f"{' ' * row_indent}- {_escape_controls(row.get('label'))}: "
+                f"{_escape_controls(row.get('value'))}{_row_marker(row)}"
             )
         for note in child.get("notes") or []:
-            lines.append(f"{' ' * row_indent}(note: {note})")
+            lines.append(f"{' ' * row_indent}(note: {_escape_controls(note)})")
         lines.extend(
             _text_child_lines(child.get("children") or [], depth=depth + 1)
         )
@@ -788,13 +833,13 @@ def render_text(review: Mapping[str, Any]) -> str:
 
     summary = _mapping(review.get("summary"))
     lines = [
-        f"pe-sim run review: {_value(review.get('run_id'))}",
+        f"pe-sim run review: {_escape_controls(_value(review.get('run_id')))}",
         "claim: {claim} | qualification: {qualification} | evidence: {evidence}"
         " | integrity: {integrity}".format(
-            claim=_value(summary.get("claim")),
-            qualification=_value(summary.get("qualification")),
-            evidence=_value(summary.get("evidence")),
-            integrity=_value(summary.get("integrity")),
+            claim=_escape_controls(_value(summary.get("claim"))),
+            qualification=_escape_controls(_value(summary.get("qualification"))),
+            evidence=_escape_controls(_value(summary.get("evidence"))),
+            integrity=_escape_controls(_value(summary.get("integrity"))),
         ),
     ]
     sections = review.get("sections")
@@ -815,17 +860,18 @@ def _markdown_row_marker(row: Mapping[str, Any]) -> str:
 
 
 def _markdown_section_lines(section: Mapping[str, Any], number: int) -> list[str]:
-    header = f"## {number}. {section.get('title')}"
+    header = f"## {number}. {_escape_controls(section.get('title'))}"
     status = section.get("status")
     if status is not None and status != "ok":
-        header += f" - {status}"
+        header += f" - {_escape_controls(status)}"
     lines = [header]
     for row in section.get("rows") or []:
         lines.append(
-            f"- **{row.get('label')}**: {row.get('value')}{_markdown_row_marker(row)}"
+            f"- **{_escape_controls(row.get('label'))}**: "
+            f"{_escape_controls(row.get('value'))}{_markdown_row_marker(row)}"
         )
     for note in section.get("notes") or []:
-        lines.append(f"- _note_: {note}")
+        lines.append(f"- _note_: {_escape_controls(note)}")
     lines.extend(
         _markdown_child_lines(section.get("children") or [], depth=2)
     )
@@ -839,19 +885,19 @@ def _markdown_child_lines(
     heading = "#" * (depth + 1)
     indent = "  " * (depth - 2)
     for child in children:
-        header = f"{heading} {child.get('title')}"
+        header = f"{heading} {_escape_controls(child.get('title'))}"
         status = child.get("status")
         if status is not None and status != "ok":
-            header += f" - {status}"
+            header += f" - {_escape_controls(status)}"
         lines.append("")
         lines.append(header)
         for row in child.get("rows") or []:
             lines.append(
-                f"{indent}- **{row.get('label')}**: {row.get('value')}"
-                f"{_markdown_row_marker(row)}"
+                f"{indent}- **{_escape_controls(row.get('label'))}**: "
+                f"{_escape_controls(row.get('value'))}{_markdown_row_marker(row)}"
             )
         for note in child.get("notes") or []:
-            lines.append(f"{indent}- _note_: {note}")
+            lines.append(f"{indent}- _note_: {_escape_controls(note)}")
         lines.extend(
             _markdown_child_lines(child.get("children") or [], depth=depth + 1)
         )
@@ -863,14 +909,14 @@ def render_markdown(review: Mapping[str, Any]) -> str:
 
     summary = _mapping(review.get("summary"))
     lines = [
-        f"# pe-sim run review: {_value(review.get('run_id'))}",
+        f"# pe-sim run review: {_escape_controls(_value(review.get('run_id')))}",
         "",
         "claim: {claim} | qualification: {qualification} | evidence: {evidence}"
         " | integrity: {integrity}".format(
-            claim=_value(summary.get("claim")),
-            qualification=_value(summary.get("qualification")),
-            evidence=_value(summary.get("evidence")),
-            integrity=_value(summary.get("integrity")),
+            claim=_escape_controls(_value(summary.get("claim"))),
+            qualification=_escape_controls(_value(summary.get("qualification"))),
+            evidence=_escape_controls(_value(summary.get("evidence"))),
+            integrity=_escape_controls(_value(summary.get("integrity"))),
         ),
     ]
     sections = review.get("sections")

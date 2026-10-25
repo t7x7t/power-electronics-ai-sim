@@ -148,6 +148,20 @@ def implementation_sources(backend_id: str) -> dict[str, str]:
     return result
 
 
+def _declared_solve_path_files(modules: Iterable[str]) -> tuple[str, ...]:
+    """Return the declared solve-path files as package-relative POSIX paths.
+
+    The digest mapping above is keyed by the plain module file name because
+    those keys are part of an already-reviewed digest.  A name is not a
+    location, though: a file with the same name in another directory would
+    pass a basename check.  Verification therefore resolves each declared file
+    and compares resolved paths, while the recorded evidence stays portable:
+    the manifest must not embed an absolute, machine-specific path.
+    """
+
+    return tuple(sorted({PurePosixPath(relative).as_posix() for relative in modules}))
+
+
 def implementation_digest(backend_id: str) -> str:
     """Return the aggregate digest of the declared solve path."""
 
@@ -209,13 +223,21 @@ def verify_adapter_identity(component: Any, identity: Mapping[str, Any]) -> dict
 
     - ``verified``: the recorded digest equals the digest recomputed from the
       files on disk, the recorded review status equals the kernel's own lookup,
-      and the adapter's class is defined inside the declared solve path.
+      and the adapter's class is defined in one of the declared solve-path
+      files.
     - ``digest_mismatch`` / ``review_status_mismatch``: the claim contradicts
       the checkout.
-    - ``module_outside_solve_path``: the adapter's module is not part of the
-      reviewed solve path, so the pin does not cover the code that runs.
+    - ``module_outside_solve_path``: the adapter's class is not defined in a
+      declared solve-path file, so the pin does not cover the code that runs.
+      The comparison is between resolved absolute paths, not module file names:
+      a same-named file elsewhere (even with identical content) does not count.
     - ``unverifiable``: no ``backend_id`` or no declared solve path; the kernel
       says so instead of pretending the claim was checked.
+
+    ``module_file`` (the file name) and ``solve_path_modules`` (the digest keys)
+    are kept for compatibility.  ``module_path`` and ``solve_path_files`` show
+    the resolved paths the location check actually compared, so an auditor can
+    reproduce the decision.
 
     The check is a consistency check, not a sandbox: a process that can rewrite
     ``identity.py`` can also rewrite this function.
@@ -240,6 +262,10 @@ def verify_adapter_identity(component: Any, identity: Mapping[str, Any]) -> dict
         "recomputed_sha256": None,
         "recorded_review_status": None,
         "recomputed_review_status": None,
+        "module_file": None,
+        "module_path": None,
+        "solve_path_modules": [],
+        "solve_path_files": [],
         "reasons": [],
     }
 
@@ -259,6 +285,11 @@ def verify_adapter_identity(component: Any, identity: Mapping[str, Any]) -> dict
         return result
 
     result["solve_path_modules"] = sorted(sources)
+    declared_files = _declared_solve_path_files(declared_solve_paths().get(backend_id, ()))
+    resolved_files = {
+        (_PACKAGE_ROOT / relative).resolve(strict=False) for relative in declared_files
+    }
+    result["solve_path_files"] = list(declared_files)
     recomputed = implementation_digest(backend_id)
     result["recomputed_sha256"] = recomputed
     recomputed_review = review_status(backend_id, recomputed)
@@ -281,11 +312,19 @@ def verify_adapter_identity(component: Any, identity: Mapping[str, Any]) -> dict
         return result
 
     try:
-        module_file = Path(inspect.getfile(type(component))).name
+        module_path = Path(inspect.getfile(type(component))).resolve(strict=False)
     except (TypeError, OSError):  # pragma: no cover - builtins and frozen modules
-        module_file = None
-    result["module_file"] = module_file
-    if module_file is None or module_file not in sources:
+        module_path = None
+    result["module_file"] = module_path.name if module_path is not None else None
+    try:
+        result["module_path"] = (
+            module_path.relative_to(_PACKAGE_ROOT.resolve()).as_posix()
+            if module_path is not None
+            else None
+        )
+    except ValueError:
+        result["module_path"] = None
+    if module_path is None or module_path not in resolved_files:
         result["status"] = "module_outside_solve_path"
         result["reasons"].append(
             "the adapter class is defined outside the declared solve path, "

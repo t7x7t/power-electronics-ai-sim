@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import copy
 import shutil
 
 import pytest
@@ -226,6 +227,41 @@ def _child_rows(section: dict, prefix: str) -> list[dict]:
     return rows
 
 
+def _minimal_review(
+    *,
+    run_id: str = "run",
+    title: str = "Parameters",
+    rows: list[dict] | None = None,
+    notes: list[str] | None = None,
+    children: list[dict] | None = None,
+) -> dict:
+    """A hand-built envelope for the renderer-only escaping tests."""
+
+    return {
+        "schema_version": REVIEW_SCHEMA,
+        "rule_version": REVIEW_RULE_VERSION,
+        "run_id": run_id,
+        "summary": {
+            "integrity": "ok",
+            "claim": "bounded",
+            "qualification": "assessed",
+            "evidence": "comparable",
+        },
+        "sections": [
+            {
+                "id": "parameters",
+                "title": title,
+                "level": 1,
+                "status": "ok",
+                "rows": list(rows or []),
+                "notes": list(notes or []),
+                "children": list(children or []),
+            }
+        ],
+        "limitations": [],
+    }
+
+
 def test_envelope_declares_schema_versions_and_all_eight_sections(tmp_path):
     run_dir = _publish(tmp_path)
 
@@ -426,3 +462,159 @@ def test_unknown_artifact_index_shape_is_unavailable_not_an_exception(
 
     assert section["status"] == "unavailable"
     assert any("unreadable shape" in note for note in section["notes"])
+
+
+# ---------------------------------------------------------------------------
+# Control-character escaping: a recorded string must never add a line
+# ---------------------------------------------------------------------------
+
+
+def test_render_text_escapes_a_newline_injection_in_a_row_label():
+    review = _minimal_review(
+        rows=[{"label": "evil\n== 9. Injected ==", "value": "1", "status": None}]
+    )
+
+    text = render_text(review)
+
+    assert "  - evil\\n== 9. Injected ==: 1\n" in text
+    assert "\\n== 9. Injected ==" in text
+    lines = text.splitlines()
+    assert not any(line.startswith("== 9.") for line in lines)
+    assert len([line for line in lines if "Injected" in line]) == 1
+
+
+def test_render_markdown_cannot_gain_a_heading_line_from_a_row_label():
+    label = "evil\n== 9. Injected ==\n# Injected heading"
+    review = _minimal_review(
+        rows=[{"label": label, "value": "1", "status": None}]
+    )
+
+    markdown = render_markdown(review)
+
+    assert "\\n== 9. Injected ==" in markdown
+    assert "\\n# Injected heading" in markdown
+    lines = markdown.splitlines()
+    assert not any(line.startswith("== 9.") for line in lines)
+    assert not any(line.startswith("# Injected") for line in lines)
+    assert [line for line in lines if line.startswith("#")] == [
+        "# pe-sim run review: run",
+        "## 1. Parameters",
+    ]
+
+
+def test_a_run_id_cannot_inject_a_claim_line_into_either_renderer():
+    review = _minimal_review(run_id="run\r\nclaim: forged")
+
+    text = render_text(review)
+    markdown = render_markdown(review)
+
+    assert text.splitlines()[0] == "pe-sim run review: run\\r\\nclaim: forged"
+    assert markdown.splitlines()[0] == "# pe-sim run review: run\\r\\nclaim: forged"
+    summary_line = (
+        "claim: bounded | qualification: assessed | evidence: comparable"
+        " | integrity: ok"
+    )
+    for rendered in (text, markdown):
+        lines = rendered.splitlines()
+        assert not any(line.startswith("claim: forged") for line in lines)
+        assert [line for line in lines if line.startswith("claim: ")] == [
+            summary_line
+        ]
+
+
+def test_control_characters_in_notes_and_child_titles_are_escaped():
+    child = {
+        "id": "plant",
+        "title": "plant\tgroup\x1b[31m",
+        "level": 2,
+        "status": "ok",
+        "rows": [],
+        "notes": ["child\x7fnote\r"],
+        "children": [],
+    }
+    review = _minimal_review(notes=["note\twith\x1bescape"], children=[child])
+
+    text = render_text(review)
+    markdown = render_markdown(review)
+
+    assert "  (note: note\\twith\\x1bescape)" in text
+    assert "-- plant\\tgroup\\x1b[31m" in text
+    assert "     (note: child\\x7fnote\\r)" in text
+    assert "- _note_: note\\twith\\x1bescape" in markdown
+    assert "### plant\\tgroup\\x1b[31m" in markdown
+    assert "- _note_: child\\x7fnote\\r" in markdown
+    for rendered in (text, markdown):
+        for control in ("\t", "\x1b", "\x7f", "\r"):
+            assert control not in rendered
+
+
+def test_build_run_review_keeps_raw_strings_while_rendering_escapes_them(tmp_path):
+    message = "the gate failed\n== 9. Injected =="
+    run_dir = _publish(
+        tmp_path,
+        name="buck-raw-strings",
+        qualification_findings=[
+            {
+                "rule_id": "qualification.gate",
+                "category": "gate",
+                "message": message,
+                "passed": False,
+                "severity": "error",
+            }
+        ],
+    )
+
+    review = build_run_review(run_dir)
+    gate = next(
+        child
+        for child in _section(review, "checks")["children"]
+        if child["id"] == "qualification:gate"
+    )
+
+    # The envelope keeps the raw recorded string ...
+    assert gate["notes"] == [message]
+    before = copy.deepcopy(review)
+    text = render_text(review)
+    markdown = render_markdown(review)
+    assert review == before
+    # ... and only the rendered surfaces escape it.
+    assert "\\n== 9. Injected ==" in text
+    assert not any(line.startswith("== 9.") for line in text.splitlines())
+    assert "\\n== 9. Injected ==" in markdown
+    assert not any(line.startswith("== 9.") for line in markdown.splitlines())
+
+
+def test_render_text_stays_ascii_for_the_existing_fixture_with_an_injection(tmp_path):
+    run_dir = _publish(
+        tmp_path,
+        name="buck-ascii-injection",
+        qualification_findings=[
+            {
+                "rule_id": "qualification.gate",
+                "category": "gate",
+                "message": "gate failed\r\n== 9. Injected ==\ttab",
+                "passed": False,
+                "severity": "error",
+            }
+        ],
+    )
+
+    review = build_run_review(run_dir)
+    text = render_text(review)
+
+    assert text.isascii()
+    assert "\r" not in text and "\t" not in text
+    assert not any(line.startswith("== 9.") for line in text.splitlines())
+    for section in review["sections"]:
+        assert section["title"] in text
+
+
+def test_render_text_still_ascii_folds_printable_non_ascii():
+    review = _minimal_review(
+        rows=[{"label": "caf\u00e9\nresistance", "value": "\u00b5ohm", "status": None}]
+    )
+
+    text = render_text(review)
+
+    assert text.isascii()
+    assert "caf\\xe9\\nresistance: \\xb5ohm" in text

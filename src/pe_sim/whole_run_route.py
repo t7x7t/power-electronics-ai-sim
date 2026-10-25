@@ -79,6 +79,7 @@ from .runtime import (
     _derive_evidence_level,
     _failure_record,
     _preflight_document,
+    _require_registered_adapter,
     _run_plugins_audited,
 )
 from .time_model import (
@@ -309,6 +310,10 @@ def run_whole_run_route(
     worktree = analyze_git_worktree()
     git = collect_git_provenance()
     validate_run_location(spec.output_dir, spec.run_id)
+    # A direct caller can reach this route without ``Runner.run``'s preflight.
+    # The adapter/registration agreement is therefore checked here too, still
+    # before ``ArtifactWriter`` exists.
+    _require_registered_adapter(spec, plant)
     plant_manifest_preflight = _component_manifest(
         spec.plant_id, plant, configuration=spec.plant_config
     )

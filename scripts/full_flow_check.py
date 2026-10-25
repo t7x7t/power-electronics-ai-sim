@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import socket
 import subprocess
@@ -852,6 +853,32 @@ def _git_worktree(path: Path) -> bool:
     return completed.returncode == 0 and completed.stdout.strip().lower() == "true"
 
 
+def _inside_repository(candidate: Path, repository: Path) -> bool:
+    """Return whether ``candidate`` resolves inside ``repository``.
+
+    ``pe_sim.attestation`` applies exactly this rule to the attestations
+    directory (resolved path plus ``relative_to``) before it agrees to anchor a
+    record, so the check asks the same question before it chooses between an
+    anchored and an unanchored ``attest-run``.  Both sides are resolved first: a
+    resolved path carries the on-disk spelling, which matters on Windows where
+    the same drive may be written ``c:`` or ``C:``.
+    """
+
+    resolved_candidate = Path(candidate).expanduser().resolve()
+    resolved_repository = Path(repository).expanduser().resolve()
+    try:
+        resolved_candidate.relative_to(resolved_repository)
+    except ValueError:
+        pass
+    else:
+        return True
+    # A component that does not exist yet keeps the caller's spelling, so fall
+    # back to the case-folded comparison the Windows file system itself makes.
+    root = os.path.normcase(str(resolved_repository)).rstrip("\\/")
+    target = os.path.normcase(str(resolved_candidate))
+    return target == root or target.startswith(root + os.sep)
+
+
 def _step_audit(context: _Context, step: _Step) -> None:
     if context.skip_audit:
         step.status = "skip"
@@ -868,15 +895,24 @@ def _step_audit(context: _Context, step: _Step) -> None:
     run_dir = _require_run_dir(context)
     attestations = context.output_dir / "attestations"
     _reset_path(attestations)
-    arguments = [
-        "attest-run",
-        str(run_dir),
-        "--repo",
-        str(context.source_root),
-        "--attestations-dir",
-        str(attestations),
-        "--compact",
-    ]
+    # The producer refuses ``--repo`` together with an attestations directory
+    # outside that repository, and the output directory is allowed to live
+    # anywhere (docs/56).  So anchoring is chosen by containment, not assumed.
+    anchored = _inside_repository(attestations, context.source_root)
+    arguments: list[Any] = ["attest-run", str(run_dir)]
+    if anchored:
+        arguments += ["--repo", str(context.source_root)]
+    else:
+        arguments += ["--no-anchor"]
+        step.record("anchor=disabled reason=attestations_dir_outside_repository")
+        step.limit(
+            "the attestations directory is outside the Git repository "
+            f"({attestations} vs {context.source_root}), so attest-run ran with "
+            "--no-anchor and verify-attestation with --no-git: the attestation is "
+            "locally consistent but carries no anchor, and the audit step records a "
+            "limitation instead of a pass"
+        )
+    arguments += ["--attestations-dir", str(attestations), "--compact"]
     command = _command_text(arguments)
     completed = context.cli(arguments)
     step.record(f"{command} -> exit {completed.returncode}")
@@ -890,15 +926,12 @@ def _step_audit(context: _Context, step: _Step) -> None:
     if not path.is_file():
         raise StepFailure(f"the reported attestation does not exist: {path}")
 
-    arguments = [
-        "verify-attestation",
-        str(run_dir),
-        "--attestation",
-        str(path),
-        "--repo",
-        str(context.source_root),
-        "--compact",
-    ]
+    arguments = ["verify-attestation", str(run_dir), "--attestation", str(path)]
+    if anchored:
+        arguments += ["--repo", str(context.source_root)]
+    else:
+        arguments += ["--no-git"]
+    arguments += ["--compact"]
     command = _command_text(arguments)
     completed = context.cli(arguments)
     step.record(f"{command} -> exit {completed.returncode}")
@@ -923,7 +956,10 @@ def _step_audit(context: _Context, step: _Step) -> None:
             "L1_pending); verify-attestation exits 1 because L1 requires the attestation "
             "record in Git history, so the audit step records a limitation, not a failure"
         )
-        step.detail = f"attestation written and read back; trust level {trust}"
+        step.detail = (
+            f"attestation written and read back; trust level {trust}"
+            + ("" if anchored else " (unanchored: output directory outside the repository)")
+        )
         return
     raise StepFailure(
         f"verify-attestation reported trust level {trust!r} at exit {completed.returncode}"

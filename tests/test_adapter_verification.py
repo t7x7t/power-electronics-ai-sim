@@ -7,11 +7,15 @@ solve-path digest and refuses to treat a contradicted claim as evidence.
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import sys
+from pathlib import Path
 
 import pytest
 
 from pe_sim import BoostPlant, BuckPlant
+from pe_sim import reference_plants as reference_plants_module
 from pe_sim.contracts import ExperimentSpec, Timebase
 from pe_sim.identity import (
     CONTRADICTED_VERIFICATION_STATUSES,
@@ -44,6 +48,27 @@ def _manifest_for(tmp_path, plant) -> dict:
     return json.loads((result.run_dir / "manifest.json").read_text(encoding="utf-8"))
 
 
+def _solved_reference_plants_file() -> Path:
+    """Return the reviewed ``reference_plants.py`` inside the package."""
+
+    return Path(reference_plants_module.__file__).resolve()
+
+
+def _load_module(path: Path, module_name: str):
+    """Execute a module from an arbitrary file and clean up its sys.modules entry."""
+
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:  # pragma: no cover - defensive cleanup
+        sys.modules.pop(module_name, None)
+        raise
+    return module
+
+
 def test_reference_plant_run_records_kernel_verified_identity(tmp_path):
     manifest = _manifest_for(tmp_path, _buck())
     verification = manifest["plant"]["verification"]
@@ -53,6 +78,9 @@ def test_reference_plant_run_records_kernel_verified_identity(tmp_path):
     assert verification["recorded_sha256"] == implementation_digest("buck")
     assert verification["recomputed_sha256"] == verification["recorded_sha256"]
     assert verification["module_file"] == "reference_plants.py"
+    # The manifest must stay portable: only a package-relative path is recorded.
+    assert verification["module_path"] == "reference_plants.py"
+    assert verification["solve_path_files"] == ["reference_plants.py"]
 
 
 def test_boost_plant_is_verified_against_the_same_solve_path(tmp_path):
@@ -98,7 +126,89 @@ def test_subclass_outside_the_solve_path_is_not_verified():
 
     assert verification["status"] == "module_outside_solve_path"
     assert verification["status"] in CONTRADICTED_VERIFICATION_STATUSES
-    assert verification["module_file"] == __file__.rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
+    assert verification["module_file"] == Path(__file__).name
+    # An out-of-package class records no absolute path; the verdict carries the
+    # decision and the basename identifies the file.
+    assert verification["module_path"] is None
+    assert verification["solve_path_files"] == ["reference_plants.py"]
+
+
+def test_same_basename_module_outside_the_package_is_not_verified(tmp_path):
+    """A file *named* ``reference_plants.py`` elsewhere is not the reviewed file.
+
+    Regression for P0-1: the location check used to compare bare file names, so
+    any same-named module on ``sys.path`` could supply the class that ran while
+    the recomputed digest and review pin still matched.
+    """
+
+    rogue_file = tmp_path / "reference_plants.py"
+    rogue_file.write_text(
+        "from pe_sim.reference_plants import BuckPlant\n"
+        "\n"
+        "\n"
+        "class RogueSameNameBuck(BuckPlant):\n"
+        '    """Inherits the reviewed behaviour from a same-named file."""\n',
+        encoding="utf-8",
+    )
+
+    module_name = "rogue_same_name_reference_plants"
+    try:
+        module = _load_module(rogue_file, module_name)
+        rogue = module.RogueSameNameBuck(
+            input_voltage_v=12.0,
+            inductance_h=100e-6,
+            capacitance_f=470e-6,
+            load_resistance_ohm=10.0,
+            integration_step_s=1e-6,
+        )
+        verification = verify_adapter_identity(rogue, rogue.manifest_identity())
+    finally:
+        sys.modules.pop(module_name, None)
+
+    assert verification["status"] == "module_outside_solve_path"
+    assert verification["status"] in CONTRADICTED_VERIFICATION_STATUSES
+    # The digest and review claims are genuinely consistent: only the location
+    # is wrong.  Verification must reject on location alone.
+    assert verification["recomputed_sha256"] == implementation_digest("buck")
+    assert verification["recorded_review_status"] == "reviewed"
+    assert verification["module_file"] == "reference_plants.py"
+    assert verification["module_path"] is None
+    assert verification["solve_path_files"] == ["reference_plants.py"]
+
+
+def test_copied_solve_path_module_is_not_verified(tmp_path):
+    """Identical content elsewhere is still outside the reviewed solve path."""
+
+    source = _solved_reference_plants_file()
+    copy_dir = tmp_path / "copy_of_pe_sim"
+    copy_dir.mkdir()
+    copied_file = copy_dir / source.name
+    copied_file.write_bytes(source.read_bytes())
+    assert copied_file.read_bytes() == source.read_bytes()
+
+    # A dotted name whose parent is ``pe_sim`` keeps the copied module's relative
+    # imports resolvable without touching the installed package.
+    module_name = "pe_sim._copied_reference_plants_for_test"
+    try:
+        module = _load_module(copied_file, module_name)
+        copied_plant = module.BuckPlant(
+            input_voltage_v=12.0,
+            inductance_h=100e-6,
+            capacitance_f=470e-6,
+            load_resistance_ohm=10.0,
+            integration_step_s=1e-6,
+        )
+        verification = verify_adapter_identity(copied_plant, copied_plant.manifest_identity())
+    finally:
+        sys.modules.pop(module_name, None)
+
+    assert verification["status"] == "module_outside_solve_path"
+    assert verification["status"] in CONTRADICTED_VERIFICATION_STATUSES
+    # Content equality is real here: the digest and review status both pass, so
+    # the rejection can only come from the resolved location.
+    assert verification["recomputed_sha256"] == implementation_digest("buck")
+    assert verification["module_path"] is None
+    assert verification["module_file"] == "reference_plants.py"
 
 
 def test_mismatched_digest_is_reported_as_a_contradiction():

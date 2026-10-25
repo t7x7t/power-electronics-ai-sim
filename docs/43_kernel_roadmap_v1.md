@@ -22,12 +22,19 @@ That goal is only useful if it can be checked. The design must pass:
 | T2 | Add a topology without editing CLI allow-lists or schema enums | **passes** (0.5.4; export path data-driven 0.5.13) |
 | T3 | An agent can discover capabilities, start, observe progress, cancel, and read evidence using only versioned contracts | **passes** (0.5.7) |
 | T4 | An installed release reads a package from an older release and states cross-version comparability honestly | **passes** (0.5.11) |
-| T5 | No self-declared or modified implementation can reach `comparable` | **passes** (0.5.2) |
+| T5 | No self-declared or modified implementation can reach `comparable` | **passes** (0.5.2; location check tightened in 0.9.1) |
 | T6 | A user who does not read source can run, view, and verify | **passes** (0.5.12) |
 | T7 | Every change since the declared baseline to Plant/Runner/Controller is visible per component, and an unauthorized change cannot produce formal evidence | **planned (Phase E)** |
 
 T5 is the property that makes the rest worth having, and it is the one that must
 never regress.
+
+T5 regression note (0.9.1): until 0.9.0 the location check compared only the
+adapter file's basename, so a file named `reference_plants.py` outside the
+package was accepted as a reviewed implementation and could reach `comparable`.
+The check now compares resolved paths against the declared solve-path files, and
+a verified implementation may only run under its registered plant id; see
+`docs/releases/v0.9.1.md`.
 
 ## 2. Invariants every phase must preserve
 

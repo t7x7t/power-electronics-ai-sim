@@ -455,6 +455,18 @@ class ExperimentSpec:
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "ExperimentSpec":
+        """Read an experiment document that already satisfies the contract.
+
+        The JSON schema is the shared definition of a valid experiment
+        document, so this reader validates it before constructing a spec.
+        Without that step a Python caller could bypass the CLI's protection
+        against unknown or misspelled keys - for example an ``input_schedule``
+        item using ``v_ref`` instead of ``vref`` - and the mistake would be
+        silently ignored while the run looked qualified.  A schema failure
+        surfaces as ``ValueError``, exactly as it does at the CLI boundary.
+        """
+
+        validate_experiment_document(value)
         tb = value.get("timebase", {})
         initial = value.get("initial_state", {})
         output = value.get("output", {})

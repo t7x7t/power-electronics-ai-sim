@@ -54,6 +54,7 @@ from .checks import (
     run_plugins,
 )
 from .model_claim import collect_model_claim, collect_parameter_provenance
+from .plant_registry import resolve
 from .time_model import (
     TIME_MODEL_STEPPED,
     TIME_MODEL_WHOLE_RUN,
@@ -486,6 +487,14 @@ class Runner:
                 f"plant {spec.plant_id!r} declares unknown time_model {time_model!r}; "
                 f"expected one of {list(TIME_MODELS)}"
             )
+        # A plant that publishes ``manifest_identity`` claims to be a specific
+        # registered model.  The CLI cross-checks that claim against the
+        # registry; the Python API must apply the same rule and must do it
+        # before the whole-run dispatch, any adapter reset, or any run
+        # directory creation.  An ad-hoc adapter that makes no identity claim
+        # keeps its historical freedom because it cannot reach ``verified`` or
+        # ``comparable`` evidence anyway.
+        _require_registered_adapter(spec, plant)
         # Interaction surface: both default to None, so the ordinary in-process
         # caller pays nothing for progress or cancellation support.
         progress_policy = options.progress if options is not None else None
@@ -1772,6 +1781,112 @@ def _hashable_value(value: Any) -> Any:
     if callable(to_dict):
         return _hashable_value(to_dict())
     raise TypeError(f"component identity value is not JSON serializable: {type(value).__name__}")
+
+
+def _require_registered_adapter(spec: ExperimentSpec, plant: Any) -> None:
+    """Cross-check an identity-declaring plant against its registration.
+
+    ``run_experiment`` is a facade over :meth:`Runner.run`, so it must enforce
+    the same adapter/registration agreement the CLI enforces.  Otherwise a
+    Python caller can pair ``plant_id="ngspice-buck"`` with the averaged
+    ``BuckPlant`` and still publish ``verified``/``comparable`` evidence that
+    names a model which never ran.
+
+    The rules mirror the CLI's ``_select_registration`` and
+    ``_validate_plant_adapter`` helpers, plus its ``_validate_schedule_keys``
+    rule, and they are deliberately scoped to plants that publish
+    ``manifest_identity``: only such an adapter claims a registered model
+    identity.  An ad-hoc object without it cannot reach ``verified`` or
+    ``comparable`` evidence, so its historical behaviour is preserved.
+
+    ``manifest_identity()["topology"]`` is intentionally *not* compared with
+    ``plant_id``: ids such as ``ngspice-buck`` legitimately carry topology
+    ``buck``.  The registration's ``backend_id`` is likewise not compared with
+    the plant's ``backend_id``: the former selects an adapter, the latter names
+    a reviewed solve path.  Everything here runs before any run directory
+    exists.
+    """
+
+    if not callable(getattr(plant, "manifest_identity", None)):
+        return
+    plant_id = spec.plant_id
+    identity = plant.manifest_identity()
+    verification = verify_adapter_identity(plant, identity)
+    verified = verification.get("status") == "verified"
+
+    registration = None
+    try:
+        registration = resolve(plant_id)
+    except KeyError:
+        # The CLI composition root registers the shipped plants before a run;
+        # a library caller may not have done that yet.
+        from .builtin_plants import load_builtin_plants
+
+        try:
+            load_builtin_plants()
+        except ValueError:
+            pass
+        try:
+            registration = resolve(plant_id)
+        except KeyError:
+            registration = None
+
+    # Only an adapter that actually verifies can reach ``verified`` evidence.
+    # A subclass or plugin cannot (its class is not defined in a reviewed
+    # solve-path file), so it is capped at ``limited`` and keeps the library
+    # freedom to vary a reference model.  What must be impossible is presenting
+    # a *verified* implementation under a different registered id.
+    if verified:
+        if registration is None:
+            raise ValueError(
+                f"plant_id {plant_id!r} is not registered, but adapter "
+                f"{type(plant).__name__!r} passes kernel identity verification; "
+                f"a verified implementation must run under its registered id"
+            )
+        actual_class = type(plant).__name__
+        actual_backend = getattr(plant, "backend_id", None)
+        actual_time_model = getattr(plant, "time_model", None)
+        mismatches: list[str] = []
+        if actual_class != registration.class_name:
+            mismatches.append(
+                f"class {actual_class!r} does not match {registration.class_name!r}"
+            )
+        # ``PlantRegistration.backend_id`` names the adapter a caller selects
+        # with ``--backend``; a plant's own ``backend_id`` names its solve path.
+        # They are different concepts, so they are deliberately not compared
+        # here — only the class identity and the declared time model are.
+        if (
+            actual_time_model is not None
+            and str(actual_time_model) != registration.time_model
+        ):
+            mismatches.append(
+                f"time_model {actual_time_model!r} does not match "
+                f"{registration.time_model!r}"
+            )
+        if mismatches:
+            raise ValueError(
+                f"plant {plant_id!r} registration expects class "
+                f"{registration.class_name!r} and time_model "
+                f"{registration.time_model!r}; adapter {actual_class!r} observed "
+                f"with backend_id {actual_backend!r} and time_model "
+                f"{actual_time_model!r}: " + "; ".join(mismatches)
+            )
+
+    # A schedule key the selected plant would ignore is always a silent typo,
+    # whether or not the adapter verifies.  The rule needs a registration to
+    # know the allowed keys, so it is skipped only for an unknown id.
+    if registration is None:
+        return
+    allowed = set(registration.schedule_keys or ())
+    for index, item in enumerate(spec.input_schedule):
+        if not isinstance(item, Mapping):
+            raise ValueError(f"input_schedule[{index}] must be an object")
+        unknown = set(item) - allowed
+        if unknown:
+            raise ValueError(
+                f"input_schedule[{index}] has keys not supported by plant "
+                f"{plant_id!r}: {sorted(unknown)}; allowed: {sorted(allowed)}"
+            )
 
 
 def _component_manifest(component_id: str, component: Any, declared_capabilities: Any = None, configuration: Mapping[str, Any] | None = None) -> dict[str, Any]:

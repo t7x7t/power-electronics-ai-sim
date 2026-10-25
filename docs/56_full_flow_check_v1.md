@@ -46,7 +46,7 @@ Step ids, in execution order:
 | `inspect` | yes | `inspect-run`, `parameter-view`, and `review-run` return their documented schema tags |
 | `export` | yes | the three visualization contracts are exported and revalidated |
 | `service` | no | the loopback service answers health, discovery, topology, and review, then the process started by the check is stopped |
-| `audit` | no | `attest-run` writes a detached attestation and `verify-attestation` reads it back (skipped without Git) |
+| `audit` | no | `attest-run` writes a detached attestation and `verify-attestation` reads it back (skipped without Git). The call is anchored (`--repo` plus `--attestations-dir`) when the output directory is inside the Git repository, and runs with `--no-anchor` (verification with `--no-git`) plus a recorded limitation when it is outside |
 | `compare` | yes | a second run of the same document compares as `exact_match` or `tolerance_match` |
 
 ## Outcome and exit codes
@@ -58,23 +58,35 @@ Step ids, in execution order:
 
 Exit codes: `0` pass, `2` partial, `1` fail. `partial` is not a pass.
 
-Two limitations are expected on a normal development machine and each makes the
+Several limitations are expected on a normal development machine; each makes the
 outcome `partial` without failing a step:
 
 | Limitation | Why it is not a failure |
 | --- | --- |
 | `environment` supports the interpreter but does not reproduce the verified pin set | the declared range is supported; only the exact release toolchain is a narrower statement (`docs/28`) |
 | `compare` returns `unknown` because the source worktree is dirty | `compare-runs` refuses a reproducibility verdict from an uncommitted tree; the two runs still completed |
-| `audit` reports `L1_pending` | the check writes the attestation outside Git, so no anchor exists until a human commits it; anchoring is a separate act |
+| `audit` reports `L1_pending` | the attestation record is written but not yet committed, so no anchor exists until a human commits it; anchoring is a separate act |
+| `audit` runs `attest-run --no-anchor` because the output directory is outside the repository | the anchoring rule requires the attestations directory inside the repository, while `--output` may live anywhere; the step records `anchor=disabled reason=attestations_dir_outside_repository` and a limitation, so the outcome is `partial` |
 
 Run the check from a clean tree with the exact toolchain to remove the first two.
-The audit limitation is inherent to a check that must not write into Git, so a
-full `pass` requires the operator to commit the attestation and re-verify.
+The audit limitations are inherent to a check that must not write into Git: an
+in-repository output directory leaves the attestation unanchored until a human
+commits it, and an output directory outside the repository is written with
+`--no-anchor` by design. A full `pass` therefore requires the operator to commit
+the attestation and re-verify.
+
+A `fail` in `audit` now means `attest-run` or `verify-attestation` genuinely
+errored (a rejected or conflicting attestation, an unreadable package, a
+verification status other than `ok`). The location of the output directory is
+no longer a reason to fail: it selects the anchored or the unanchored call.
 
 ## Boundaries
 
 - Writes only under the output directory (`--output`, default
   `.tmp/full-flow/<timestamp>`), which is Git-ignored. It never edits source.
+- The output directory may live anywhere. Inside the repository the audit step
+  anchors its attestation; outside it the step calls `attest-run --no-anchor`
+  with an explicit limitation instead of failing.
 - Installs nothing, contacts no network, and never modifies a published package.
 - Runs `formal_comparison` nowhere: every run is `exploratory`, so the check is
   usable from a dirty development tree.
@@ -91,6 +103,10 @@ python scripts/full_flow_check.py
 python scripts/full_flow_check.py --output .tmp/flow-1 --json
 ```
 
-Covered by `tests/test_full_flow_check.py`, which runs the check once in a
-temporary directory and asserts the outcome, the step order, and the exit-code
-mapping.
+Covered by `tests/test_full_flow_check.py`, which runs the check in temporary
+directories and asserts the outcome, the step order, and the exit-code mapping.
+The audit step is exercised from both sides of the Git boundary: an output
+directory created with `tempfile.mkdtemp()` outside the repository (the
+attestation must be written with `--no-anchor` and the evidence must say
+`anchor=disabled`), and one under `.tmp/` inside the repository (the anchored
+call must be used). Neither run may fail the audit step.
