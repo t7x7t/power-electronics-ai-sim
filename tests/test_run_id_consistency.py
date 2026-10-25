@@ -31,6 +31,10 @@ REJECTED_IDS = (
     "LPT9",
     "trailing.",
     "trailing ",
+    # Windows reserves the device name on the base name, before the first dot.
+    "COM1.txt",
+    "NUL.txt",
+    "con.log",
 )
 
 ACCEPTED_IDS = (

@@ -87,7 +87,10 @@ def validate_run_id(run_id: Any) -> str:
             "run_id must contain only letters, digits, '.', '_' and '-' and must "
             "not traverse directories"
         )
-    if run_id.upper() in _RESERVED_RUN_IDS:
+    # Windows reserves the device names on the base name, before the first dot:
+    # ``NUL.txt`` is the NUL device, not a file.  Checking only the whole string
+    # left the rule weaker than this comment says it is.
+    if run_id.split(".", 1)[0].upper() in _RESERVED_RUN_IDS:
         raise ValueError(f"run_id {run_id!r} is a reserved device name on Windows")
     if run_id.endswith((".", " ")):
         raise ValueError("run_id must not end with a dot or a space")

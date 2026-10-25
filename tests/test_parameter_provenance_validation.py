@@ -20,6 +20,7 @@ from pe_sim import ExperimentSpec, Timebase
 from pe_sim.applicability import ApplicabilityPolicy, ModelEnvelopePlugin
 from pe_sim.checks import CheckContext
 from pe_sim.model_claim import (
+    ParameterProvenance,
     ParameterRecord,
     collect_parameter_provenance,
     normalise_parameter_provenance,
@@ -76,6 +77,56 @@ def test_an_explicit_none_value_is_still_a_partial_declaration():
 
     assert result.status == "partial"
     assert result.declaration_error is None
+
+
+@pytest.mark.parametrize("status", ["declared", "partial", "unknown"])
+def test_mapping_and_object_forms_agree_on_a_legal_status(status):
+    """Regression for DEFECT-3: 0.9.4 reclassified an explicit ``unknown``.
+
+    The same token must mean the same thing whether the adapter returns a
+    mapping or a ``ParameterProvenance`` object; otherwise the downstream
+    finding changes from `parameter_provenance_unknown` to
+    `parameter_provenance_invalid` depending on the container.
+    """
+
+    from_mapping = normalise_parameter_provenance(_declaration(status=status))
+    from_object = normalise_parameter_provenance(
+        ParameterProvenance(
+            records=(
+                ParameterRecord(
+                    name="inductance_h",
+                    value=100e-6,
+                    unit="H",
+                    source="datasheet",
+                    review_status="reviewed",
+                ),
+            ),
+            status=status,
+        )
+    )
+
+    assert from_mapping.status == status
+    assert from_object.status == status
+    # An explicit declaration of absence still carries its records.
+    assert len(from_mapping.records) == 1
+
+
+def test_an_explicit_unknown_keeps_its_declaration_error():
+    declaration = _declaration(status="unknown")
+    declaration["declaration_error"] = "the adapter does not state sources"
+
+    result = normalise_parameter_provenance(declaration)
+
+    assert result.status == "unknown"
+    assert result.declaration_error == "the adapter does not state sources"
+
+
+def test_an_unregistered_token_is_still_invalid_alongside_unknown():
+    """Allowing ``unknown`` must not reopen the DEFECT-2 hole."""
+
+    result = normalise_parameter_provenance(_declaration(status="trusted"))
+
+    assert result.status == "declaration_invalid"
 
 
 def test_direct_record_construction_rejects_a_non_finite_value():

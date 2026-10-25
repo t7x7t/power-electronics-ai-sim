@@ -538,11 +538,16 @@ def normalise_parameter_provenance(value: Any) -> ParameterProvenance:
     # records turned an unregistered token such as ``trusted`` into
     # ``declared`` and hid the malformed declaration behind a clean summary;
     # docs/40 section 2.1 requires ``declaration_invalid`` instead.
+    #
+    # ``unknown`` stays a legal token: an adapter may declare explicitly that it
+    # does not state sources.  0.9.4 accepted that token only when it arrived as
+    # a ``ParameterProvenance`` object, so the same declaration changed meaning
+    # with the container it came in.
     if status == "declaration_invalid":
         return ParameterProvenance.invalid(
             str(declared_error or "adapter declared an invalid parameter provenance")
         )
-    if status and status not in {"declared", "partial"}:
+    if status and status not in {"declared", "partial", "unknown"}:
         return ParameterProvenance.invalid(
             f"unsupported parameter provenance status: {status!r}"
         )
@@ -561,6 +566,14 @@ def normalise_parameter_provenance(value: Any) -> ParameterProvenance:
         return ParameterProvenance.invalid(f"{type(exc).__name__}: {exc}")
     if not records:
         return ParameterProvenance.unknown("adapter declared an empty parameter provenance")
+    if status == "unknown":
+        return ParameterProvenance(
+            records=tuple(records),
+            status="unknown",
+            declaration_error=(
+                _bounded_error(declared_error) if declared_error is not None else None
+            ),
+        )
     sources = {item.source for item in records}
     if status in {"declared", "partial"}:
         resolved = status
