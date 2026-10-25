@@ -8,6 +8,8 @@ import sys
 import time
 from typing import Any, Mapping
 
+# Read the version from the package, never from a literal in this module.
+from . import __version__
 from .applicability import ApplicabilityPolicy
 from .attestation import attest_run, verify_attestation
 from .cancellation import FileCancelToken
@@ -87,7 +89,7 @@ def _emit_rejection(status: str, code: str, error: str, **extra: Any) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Auditable power-electronics simulation runtime")
-    parser.add_argument("--version", action="version", version="0.6.1")
+    parser.add_argument("--version", action="version", version=__version__)
     sub = parser.add_subparsers(dest="command")
     run = sub.add_parser("run", help="run an experiment from JSON config")
     run.add_argument("config", type=Path)

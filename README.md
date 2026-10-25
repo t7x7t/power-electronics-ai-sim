@@ -34,6 +34,11 @@ maintainer approval.
 The admitted version ranges, exact locally verified Python toolchain, and
 clean-install policy are defined separately in
 [docs/28_release_toolchain_policy_v0.md](docs/28_release_toolchain_policy_v0.md).
+How a release is identified, recorded, and approved — the distribution
+inventory, the `pe-sim.release-record.v1` approval record, and the
+`check-identity` drift guards — is defined in
+[docs/53_release_governance_v1.md](docs/53_release_governance_v1.md). Nothing in
+that procedure signs an artifact or tag, and CI never approves or publishes.
 
 ## Quick start (installed package)
 

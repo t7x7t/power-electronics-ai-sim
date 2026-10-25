@@ -2,6 +2,9 @@
 
 import sys
 
+# Single in-code version source. Re-exported as ``pe_sim.__version__`` and
+# deliberately kept out of ``__all__``, which is the frozen API surface.
+from ._version import __version__
 from .contracts import (
     ActionRequest,
     CapabilityNegotiationError,

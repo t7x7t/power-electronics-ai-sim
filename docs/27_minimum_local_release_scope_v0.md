@@ -107,7 +107,11 @@ release commit:
    release evidence outside normal transient output; and
 4. a human reviewer examines the evidence, records the exact commit, versions,
    test result, package hashes, date, scope, and non-claims, then creates the
-   version tag.
+   version tag. Since 0.7.0 the recorded form of that review is a
+   `pe-sim.release-record.v1` document with an `approval` block; see
+   [`53_release_governance_v1.md`](53_release_governance_v1.md). A record whose
+   `approval.status` is not `approved`, or whose wheel hash does not match the
+   reviewed distribution inventory, does not satisfy this gate.
 
 The ordered implementation of these gates is intentional: version/toolchain
 policy and the automated local gate must exist before a clean demo becomes

@@ -17,13 +17,14 @@ CI 不能判断模型是否足够接近真实电路、参数是否合理，也�
 
 ## 2. 当前工作流
 
-`.github/workflows/ci.yml` 在 push、pull request 和手动触发上运行，包含三个 job：
+`.github/workflows/ci.yml` 在 push、pull request 和手动触发上运行，包含四个 job：
 
 | Job | 矩阵 | 作用 |
 | --- | --- | --- |
 | `contract` | Ubuntu + Windows × Python 3.10/3.11/3.12 | 使用 `requirements-tested.txt` 的精确 pin 集，执行 Schema 校验、完整测试和 CLI smoke |
 | `next-python` | Ubuntu × Python 3.13 | 使用 `[test]` 范围依赖，验证已声明 Python 上界的兼容性；不是发布工具链 |
 | `package` | Ubuntu × Python 3.12 | 构建 sdist/wheel，`twine check`，在干净 venv 安装 wheel，运行 `demo`/`inspect-run`/`capabilities` |
+| `release-artifacts` | Ubuntu × Python 3.12 | 构建 wheel 与 sdist，执行 `twine check` 与 `release_record.py check-identity`，生成 `dist/distribution-inventory.json` 与 `dist/SHA256SUMS.txt`，并把 `dist/` 作为工作流产物 `release-artifacts` 上传，保留 30 天。这是唯一产出可下载构建结果的 job |
 
 Windows 加入 `contract` 矩阵的原因：正式发布门禁在 Windows 上运行，CI 不能只测试 Linux。
 
@@ -32,6 +33,34 @@ Python 3.13 job 故意不使用 `requirements-tested.txt`：已验证 pin 集保
 **兼容性证据**，不是 exact release toolchain 证据。
 
 工作流只使用内置的 Fake/平均 Buck 测试夹具，因此它验证的是公共契约、Runner 生命周期、产物和 fail-closed 行为，不是 PySpice/Ngspice 的物理正确性。真实后端和正式 demo 仍由 `scripts/release_check.ps1` 在显式环境中执行，不进入日常 CI。
+
+### 2.1 `release-artifacts` boundary: CI builds, it never releases
+
+`release-artifacts` is the only job that produces a downloadable build output,
+and it is still not a release step. It builds the wheel and sdist from the
+checked-out commit, runs `twine check`, runs
+`python scripts/release_record.py check-identity --json`, writes
+`dist/distribution-inventory.json` and `dist/SHA256SUMS.txt`, and uploads the
+`dist/` directory as the workflow artifact `release-artifacts` with a 30-day
+retention. The job runs under the workflow-level `permissions: contents: read`
+and adds no write permission, no secret, no token, no network-dependent license
+lookup, and no third-party SBOM action.
+
+CI never approves, tags, publishes, creates a GitHub release, or signs. The
+approval block, the tag, and the signature stay `pending`, `not_created`, and
+`not_signed` unless a human acts outside CI. The division between what a job may
+do and what a reviewer must do is defined in
+[`docs/53_release_governance_v1.md`](53_release_governance_v1.md); the release
+scope that CI cannot satisfy is defined in
+[`docs/27_minimum_local_release_scope_v0.md`](27_minimum_local_release_scope_v0.md).
+
+Inside CI, `check-identity` covers the identity part only: the `pyproject.toml`
+version, `pe_sim.__version__`, the presence of `docs/releases/v<version>.md`,
+and a hard-coded version string in `src/pe_sim/cli.py`. It does not check an
+approval, a tag, or an artifact. `--require-tag` is intentionally not passed in
+CI, because a tag is created after the commit exists; the
+`verify --require-approved --require-tag` run remains a local, human-driven
+release step.
 
 ## 3. 已验证的 CI 环境（Verified CI Environment）
 

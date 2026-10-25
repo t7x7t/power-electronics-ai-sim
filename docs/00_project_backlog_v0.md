@@ -227,6 +227,13 @@ Cloud real-physics jobs, SBOM/license automation, signed releases, PyPI/Conda/
 Docker packaging, advanced CI caching/parallelism, and automatic impact-based
 test selection can be added when project usage justifies their cost.
 
+Release governance v1 (0.7.0) is the first partial delivery of this bucket: a
+project-owned distribution inventory, a release record with a human approval
+block, `check-identity` drift guards, and a `release-artifacts` CI job. Still
+deferred and explicitly non-claimed: signed tags or artifacts, any
+standards-conformant SBOM output, and package-index publication. See
+`docs/53_release_governance_v1.md`.
+
 ### Stage 13 optional learning/adaptation boundary
 
 The detailed boundary contract is documented in

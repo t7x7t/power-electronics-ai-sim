@@ -84,6 +84,36 @@ tree is dirty, but it cannot pass or verify formal demonstration evidence in
 that state.  A passing result remains automation evidence only: a human
  reviewer must inspect it, record approval, and create any release tag.
 
+## Release record and approval
+
+Since 0.7.0 the reviewed form of that human step is a release record, defined
+in [`53_release_governance_v1.md`](53_release_governance_v1.md). After this
+gate passes for a clean commit:
+
+```powershell
+python -m build
+python scripts/distribution_inventory.py dist/*.whl `
+    -o dist/distribution-inventory.json --license-file LICENSE
+python scripts/release_record.py create `
+    --version 0.7.0 --evidence D:\release-evidence\v0.7.0\gate `
+    --wheel dist\*.whl --sdist dist\*.tar.gz `
+    --inventory dist\distribution-inventory.json `
+    --formal-demo-evidence D:\release-evidence\v0.7.0\formal-demos\formal-demo-evidence.json `
+    --output D:\release-evidence\v0.7.0\release-record.json
+python scripts/release_record.py approve D:\release-evidence\v0.7.0\release-record.json `
+    --reviewer "<reviewer>" --statement "<what was reviewed and accepted>"
+python scripts/release_record.py verify D:\release-evidence\v0.7.0\release-record.json `
+    --dist dist --evidence-dir D:\release-evidence\v0.7.0\gate `
+    --require-approved --require-tag
+```
+
+`create` writes `approval.status = "pending"` and `signature.status =
+"not_signed"`; it cannot record an approval. `approve` refuses to run when `CI`
+is set, so approval stays a local human action. `verify` exits `1` on a
+mismatch and `2` on a check it could not perform; both are release-blocking.
+The tag is created only after `verify` passes with `--require-tag` at the
+release commit.
+
 ## Formal Buck/Boost demo generation
 
 Generate official demonstration packages separately, before this gate:

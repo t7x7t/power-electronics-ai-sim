@@ -144,3 +144,76 @@ jobs:
           python -m pe_sim.cli inspect-run "$run_dir" --compact > /dev/null
           python -m pe_sim.cli capabilities --compact > /dev/null
           echo "wheel smoke test passed"
+
+  release-artifacts:
+    name: release artifacts / wheel + inventory
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Build and check the distribution
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build twine
+          python -m build
+          python -m twine check dist/*
+
+      - name: Check release identity
+        run: python scripts/release_record.py check-identity --json
+
+      - name: Write the distribution inventory
+        shell: bash
+        run: |
+          python scripts/distribution_inventory.py dist/*.whl \
+            -o dist/distribution-inventory.json \
+            --license-file LICENSE \
+            --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+      - name: Write SHA256SUMS.txt for the build output
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
+
+          dist = Path("dist")
+          lines = []
+          for path in sorted(p for p in dist.rglob("*") if p.is_file()):
+              digest = hashlib.sha256()
+              with path.open("rb") as handle:
+                  for chunk in iter(lambda: handle.read(1 << 20), b""):
+                      digest.update(chunk)
+              lines.append(f"{digest.hexdigest()}  {path.relative_to(dist).as_posix()}")
+          (dist / "SHA256SUMS.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+          print((dist / "SHA256SUMS.txt").read_text(encoding="utf-8"), end="")
+          PY
+
+      - name: Upload the build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: dist/
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Record the artifact boundary in the job summary
+        shell: bash
+        run: |
+          {
+            echo "## release artifacts / wheel + inventory"
+            echo
+            echo "- This artifact set is build output only: the wheel, the sdist,"
+            echo "  the distribution inventory, and the checksum file."
+            echo "- No approval, tag, publication, or release claim is made by this job."
+            echo "- Boundaries: \`docs/53_release_governance_v1.md\`."
+          } >> "$GITHUB_STEP_SUMMARY"
