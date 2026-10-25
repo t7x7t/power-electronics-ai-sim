@@ -75,6 +75,40 @@ Residual risks that are deliberately not hidden:
 
 These are recorded as UD-06 in `docs/37_user_discovery_backlog_v1.md`.
 
+### 2.1 Identity verification: what it can and cannot prove
+
+The kernel answers two questions about a reviewed implementation and declines a
+third. The distinction matters because the third question has no answer in
+CPython, and trying to answer it produces an endless sequence of narrow checks.
+
+| Question | Mechanism | Closed? |
+| --- | --- | --- |
+| Has the reviewed source changed on disk? | SHA-256 over the declared solve-path files, compared with the checked-in pin | Yes. The digest comes from bytes, not from the object. |
+| Is the object the reviewed class? | Resolved defining file in the declared solve path, the declared module really binds this class, and the class's own methods compile from declared files (`pe_sim.identity.verify_adapter_identity`) | Bounded. It trusts no writable attribute in isolation, and every verdict is recorded with the paths and attribute names it compared. |
+| Where did this *arbitrary* object's code come from? | not attempted | No. `__module__`, `__qualname__`, `inspect.getfile()`, `cls.__dict__`, `co_filename` and `sys.modules` are all writable by the object's author or by any in-process code. |
+
+The point of the middle row is that it is a *consistency* check: it detects an
+adapter whose claim contradicts the checkout, which is the failure mode of an
+agent that copied a reference implementation, forgot to declare its own
+backend, or edited a file without updating the pin. It is not a sandbox.
+
+Deliberately **not** defended against, and therefore not findings when
+reported:
+
+1. in-process mutation of `sys.modules` namespaces or of `pe_sim.identity`
+   itself — that process can rewrite the checker;
+2. rebinding a plant's instance attributes (`plant.step = ...`) — the caller
+   supplied the object, which is equivalent to supplying a different one;
+3. callables with no code object (C extensions, some descriptors), which have
+   no source file to compare and are skipped rather than guessed at;
+4. `code.replace(co_filename=...)`, which forges the source file name directly;
+5. rewriting both the solve-path file and the pin — visible in Git review, not
+   resolvable at runtime.
+
+The project's assurance comes from recomputable records plus review of the pin
+in Git, not from runtime self-defence. An audit finding in categories 1-5 is
+answered by this section, not by another check.
+
 ## 3. External-simulator interface
 
 ### Appropriate and retained

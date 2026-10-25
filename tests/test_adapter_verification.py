@@ -81,6 +81,11 @@ def test_reference_plant_run_records_kernel_verified_identity(tmp_path):
     # The manifest must stay portable: only a package-relative path is recorded.
     assert verification["module_path"] == "reference_plants.py"
     assert verification["solve_path_files"] == ["reference_plants.py"]
+    # The location evidence names what the class itself contributes and the
+    # namespace binding it compared, in the same portable form.
+    assert verification["class_bound_in_declared_module"] is True
+    assert verification["class_code_files"] == ["reference_plants.py"]
+    assert verification["class_code_outside_solve_path"] == []
 
 
 def test_boost_plant_is_verified_against_the_same_solve_path(tmp_path):
@@ -349,3 +354,147 @@ def test_comparable_level_requires_kernel_verification():
     unverified = _formal_plant("verified")
     unverified.pop("verification")
     assert _derive_evidence_level(plant=unverified, **common) == "limited"
+
+
+_TAMPERED_BODY = (
+    "from pe_sim.reference_plants import BuckPlant as _RealBuckPlant\n"
+    "\n"
+    "\n"
+    "class {name}(_RealBuckPlant):\n"
+    "    def _rk4_step(self, duty, step):\n"
+    "        self.output_voltage_v = 123.456\n"
+)
+
+
+def _tampered_plant(tmp_path, *, name: str, forge_module: bool):
+    """Build a tampered plant from a file that is not the reviewed package."""
+
+    rogue_file = tmp_path / "reference_plants.py"
+    rogue_file.write_text(_TAMPERED_BODY.format(name=name), encoding="utf-8")
+    module_name = f"rogue_forged_{name.lower()}_{'forged' if forge_module else 'plain'}"
+    module = _load_module(rogue_file, module_name)
+    if forge_module:
+        # ``inspect.getfile()`` reads ``__module__``, so this is what makes the
+        # old, path-only check report the reviewed file.
+        module.__dict__[name].__module__ = "pe_sim.reference_plants"
+        module.__dict__[name].__qualname__ = name
+    plant = module.__dict__[name](
+        input_voltage_v=12.0,
+        inductance_h=100e-6,
+        capacitance_f=470e-6,
+        load_resistance_ohm=10.0,
+        integration_step_s=1e-6,
+    )
+    return module, plant
+
+
+def test_forged_module_attribute_does_not_verify_a_foreign_class(tmp_path):
+    """Regression for P0-1 residual: ``__module__`` is writable.
+
+    A class that names a reviewed module satisfies the path check, because
+    ``inspect.getfile()`` resolves the claimed module.  Verification must also
+    confirm that the claimed module binds *this* class object.
+    """
+
+    module, plant = _tampered_plant(tmp_path, name="BuckPlant", forge_module=True)
+    try:
+        verification = verify_adapter_identity(plant, plant.manifest_identity())
+    finally:
+        sys.modules.pop(module.__name__, None)
+
+    assert verification["status"] == "module_outside_solve_path"
+    assert verification["status"] in CONTRADICTED_VERIFICATION_STATUSES
+    # The claimed path looks right: that is exactly why it cannot be trusted.
+    assert verification["module_path"] == "reference_plants.py"
+    assert verification["class_bound_in_declared_module"] is False
+    assert verification["class_code_outside_solve_path"] == ["_rk4_step"]
+    assert any("is not the object bound as" in reason for reason in verification["reasons"])
+    # The self-declared identity is genuinely consistent, so the rejection can
+    # only come from the location evidence.
+    assert verification["recorded_sha256"] == verification["recomputed_sha256"]
+    assert verification["recorded_review_status"] == "reviewed"
+
+
+def test_alias_subclass_with_forged_module_is_not_verified(tmp_path):
+    """Even a behaviour-identical subclass is not the reviewed class object."""
+
+    rogue_file = tmp_path / "reference_plants.py"
+    rogue_file.write_text(
+        "from pe_sim.reference_plants import BuckPlant as _RealBuckPlant\n"
+        "\n"
+        "\n"
+        "class BuckPlant(_RealBuckPlant):\n"
+        "    pass\n"
+        "\n"
+        "\n"
+        "BuckPlant.__module__ = 'pe_sim.reference_plants'\n"
+        "BuckPlant.__qualname__ = 'BuckPlant'\n",
+        encoding="utf-8",
+    )
+    module = _load_module(rogue_file, "rogue_alias_forged_buck")
+    try:
+        plant = module.BuckPlant(
+            input_voltage_v=12.0,
+            inductance_h=100e-6,
+            capacitance_f=470e-6,
+            load_resistance_ohm=10.0,
+            integration_step_s=1e-6,
+        )
+        verification = verify_adapter_identity(plant, plant.manifest_identity())
+    finally:
+        sys.modules.pop(module.__name__, None)
+
+    assert verification["status"] == "module_outside_solve_path"
+    assert verification["class_bound_in_declared_module"] is False
+    # No own code at all, so only the namespace check can reject it.
+    assert verification["class_code_outside_solve_path"] == []
+
+
+def test_rebound_foreign_class_in_reviewed_module_is_not_verified(tmp_path, monkeypatch):
+    """Binding a foreign class into the reviewed namespace is not enough.
+
+    Once the reviewed module binds the rogue object, the namespace check
+    passes, so the class body itself has to be checked: its own methods must
+    have been compiled from declared solve-path files.
+    """
+
+    module, plant = _tampered_plant(tmp_path, name="BuckPlant", forge_module=True)
+    try:
+        monkeypatch.setattr(
+            reference_plants_module, "BuckPlant", module.BuckPlant
+        )
+        verification = verify_adapter_identity(plant, plant.manifest_identity())
+    finally:
+        sys.modules.pop(module.__name__, None)
+
+    assert verification["status"] == "module_outside_solve_path"
+    assert verification["class_bound_in_declared_module"] is True
+    assert verification["class_code_outside_solve_path"] == ["_rk4_step"]
+    assert any("outside the declared solve path" in reason for reason in verification["reasons"])
+
+
+def test_tampered_adapter_run_is_capped_below_comparison(tmp_path):
+    """The forged adapter may still run, but not as compared evidence."""
+
+    module, plant = _tampered_plant(tmp_path, name="BuckPlant", forge_module=True)
+    try:
+        manifest = _manifest_for(tmp_path, plant)
+    finally:
+        sys.modules.pop(module.__name__, None)
+
+    verification = manifest["plant"]["verification"]
+    assert verification["status"] == "module_outside_solve_path"
+    assert manifest["evidence_level"] != "comparable"
+    # Feed the real verdict through the formal-comparison gate: the tampered
+    # implementation must not reach `comparable` even though it ran cleanly.
+    formal_plant = _formal_plant("verified")
+    formal_plant["verification"] = verification
+    with pytest.raises(ValueError, match="kernel-verified"):
+        _require_formal_evidence(
+            _formal_spec(),
+            _Worktree(),
+            _Git(),
+            formal_plant,
+            {"id": "pi", "hash": "2" * 64, "identity": {"kind": "controller"}},
+            _environment(),
+        )

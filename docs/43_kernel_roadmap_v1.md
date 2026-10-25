@@ -22,7 +22,7 @@ That goal is only useful if it can be checked. The design must pass:
 | T2 | Add a topology without editing CLI allow-lists or schema enums | **passes** (0.5.4; export path data-driven 0.5.13) |
 | T3 | An agent can discover capabilities, start, observe progress, cancel, and read evidence using only versioned contracts | **passes** (0.5.7) |
 | T4 | An installed release reads a package from an older release and states cross-version comparability honestly | **passes** (0.5.11) |
-| T5 | No self-declared or modified implementation can reach `comparable` | **passes** (0.5.2; location check tightened in 0.9.1) |
+| T5 | No self-declared or modified implementation can reach `comparable` | **passes** (0.5.2; location checks tightened in 0.9.1 and 0.9.2) |
 | T6 | A user who does not read source can run, view, and verify | **passes** (0.5.12) |
 | T7 | Every change since the declared baseline to Plant/Runner/Controller is visible per component, and an unauthorized change cannot produce formal evidence | **planned (Phase E)** |
 
@@ -35,6 +35,14 @@ package was accepted as a reviewed implementation and could reach `comparable`.
 The check now compares resolved paths against the declared solve-path files, and
 a verified implementation may only run under its registered plant id; see
 `docs/releases/v0.9.1.md`.
+
+T5 regression note (0.9.2): resolved paths alone still trusted `cls.__module__`,
+which `inspect.getfile()` reads and any class can write. A class that names a
+reviewed module now also has to *be* the object that module binds, and its own
+methods have to compile from declared files. This closes the forgery path but is
+not a sandbox; the non-goals are listed in `docs/38_kernel_review_v0.md` §2.1,
+and the triage rule in `docs/03_agent_operating_policy_v0.md` §8 exists so that
+further adversarial reports are answered by that list instead of another check.
 
 ## 2. Invariants every phase must preserve
 
