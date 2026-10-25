@@ -21,19 +21,24 @@ def _summary(tmp_path, name="run"):
     return summarize_run(_published_run(tmp_path / name))
 
 
-def test_summary_classifies_as_mechanism_or_functional_and_blocks_claims(tmp_path):
+def test_summary_classifies_as_mechanism_scope_or_functional_and_blocks_claims(tmp_path):
     summary = _summary(tmp_path)
     mechanism = classify_summary(summary, requested_level="mechanism")
     functional = classify_stage10(summary)
 
-    assert mechanism["evidence_level"] == "mechanism"
+    # ``mechanism`` is a scope, not a level: the evidence ladder has one
+    # vocabulary, and a mechanism-scoped summary is functional evidence.
+    assert mechanism["evidence_level"] == "functional"
+    assert mechanism["scope"] == "mechanism"
     assert functional["evidence_level"] == "functional"
+    assert functional["scope"] is None
     assert functional["review_required"] is True
     assert "physical-performance" in functional["blocked_conclusions"]
     assert functional["review_record"]["status"] == "not_recorded"
 
     schema = json.loads(Path("schemas/stage12-evidence-classification.schema.json").read_text(encoding="utf-8"))
     jsonschema.Draft202012Validator(schema).validate(functional)
+    jsonschema.Draft202012Validator(schema).validate(mechanism)
 
 
 def test_matching_report_is_comparable_and_keeps_source_provenance(tmp_path):

@@ -6,7 +6,9 @@ not generate engineering conclusions.
 
 ## Levels
 
-- `mechanism`: a qualified, traceable runtime artifact exists.
+Since schema `0.2` there is one evidence ladder, defined once in
+`pe_sim.time_model` and documented in `docs/50_evidence_vocabulary_v2.md`:
+
 - `functional`: a qualified project-owned reference run was summarized.
 - `comparable`: registered numeric metrics from multiple qualified packages
   matched within the declared tolerance and shared data/provenance contracts.
@@ -16,8 +18,11 @@ not generate engineering conclusions.
   diagnostic result. Dirty, unknown, malformed, or hash-incomplete provenance
   is rejected at the classifier boundary and cannot receive any level.
 
-The classifier never emits `physical-performance`, `research-safety`, or
-`hardware-readiness`. Those require separate reviewed procedures and evidence.
+The former `mechanism` level is now `scope: "mechanism"` on a `functional`
+classification: it described what the evidence was about, not how strong it
+was. The classifier never emits a token outside the evidence ladder, and it
+never emits `physical-performance`, `research-safety`, or `hardware-readiness`.
+Those require separate reviewed procedures and evidence.
 The output always includes `limitations`, `blocked_conclusions`,
 `review_required`, and a `review_record`. A default `not_recorded` review record
 does not imply maintainer or downstream engineering approval.
@@ -39,7 +44,8 @@ descriptors, a valid tolerance, and an exact or tolerance match outcome before
 they receive `comparable`.
 
 The machine-readable output contract is
-`schemas/stage12-evidence-classification.schema.json`.
+`schemas/stage12-evidence-classification.schema.json` (schema
+`stage12-evidence-classification-v2`, which adds the `scope` field).
 
 This is an evidence-boundary tool only. It does not validate physical model
 correctness, hardware safety, thermal limits, or product compliance.

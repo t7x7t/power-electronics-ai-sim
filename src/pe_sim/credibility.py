@@ -335,9 +335,9 @@ def _qualification_factor(
     checks = _mapping(document.get("checks"))
     findings = checks.get("findings") if isinstance(checks.get("findings"), list) else []
     evidence = {"level": level, "passed": passed, "finding_count": len(findings)}
-    if level == "full":
+    if level in {"assessed", "full"}:
         return _factor("qualification", "pass", evidence)
-    if level == "limited":
+    if level in {"partial", "limited"}:
         return _factor(
             "qualification",
             "limited",

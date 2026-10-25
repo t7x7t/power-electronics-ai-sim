@@ -13,7 +13,7 @@ from pathlib import Path
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
-CURRENT_SCHEMA_VERSION = "0.1"
+CURRENT_SCHEMA_VERSION = "0.2"
 
 
 class SimulationExecutionError(RuntimeError):

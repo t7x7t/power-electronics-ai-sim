@@ -1,14 +1,27 @@
-"""Qualification is deliberately independent from performance metrics."""
+"""Qualification is deliberately independent from performance metrics.
+
+The qualification ladder is ``assessed`` / ``partial`` / ``failed``.  It says
+how completely the configured checks could be evaluated.  It is not the
+evidence ladder (``diagnostic_only`` / ``functional`` / ``limited`` /
+``comparable``) and the two vocabularies share no token.
+"""
 
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Mapping, Any
 import math
 
-from .checks import CheckContext, CheckFinding, CheckReport, QualificationPlugin
+from .checks import (
+    CHECK_LEVELS,
+    CheckContext,
+    CheckFinding,
+    CheckReport,
+    QualificationPlugin,
+    normalize_check_level,
+)
 
 
-LEVELS = ("full", "limited", "failed")
+LEVELS = CHECK_LEVELS
 
 
 @dataclass(frozen=True)
@@ -25,12 +38,12 @@ class QualificationOutcome:
     reasons: tuple[str, ...] = ()
     limitations: tuple[str, ...] = ()
     findings: tuple[CheckFinding, ...] = ()
-    rule_version: str = "qualification-v2"
+    rule_version: str = "qualification-v3"
 
     def __post_init__(self) -> None:
-        if self.level not in LEVELS:
-            raise ValueError(f"unsupported qualification level: {self.level!r}")
-        if self.passed != (self.level != "failed"):
+        level = normalize_check_level(self.level)
+        object.__setattr__(self, "level", level)
+        if self.passed != (level != "failed"):
             raise ValueError("qualification passed must match level != 'failed'")
 
     @classmethod
@@ -57,7 +70,7 @@ class QualificationOutcome:
 
     def to_document(self) -> dict[str, Any]:
         return {
-            "schema_version": "qualification-v2",
+            "schema_version": "qualification-v3",
             "passed": self.passed,
             "level": self.level,
             "reasons": list(self.reasons),
@@ -77,14 +90,13 @@ def qualification_document(
     outcome = QualificationOutcome.from_report(report)
     document = outcome.to_document()
     if level is not None:
-        if level not in LEVELS:
-            raise ValueError(f"unsupported qualification level: {level!r}")
-        document["level"] = level
-        document["passed"] = level != "failed"
+        selected = normalize_check_level(level)
+        document["level"] = selected
+        document["passed"] = selected != "failed"
         checks = document.get("checks")
         if isinstance(checks, dict):
-            checks["level"] = level
-            checks["passed"] = level != "failed"
+            checks["level"] = selected
+            checks["passed"] = selected != "failed"
     if reasons is not None:
         document["reasons"] = [str(item) for item in reasons]
     return document

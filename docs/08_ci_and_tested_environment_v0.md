@@ -1,12 +1,21 @@
-# 持续集成说明（v0）
+# 持续集成与已验证测试环境（v0）
 
-## 为什么需要 CI
+**Merged from:** the two former `docs/08` records — the v0 CI description and
+the v0 verified/tested CI environment record — merged 2026-10-25. Content is
+preserved; only duplication was removed.
+
+**Status:** v0 record. Neither source file declared a separate status line;
+both are v0 descriptions of the same CI surface (`.github/workflows/ci.yml`)
+and its tested dependency combination. The role is unchanged: description of
+the current CI behaviour and the tested environment, not a release claim.
+
+## 1. 为什么需要 CI
 
 本项目的目标是让用户和 AI Agent 长期扩展、复用仿真基础设施。每次修改都可能同时影响公共契约、Runner、Schema、产物格式和命令行入口。CI（持续集成）为这些可机械判断的要求提供重复、统一的自动验收，避免结果只在某一台开发机上通过。
 
 CI 不能判断模型是否足够接近真实电路、参数是否合理，也不能把 Fake backend 的结果升级为硬件结论。这些仍属于人工边界审查。CI 的作用是确保“代码按声明运行，并且没有破坏已经约定的基础行为”。
 
-## 当前工作流
+## 2. 当前工作流
 
 `.github/workflows/ci.yml` 在 push 和 pull request 上运行，使用 Python 3.10、3.11、3.12 矩阵。每个版本执行：
 
@@ -18,7 +27,39 @@ CI 不能判断模型是否足够接近真实电路、参数是否合理，也�
 
 工作流只使用内置的 Fake/平均 Buck 测试夹具，因此它验证的是公共契约、Runner 生命周期、产物和 fail-closed 行为，不是 PySpice/Ngspice 的物理正确性。
 
-## 本地复现
+## 3. 已验证的 CI 环境（Verified CI Environment）
+
+The v0 test suite was verified locally with this recommended environment:
+
+```text
+Python 3.12.7
+pytest 7.4.4
+jsonschema 4.23.0
+numpy 1.26.4
+```
+
+`requirements-tested.txt` records the package pins. These pins are a tested
+reference combination, not a claim that every platform is equivalent. The
+runtime package remains dependency-light; PySpice and Ngspice require a
+separate environment review and lock before migration.
+
+The lightweight GitHub Actions matrix uses these pins on Python 3.10, 3.11,
+and 3.12 before it runs the source test suite. This prevents a resolver's
+newest unverified dependency release from being misrepresented as a failure
+of the documented CI surface. The matrix still provides Python-version
+compatibility coverage; the formal local release gate remains the only exact
+release-toolchain record.
+
+Python 3.10 is supported through the small conditional `tomli` dependency,
+which supplies the standard-library `tomllib` interface used by environment
+metadata parsing on that interpreter version.
+
+The browser workbench is temporarily withdrawn, so CI and the release gate no
+longer require a Node/npm toolchain. The distinction between admitted Python
+ranges and the release-gate toolchain is defined in
+[`docs/28_release_toolchain_policy_v0.md`](28_release_toolchain_policy_v0.md).
+
+## 4. 本地复现
 
 在项目根目录执行：
 
@@ -31,16 +72,16 @@ python -m pe_sim.cli run examples/buck_pi_step/config.json --backend buck
 
 该 smoke run 使用理想平均 Buck 测试夹具，输出目录由配置中的 `output.directory` 决定。它不代表参考电路或物理结果。
 
-## 通过与不通过
+## 5. 通过与不通过
 
 - 任意安装、Schema、测试或 CLI 步骤失败，CI 检查失败；变更不应进入已保护的正式分支。
 - CI 通过只说明自动化检查通过，不等同于实验合格、模型有效或硬件就绪。
 - 真实模型迁移后，应增加独立的 PySpice/Ngspice job；该 job 的依赖、版本和许可证应在引入前单独审查。
 
-## 与版本和证据的关系
+## 6. 与版本和证据的关系
 
 CI 结果应与触发它的 Git commit 关联保存。运行 Manifest 记录源码 provenance，便于将实验结果与经过测试的代码版本对应起来。dirty 工作区、未知来源或人工审查未通过时，不能仅凭 CI 绿色状态把结果标记为正式基线或学习输入。
 
-## 依赖策略
+## 7. 依赖策略
 
 运行时依赖保持为空，以便用户只安装基础 Runner。测试工具通过 `pip install -e ".[test]"` 安装：`pytest`、`jsonschema` 和 `numpy`。依赖版本目前采用下限而非锁文件；跨机器完全复现仍需要后续补充环境锁定和 provenance 记录。

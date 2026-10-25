@@ -34,5 +34,5 @@ service to permit that browser origin through CORS.
 
 The example deliberately does not run simulations, write run packages, load
 third-party code, or treat drawings as circuit truth.  See
-`docs/26_stage11_external_consumer_extension_v1.md` for compatibility and
+`docs/26_stage11_consumer_and_service_v1.md` (§2 and §5) for compatibility and
 safety rules.

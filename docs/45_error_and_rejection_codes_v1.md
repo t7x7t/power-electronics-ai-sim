@@ -122,7 +122,11 @@ read-with-policy verdict, not an integrity claim; see
 Since 0.5.13, `inspect-run` also copies the recorded `evidence_level` and
 `qualification_level` from the package. Both are read from the manifest, not
 recomputed, so a reader can compare the view with the terminal result the
-producer printed. A view never upgrades a level.
+producer printed. A view never upgrades a level. Since schema `0.2` the
+qualification level is presented in the current vocabulary
+(`assessed` / `partial` / `failed`) and an older package also reports a
+`migration` block naming the reader-side mapping
+(`docs/50_evidence_vocabulary_v2.md`).
 
 ## 5. Versioning
 

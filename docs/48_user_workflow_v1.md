@@ -108,5 +108,5 @@ pe-sim inspect-run .tmp\demo-check\runs\<run_id> --compact
 | --- | --- |
 | `docs/43_kernel_roadmap_v1.md` | Phase D, gate G-D, T6 |
 | `docs/44_run_interaction_contract_v1.md` | run/progress/terminal contracts |
-| `docs/26_stage11_visualization_service_v1.md` | read-only service |
+| `docs/26_stage11_consumer_and_service_v1.md` | read-only service (§3) |
 | `docs/27_minimum_local_release_scope_v0.md` | what a release may claim |

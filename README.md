@@ -316,7 +316,7 @@ package hashes. The external consumer example uses only the Python standard
 library. The browser workbench is temporarily withdrawn; this export and the
 loopback read-only service are headless data interfaces, not a UI claim. The
 contract and compatibility rules are in
-[docs/26_stage11_external_consumer_extension_v1.md](docs/26_stage11_external_consumer_extension_v1.md).
+[docs/26_stage11_consumer_and_service_v1.md](docs/26_stage11_consumer_and_service_v1.md).
 
 ## Verifying a run
 
@@ -466,6 +466,11 @@ Three properties are machine checked rather than left to convention:
   The report records the policy and its digest, and defaults are unchanged:
   with no policy the historical absolute-only behaviour is reproduced exactly.
   Sample grid alignment is still positional and remains open.
+- **One vocabulary per question.** The evidence ladder
+  (`diagnostic_only` < `functional` < `limited` < `comparable`) and the
+  qualification ladder (`assessed` / `partial` / `failed`) share no token.
+  Manifest schema `0.2` records that separation; a schema `0.1` package is read
+  through a registered reader-side mapping and is never rewritten.
 - **Cross-release comparability.** `compare-runs` says whether two packages may
   be compared at all. Same schema and same source commit keeps the historical
   payload; a different commit or schema adds

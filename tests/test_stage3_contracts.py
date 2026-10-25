@@ -47,9 +47,10 @@ def test_unsupported_declared_event_type_fails_closed():
 
 
 def test_schema_version_is_backward_compatible_but_not_forward_compatible():
-    ensure_schema_compatible("0.0")
+    ensure_schema_compatible("0.1")
+    ensure_schema_compatible("0.2")
     with pytest.raises(ValueError):
-        ensure_schema_compatible("0.2")
+        ensure_schema_compatible("0.3")
     with pytest.raises(ValueError):
         ensure_schema_compatible("1.0")
 

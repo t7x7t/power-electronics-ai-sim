@@ -198,7 +198,7 @@ re-discovered as defects.
 | Plant discovery / `importlib.metadata` entry points | No external adapter exists to discover | UD-04, when a third party ships one |
 | Engine-neutral `EngineAdapter` | See §2 | Two engines behind one plant id |
 | Unit registry (COMPAT-03) | Units are checked where a plugin declares expectations | Multi-domain models (thermal, magnetic) |
-| Schema migration registry (COMPAT-01) | No `0.2` schema has ever existed | First schema bump |
+| Schema migration registry (COMPAT-01) | Shipped with schema `0.2` in 0.6.0 | Done |
 | Run lineage (CRED-07) | Resume/derived products are not implemented | First resume or derived-metric feature |
 | Sample grid alignment | Positional alignment is correct for one fixed-step engine | First engine with a different time grid (UD-04) |
 

@@ -65,7 +65,31 @@ class CheckFinding:
         return not self.passed and (self.stop_requested or self.severity in {"error", "fatal"})
 
 
-_LEVEL_ORDER = {"full": 0, "limited": 1, "failed": 2}
+_LEVEL_ORDER = {"assessed": 0, "partial": 1, "failed": 2}
+
+#: The qualification ladder: how completely the configured checks could be
+#: evaluated.  These words are deliberately disjoint from the evidence ladder
+#: in :mod:`pe_sim.time_model`; no token may mean two different things.
+CHECK_LEVELS: tuple[str, ...] = ("assessed", "partial", "failed")
+
+#: Levels recorded by packages written before manifest schema 0.2.  Readers map
+#: them; writers never emit them again.  ``limited`` in particular used to mean
+#: both "partial qualification" and "limited evidence", which is exactly the
+#: ambiguity this vocabulary removes.
+LEGACY_CHECK_LEVELS: dict[str, str] = {"full": "assessed", "limited": "partial"}
+
+
+def normalize_check_level(value: object) -> str:
+    """Return the current qualification level for ``value`` or raise."""
+
+    if isinstance(value, str):
+        if value in CHECK_LEVELS:
+            return value
+        if value in LEGACY_CHECK_LEVELS:
+            return LEGACY_CHECK_LEVELS[value]
+    raise ValueError(
+        f"unsupported qualification level {value!r}; expected one of {list(CHECK_LEVELS)}"
+    )
 
 
 def _worse_level(left: str | None, right: str | None) -> str | None:
@@ -127,15 +151,18 @@ class CheckReport:
 
     @property
     def effective_level(self) -> str:
-        """Return ``full``, ``limited``, or ``failed`` for this report."""
+        """Return ``assessed``, ``partial``, or ``failed`` for this report."""
 
-        if self.level in _LEVEL_ORDER:
-            return str(self.level)
+        if self.level is not None:
+            try:
+                return normalize_check_level(self.level)
+            except ValueError:
+                pass
         if self.blocking or not self.passed:
             return "failed"
         if any(finding.severity == "warning" for finding in self.findings):
-            return "limited"
-        return "full"
+            return "partial"
+        return "assessed"
 
     @property
     def warning_categories(self) -> tuple[str, ...]:

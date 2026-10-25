@@ -1,5 +1,5 @@
 {
-  "schema_version": "0.1",
+  "schema_version": "0.2",
   "experiment_id": "ngspice_buck_pi_step",
   "run_id": "ngspice-buck-reference",
   "plant_id": "ngspice-buck",

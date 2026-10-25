@@ -47,9 +47,9 @@ shipped in 0.5.4. **A2** - the time-model abstraction - delivered its decision
 plus a second engine in 0.5.10** (`docs/46`). Phase B is complete: items 1-4
 shipped in 0.5.5-0.5.7. Phase C is substantially complete: D3/D4 and
 read-with-policy shipped in 0.5.9, the **upgrade gate (T4) in 0.5.11**, and the
-capability discoverability half of item 1 in 0.5.13. Only install-time extras
-themselves (blocked by the `docs/28` release policy) and the schema migration
-registry (deferred to the first schema bump) remain. **Phase D
+capability discoverability half of item 1 in 0.5.13. Schema `0.2` and its
+migration registry shipped in 0.6.0. Only install-time extras themselves
+(blocked by the `docs/28` release policy) remain. **Phase D
 shipped in 0.5.12**, so T6 passes. Test T2 has passed since 0.5.4 (a topology is
 registered, never listed) and is now guarded by a structural test.
 Everything shipped before 0.5.4 is groundwork covered by §4, not a completed
@@ -171,7 +171,8 @@ Work:
 1. Optional capabilities declared as install-time extras, so a packaged user can
    enable them without reading the repository.
 2. Schema migration policy - read old, write new - with an explicit registry
-   created at the first schema bump rather than retrofitted at the second.
+   created at the first schema bump rather than retrofitted at the second. This
+   was honoured: schema `0.2` and `pe_sim.schema_registry` shipped together.
 3. A data-directory policy: the run store is user-scoped and discoverable,
    instead of ambient to whatever directory the process was started in.
 4. Release gates extended from "this run is valid" to "this upgrade path is
@@ -193,8 +194,8 @@ keeps PySpice out of dependencies/extras, so item 1 needs a release-policy
 decision. The part of item 1 that does not need that decision shipped in
 0.5.13: `pe_sim.capabilities` reports each optional capability, its status in
 the current process, and how to enable it (`docs/49_optional_capabilities_v1.md`).
-The schema migration registry is deliberately deferred to the first
-schema bump.
+Schema `0.2` and the migration registry shipped in 0.6.0, so item 2 is delivered;
+item 1 (an actual extra) is the only Phase C item still blocked on policy.
 
 ### Phase D - Lower barrier
 
@@ -347,8 +348,11 @@ would change the bytes a verifier attested and silently invalidate old
 attestations.
 
 **Status.** Implemented in 0.5.9 (`pe_sim.compatibility`,
-`inspect-run.compatibility`). No schema bump exists yet, so the schema
-migration registry is deliberately not created.
+`inspect-run.compatibility`). The **schema migration registry was created with
+the first bump** (`0.1 -> 0.2`, `pe_sim.schema_registry`) in 0.6.0: an older
+package with a registered path is `read_only` with a named mapping, and an
+older package with no path is `incompatible`. See
+`docs/50_evidence_vocabulary_v2.md`.
 
 ## 7. Scope guard
 

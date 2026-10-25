@@ -1,5 +1,5 @@
 {
-  "schema_version": "0.1",
+  "schema_version": "0.2",
   "experiment_id": "whole_run_buck_step",
   "run_id": "whole-run-buck-step",
   "plant_id": "whole-run-buck",

@@ -21,8 +21,20 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from .artifacts import artifact_index, manifest_digest, package_digest
+from .checks import normalize_check_level
 from .compatibility import assess_package_compatibility
+from .contracts import CURRENT_SCHEMA_VERSION
 from .credibility import CredibilityPolicy, assess_credibility
+from .schema_registry import SchemaMigrationError, migration_path, schema_minor
+
+
+def _level_text(value: Any) -> Any:
+    """Present a recorded qualification level in the current vocabulary."""
+
+    try:
+        return normalize_check_level(value)
+    except ValueError:
+        return value
 
 
 #: Schema tag for the read-only view returned by ``pe-sim inspect-run``.  It
@@ -298,7 +310,7 @@ def inspect_run(
         authenticity=authenticity,
         policy=credibility_policy_value,
     )
-    summary["qualification_level"] = (
+    summary["qualification_level"] = _level_text(
         qualification_document.get("level")
         if isinstance(qualification_document, Mapping)
         else (manifest.get("qualification") or {}).get("level")
@@ -309,6 +321,20 @@ def inspect_run(
     # copied from the manifest, not recomputed, so a reader can compare it with
     # the terminal result the producer printed.
     summary["evidence_level"] = manifest.get("evidence_level")
+    # Say which reader-side mapping made an older package readable.  The
+    # compatibility verdict already reports the status; this names the path.
+    declared_minor = schema_minor(manifest.get("schema_version"))
+    if declared_minor is not None:
+        try:
+            path = migration_path(declared_minor, CURRENT_SCHEMA_VERSION)
+        except SchemaMigrationError:
+            path = ()
+        if len(path) > 1:
+            summary["migration"] = {
+                "from": declared_minor,
+                "to": CURRENT_SCHEMA_VERSION,
+                "path": list(path),
+            }
     summary["credibility"] = assessment.to_dict()
     if attestation_section is not None:
         summary["attestation"] = attestation_section

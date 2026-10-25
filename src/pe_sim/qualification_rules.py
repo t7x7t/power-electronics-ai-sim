@@ -8,7 +8,7 @@ usable?".  These rules add three independent questions:
 - did the solver report recovered numerical difficulties?
 
 A rule never turns a warning into a blocking failure unless it is explicitly
-configured to do so.  Warning-only evidence produces ``level="limited"``.
+configured to do so.  Warning-only evidence produces ``level="partial"``.
 """
 
 from __future__ import annotations

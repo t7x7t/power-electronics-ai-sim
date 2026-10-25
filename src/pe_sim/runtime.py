@@ -1428,7 +1428,7 @@ def _derive_evidence_level(
         return cap_evidence_level("limited", time_model)
     if qualification.get("level") == "failed":
         return "diagnostic_only"
-    if qualification.get("level") == "limited":
+    if qualification.get("level") in {"partial", "limited"}:
         return cap_evidence_level("limited", time_model)
     return cap_evidence_level("comparable", time_model)
 

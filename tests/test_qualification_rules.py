@@ -50,16 +50,16 @@ def _samples(count, *, time_step=1e-5, vout=5.0, current=0.5, action=0.4):
     ]
 
 
-def test_warning_only_qualification_is_limited_not_failed():
+def test_warning_only_qualification_is_partial_not_failed():
     report = CheckReport(
         True,
         (CheckFinding("rule", "warning_check", "warning only", severity="warning", passed=True),),
     )
     document = qualification_document(report)
 
-    assert report.effective_level == "limited"
+    assert report.effective_level == "partial"
     assert document["passed"] is True
-    assert document["level"] == "limited"
+    assert document["level"] == "partial"
     assert document["limitations"] == []
 
 
@@ -89,9 +89,9 @@ def test_qualification_merge_takes_the_most_severe_level():
     limited = CheckReport(True, (CheckFinding("r", "c", "w", severity="warning", passed=True),))
     failed = CheckReport.failure("c", "f")
 
-    assert full.effective_level == "full"
+    assert full.effective_level == "assessed"
     assert limited.merge(failed).effective_level == "failed"
-    assert limited.merge(full).effective_level == "limited"
+    assert limited.merge(full).effective_level == "partial"
 
 
 def test_short_run_is_not_applicable():
@@ -279,5 +279,5 @@ def test_runtime_standard_pack_warning_only_run_stays_qualified_but_limited(tmp_
     )
 
     assert result.status == "QUALIFIED"
-    assert result.qualification["level"] == "limited"
+    assert result.qualification["level"] == "partial"
     assert result.qualification["passed"] is True

@@ -4,8 +4,9 @@
 verdicts, explicit discovery root). The **upgrade gate landed in 0.5.11**: an
 installed release reads an older release's package and states cross-release
 comparability honestly, so test **T4 passes**. Install-time capability extras
-remain deferred by the existing release policy (§3), and the schema migration
-registry is still deferred to the first schema bump (§4).
+remain deferred by the existing release policy (§3). The **schema migration
+registry exists as of schema `0.2`** (§5): the compatibility verdict now
+distinguishes an older package with a registered path from one without.
 
 ## 1. Decisions
 
@@ -124,8 +125,10 @@ by the v0.5.9 release itself (commit `ed45521…`), not hand-written.
 
 - **Install-time extras**: deferred; see §3. `docs/28` keeps PySpice out of
   dependencies and extras.
-- **Schema migration registry**: deliberately deferred to the first schema bump,
-  as `docs/43` requires. There is no schema bump yet.
+- **Schema migration registry**: created with the first bump (`0.1 -> 0.2`,
+  `pe_sim.schema_registry`). It maps the old qualification ladder on a
+  reader-side copy and never rewrites a package; `docs/50_evidence_vocabulary_v2.md`
+  records the mapping.
 - **Automatic migration**: out of scope. A migration, if it ever exists, is a
   newly derived package with a parent link.
 - Marketplace, cloud sync, and automatic repair are out of scope.
@@ -155,4 +158,4 @@ readability, discovery, the unchanged same-commit payload, and both the
 | `docs/43_kernel_roadmap_v1.md` | Phase C, D3/D4, T4 |
 | `docs/44_run_interaction_contract_v1.md` | `list-runs` and `inspect-run` surfaces |
 | `docs/02_run_artifacts_and_state_machine_v0.md` | immutable packages |
-| `docs/08_ci_tested_environment_v0.md` | tested environment and extras |
+| `docs/08_ci_and_tested_environment_v0.md` | tested environment and extras |

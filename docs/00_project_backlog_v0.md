@@ -727,8 +727,7 @@ different schema version without touching it.
   PySpice out of dependencies/extras, and a new extra needs a release-policy
   decision. This stage does not change `environment-check`.
 
-Still open: install-time extras, the schema migration registry (deferred to the
-first schema bump), and the upgrade gate (T4).
+Still open: install-time extras and the upgrade gate (T4).
 
 Acceptance evidence:
 
@@ -808,8 +807,8 @@ Fixed along the way: `collect_git_provenance` treated a detached HEAD as
 Detached checkouts (common in CI and release worktrees) now record
 `branch: "detached"` with a real commit.
 
-Still open: install-time extras (blocked by `docs/28`) and the schema migration
-registry (deferred to the first schema bump).
+Still open at 0.5.11: install-time extras (blocked by `docs/28`). The schema
+migration registry landed with schema `0.2` in 0.6.0 (Stage 30).
 
 Acceptance evidence:
 
@@ -890,8 +889,43 @@ pytest -q tests/test_topology_export_registration.py tests/test_capabilities.py 
 pe-sim capabilities --compact
 ```
 
-Still open: an actual install-time extra (needs the `docs/28` policy decision)
-and the schema migration registry.
+Still open: an actual install-time extra (needs the `docs/28` policy decision).
+The schema migration registry landed in Stage 30.
+
+### Stage 30 evidence vocabulary v2 and schema 0.2 (0.6.0)
+
+Engineering-governance pass: one token now means one thing.
+
+- The evidence ladder (`diagnostic_only` / `functional` / `limited` /
+  `comparable`) has exactly one definition, in `pe_sim.time_model`; Stage 12
+  imports it instead of keeping a second copy.
+- The qualification ladder is renamed to `assessed` / `partial` / `failed`. The
+  old words (`full` / `limited` / `failed`) shared `limited` with the evidence
+  ladder, so a reader could not tell which meaning applied.
+- Stage 12's `mechanism` is now `scope: "mechanism"` on `functional` evidence;
+  the classifier never emits a token outside the evidence ladder. The Stage 12
+  schema becomes `stage12-evidence-classification-v2`.
+- Manifest schema `0.1 -> 0.2`, with the first **migration registry**
+  (`pe_sim.schema_registry`): `assess_package_compatibility` returns
+  `read_only` plus a `migration` block for a registered path, and
+  `incompatible` when no path exists. `inspect-run` reports the same mapping and
+  presents the qualification level in the current vocabulary. Nothing rewrites a
+  package.
+- Shipped configs, templates, and the checked-in visualization fixture moved to
+  `schema_version: "0.2"`; the v0.5.9 fixture stays `0.1` and is now the
+  read-only example the upgrade gate exercises.
+
+Acceptance evidence:
+
+```text
+pytest -q tests/test_evidence_vocabulary.py tests/test_schema_registry.py `
+  tests/test_compatibility.py tests/test_inspection.py `
+  tests/test_stage12_evidence.py tests/test_qualification_rules.py `
+  --basetemp .tmp/pytest-stage30
+```
+
+Still open: an actual install-time extra (policy), and rendering the two ladders
+as one "what may I claim" summary in a future UI.
 
 ### Future compact diagnostic mechanism
 The current Stage 6 checks are intentionally a runtime integrity gate. A later
@@ -1214,7 +1248,7 @@ The immediate acceptance sequence is:
 
 The three data-plane contracts, explicit publication rules, immutable-package
 boundary, provenance handling, and focused minimum-core verification are
-implemented. `docs/24_stage11_visualization_scope_v1.md` is the authoritative
+implemented. `docs/24_stage11_contracts_v1.md` (§1 and §7-§8) is the authoritative
 scope and non-goal record for this phase. The browser workbench was withdrawn
 because its rendered content was not usable; the headless exporter and local
 read-only service remain as data interfaces.

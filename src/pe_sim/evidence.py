@@ -1,6 +1,14 @@
-"""Restricted Stage 12 evidence classification and conclusion boundaries.
+"""Stage 12 evidence classification and conclusion boundaries.
 
-This module classifies already validated Stage 10 summaries/reports. It never
+There is exactly one evidence ladder in this project, defined once in
+:mod:`pe_sim.time_model`:
+
+    diagnostic_only < functional < limited < comparable
+
+This module classifies already validated Stage 10 summaries/reports against
+that ladder.  The former ``mechanism`` level is now a **scope** marker
+(``scope: "mechanism"``) on a ``functional`` classification, because it
+described what the evidence was about rather than how strong it was.  It never
 upgrades evidence to physical, safety, or hardware claims and treats malformed
 or incomplete provenance as diagnostic-only.
 """
@@ -12,11 +20,17 @@ import hashlib
 import re
 
 from .artifacts import canonical_json
+from .time_model import RUNTIME_EVIDENCE_LEVELS
 
 
 _HASH_RE = re.compile(r"^[0-9a-f]{64}$")
-_LEVELS = frozenset({"mechanism", "functional", "comparable", "diagnostic_only", "limited"})
+_LEVELS = frozenset(RUNTIME_EVIDENCE_LEVELS)
 _FORBIDDEN = ("physical-performance", "research-safety", "hardware-readiness")
+
+#: Input aliases accepted for compatibility.  A caller that still asks for
+#: ``mechanism`` gets ``functional`` plus ``scope: "mechanism"``; the output
+#: never carries the alias as a level.
+_REQUESTED_LEVEL_ALIASES: dict[str, str | None] = {"mechanism": "mechanism"}
 
 
 class EvidenceClassificationError(ValueError):
@@ -71,6 +85,7 @@ def _base_output(
     review_required: bool,
     review_record: Mapping[str, Any] | None,
     runs: Sequence[Mapping[str, Any]],
+    scope: str | None = None,
 ) -> dict[str, Any]:
     if level not in _LEVELS:
         raise EvidenceClassificationError((f"unsupported evidence level: {level}",))
@@ -82,8 +97,9 @@ def _base_output(
         "notes": None,
     }
     return {
-        "schema": "stage12-evidence-classification-v1",
+        "schema": "stage12-evidence-classification-v2",
         "evidence_level": level,
+        "scope": scope,
         "runs": [dict(item) for item in runs],
         "limitations": list(dict.fromkeys(str(item) for item in limitations)),
         "blocked_conclusions": list(dict.fromkeys(str(item) for item in blocked)),
@@ -101,7 +117,10 @@ def classify_summary(
 ) -> dict[str, Any]:
     """Classify one Stage 10 summary as functional or diagnostic-only."""
 
-    if requested_level not in {"mechanism", "functional", "diagnostic_only"}:
+    requested_scope = _REQUESTED_LEVEL_ALIASES.get(requested_level)
+    if requested_scope is not None:
+        requested_level = "functional"
+    if requested_level not in {"functional", "diagnostic_only"}:
         raise EvidenceClassificationError((f"unsupported summary evidence level: {requested_level}",))
     if not isinstance(summary, Mapping):
         raise EvidenceClassificationError(("summary must be an object",))
@@ -159,10 +178,11 @@ def classify_summary(
             review_required=True,
             review_record=review_record,
             runs=runs,
+            scope=requested_scope,
         )
     level_limit = (
-        "Mechanism evidence records that the runner produced a qualified, traceable reference artifact; it is not a physical-model claim."
-        if requested_level == "mechanism"
+        "Mechanism scope records that the runner produced a qualified, traceable reference artifact; it is not a physical-model claim."
+        if requested_scope == "mechanism"
         else "Functional evidence summarizes a qualified reference run only."
     )
     return _base_output(
@@ -172,6 +192,7 @@ def classify_summary(
         review_required=True,
         review_record=review_record,
         runs=runs,
+        scope=requested_scope,
     )
 
 

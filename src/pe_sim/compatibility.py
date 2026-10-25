@@ -20,6 +20,7 @@ import re
 from typing import Any
 
 from .contracts import CURRENT_SCHEMA_VERSION
+from .schema_registry import SchemaMigrationError, migration_path
 
 
 COMPATIBILITY_SCHEMA = "pe-sim.compatibility.v1"
@@ -49,6 +50,9 @@ class CompatibilityVerdict:
     # non-default field after defaulted ones.  ``not_assessed`` is the
     # conservative reading for direct construction.
     cross_version_comparison: str = "not_assessed"
+    #: The reader-side mapping available for an older package, if any.  It is a
+    #: description, never an authorization to write into the package.
+    migration: Mapping[str, Any] | None = None
     schema: str = COMPATIBILITY_SCHEMA
     may_rewrite: bool = False
 
@@ -65,9 +69,11 @@ class CompatibilityVerdict:
             raise ValueError(
                 "may_rewrite must be False: published packages are immutable (D4)"
             )
+        if self.migration is not None and not isinstance(self.migration, Mapping):
+            raise ValueError("migration must be a mapping or None")
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "schema": self.schema,
             "status": self.status,
             "package_schema": self.package_schema,
@@ -77,6 +83,9 @@ class CompatibilityVerdict:
             "limitations": list(self.limitations),
             "may_rewrite": self.may_rewrite,
         }
+        if self.migration is not None:
+            payload["migration"] = dict(self.migration)
+        return payload
 
 
 def _incompatible(reason: str, *, package_schema: str | None = None) -> CompatibilityVerdict:
@@ -144,6 +153,14 @@ def assess_package_compatibility(manifest: Mapping[str, Any]) -> CompatibilityVe
         )
 
     if package_parts < reader_parts:
+        declared_minor = f"{package_parts[0]}.{package_parts[1]}"
+        try:
+            path = migration_path(declared_minor, CURRENT_SCHEMA_VERSION)
+        except SchemaMigrationError as exc:
+            return _incompatible(
+                f"no registered migration for schema {declared_minor}: {exc}",
+                package_schema=declared,
+            )
         return CompatibilityVerdict(
             status="read_only",
             package_schema=declared,
@@ -153,13 +170,21 @@ def assess_package_compatibility(manifest: Mapping[str, Any]) -> CompatibilityVe
                 "package schema_version "
                 f"{declared} is older than reader schema_version "
                 f"{CURRENT_SCHEMA_VERSION}",
+                "registered migration path: " + " -> ".join(path),
             ),
             limitations=(
+                "the mapping is applied to a reader-side copy only; the published "
+                "package is never rewritten",
                 "fields absent from the package are not inferred or backfilled; "
                 "absence remains absence",
                 "cross-version comparability is not assessed; only packages "
                 "written at the same schema version are directly comparable",
             ),
+            migration={
+                "from": declared_minor,
+                "to": CURRENT_SCHEMA_VERSION,
+                "path": list(path),
+            },
         )
 
     return _incompatible(

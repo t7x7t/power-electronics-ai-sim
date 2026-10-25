@@ -4,7 +4,7 @@
 (validity) layer and authenticity Level 1 (Git anchor). It is an engineering
 evidence contract, not a physical, thermal, hardware, or product claim.
 
-**Related documents:** `docs/06_constraint_assurance_architecture_v0.md`,
+**Related documents:** `docs/06_constraint_assurance_v0.md`,
 `docs/16_stage6_safety_validity_qualification_v1.md`,
 `docs/22_stage12_evidence_levels_v1.md`,
 `docs/39_credibility_assurance_v0.md`.
@@ -105,11 +105,15 @@ existing audit-order contracts remain unchanged.
 
 ### 2.5 Qualification levels
 
-`CheckReport` and `qualification.json` now carry a level:
+`CheckReport` and `qualification.json` now carry a level: since schema `0.2`
+the vocabulary is `assessed` / `partial` / `failed` (it used to be
+`full` / `limited` / `failed`, which shared a token with the evidence ladder):
 
-- `full`: no findings;
-- `limited`: warning-only findings, still `passed: true`;
+- `assessed`: no findings;
+- `partial`: warning-only findings, still `passed: true`;
 - `failed`: blocking findings, `passed: false`.
+
+Readers map the legacy words; see `docs/50_evidence_vocabulary_v2.md`.
 
 The baseline `BasicQualificationPlugin` is unchanged. The opt-in standard pack
 adds:

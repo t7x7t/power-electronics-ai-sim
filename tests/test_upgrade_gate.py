@@ -54,21 +54,38 @@ def test_the_older_package_is_readable_and_discoverable():
 
     assert inspection.status == "ok"
     compatibility = inspection.summary["compatibility"]
-    assert compatibility["status"] == "current"
+    # 0.5.9 wrote manifest schema 0.1; the reader maps it to 0.2 without
+    # touching the package, so the package is readable but read-only.
+    assert compatibility["status"] == "read_only"
     assert compatibility["may_rewrite"] is False
     assert compatibility["package_schema"] == "0.1"
+    assert compatibility["migration"]["from"] == "0.1"
+    assert inspection.summary["migration"]["path"] == ["0.1", "0.2"]
 
     catalog = scan_runs(_FIXTURE.parent)
     assert [entry.run_id for entry in catalog.runs] == ["buck-reference"]
 
 
-def test_an_identical_package_keeps_the_historical_comparison_payload():
+def test_reading_an_old_package_maps_its_qualification_level():
+    inspection = inspect_run(_FIXTURE)
+
+    # The 0.5.9 package recorded ``functional`` evidence and a ``limited``
+    # qualification; the ladder for evidence is unchanged, while the
+    # qualification token is presented in the current vocabulary.
+    assert inspection.summary["evidence_level"] == "functional"
+    assert inspection.summary["qualification_level"] == "partial"
+
+
+def test_an_identical_old_package_still_compares_but_is_not_an_equality_claim():
     payload = compare_runs(_FIXTURE, _FIXTURE).to_dict()
 
     assert payload["outcome"] == "exact_match"
-    # No compatibility block means "same schema version and same source
-    # commit"; existing clients see the payload they already knew.
-    assert "compatibility" not in payload
+    # The samples are identical, but the package needs a reader-side mapping,
+    # so the comparison states that cross-version equality was not assessed.
+    note = payload["compatibility"]
+    assert note["cross_version_comparison"] == "not_assessed"
+    assert note["left"]["status"] == "read_only"
+    assert note["right"]["status"] == "read_only"
 
 
 def test_a_cross_release_comparison_is_not_assessed(tmp_path):
@@ -77,10 +94,9 @@ def test_a_cross_release_comparison_is_not_assessed(tmp_path):
     note = compare_runs(_FIXTURE, other_commit).to_dict()["compatibility"]
 
     assert note["cross_version_comparison"] == "not_assessed"
-    assert note["left"]["status"] == "current"
-    assert note["right"]["status"] == "current"
-    assert any("different source commits" in reason for reason in note["reasons"])
-    assert any("not comparable across releases" in item for item in note["limitations"])
+    assert note["left"]["status"] == "read_only"
+    assert note["right"]["status"] == "read_only"
+    assert any("schema versions" in reason for reason in note["reasons"])
 
 
 def test_a_newer_schema_is_not_comparable_at_all(tmp_path):

@@ -21,6 +21,7 @@ import os
 from pathlib import Path
 from typing import Any, Mapping
 
+from .checks import normalize_check_level
 from .jsonutil import json_safe
 
 
@@ -127,6 +128,15 @@ def _text(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+def _level_text(value: Any) -> str | None:
+    """Present a recorded qualification level in the current vocabulary."""
+
+    try:
+        return normalize_check_level(value)
+    except ValueError:
+        return _text(value)
+
+
 def recorded_plant_class(plant: Mapping[str, Any]) -> str | None:
     """Read the adapter class from either recorded identity shape.
 
@@ -168,7 +178,7 @@ def _entry(directory: Path, root: Path, manifest: Mapping[str, Any]) -> RunEntry
         run_state=run_state,
         published=run_state == "PUBLISHED",
         evidence_level=_text(manifest.get("evidence_level")),
-        qualification_level=_text(qualification.get("level")),
+        qualification_level=_level_text(qualification.get("level")),
         plant_id=_text(plant.get("id")),
         plant_class=recorded_plant_class(plant),
         trust_level=_text(plant.get("trust_level")),

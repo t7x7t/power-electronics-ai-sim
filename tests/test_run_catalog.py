@@ -68,7 +68,7 @@ def test_reports_recorded_metadata_for_each_run(tmp_path):
     assert entry.plant_class == "BuckPlant"
     assert entry.trust_level == "reference"
     assert entry.evidence_level == "functional"
-    assert entry.qualification_level == "limited"
+    assert entry.qualification_level == "partial"
     assert entry.problems == ()
 
 

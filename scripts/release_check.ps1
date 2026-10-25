@@ -72,11 +72,24 @@ function Initialize-ReleasePython {
         if (-not (Get-Command $creator -ErrorAction SilentlyContinue) -and -not (Test-Path -LiteralPath $creator)) {
             throw "Python launcher '$PythonExecutable' was not found. Install Python $PythonVersion or pass -PythonExecutable with its path."
         }
-        & $creator @creatorArgs *>&1 | Tee-Object -FilePath (Join-Path $EvidenceDirectory "python-venv-create.log") | Out-Host
-        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $python)) { throw "unable to create isolated Python venv at $venv" }
-        & $python -m pip install --upgrade pip setuptools *>&1 | Tee-Object -FilePath (Join-Path $EvidenceDirectory "python-venv-bootstrap.log") | Out-Host
-        & $python -m pip install -r (Join-Path $RepositoryRoot "requirements-release.txt") *>&1 | Tee-Object -FilePath (Join-Path $EvidenceDirectory "python-venv-requirements.log") | Out-Host
-        & $python -m pip install -e (Join-Path $RepositoryRoot ".[test]") *>&1 | Tee-Object -FilePath (Join-Path $EvidenceDirectory "python-venv-project.log") | Out-Host
+        # Native tools write warnings to stderr; with ErrorActionPreference=Stop
+        # that would abort the gate for a retry message.  The exit code is the
+        # contract, so it is checked explicitly for each install step.
+        $previousPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            & $creator @creatorArgs *>&1 | Tee-Object -FilePath (Join-Path $EvidenceDirectory "python-venv-create.log") | Out-Host
+            if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $python)) { throw "unable to create isolated Python venv at $venv" }
+            & $python -m pip install --upgrade pip setuptools *>&1 | Tee-Object -FilePath (Join-Path $EvidenceDirectory "python-venv-bootstrap.log") | Out-Host
+            if ($LASTEXITCODE -ne 0) { throw "pip bootstrap failed with exit code $LASTEXITCODE" }
+            & $python -m pip install -r (Join-Path $RepositoryRoot "requirements-release.txt") *>&1 | Tee-Object -FilePath (Join-Path $EvidenceDirectory "python-venv-requirements.log") | Out-Host
+            if ($LASTEXITCODE -ne 0) { throw "pinned requirements install failed with exit code $LASTEXITCODE" }
+            & $python -m pip install -e (Join-Path $RepositoryRoot ".[test]") *>&1 | Tee-Object -FilePath (Join-Path $EvidenceDirectory "python-venv-project.log") | Out-Host
+            if ($LASTEXITCODE -ne 0) { throw "project install failed with exit code $LASTEXITCODE" }
+        }
+        finally {
+            $ErrorActionPreference = $previousPreference
+        }
         $pythonEnvironment.created = $true
     } else { $pythonEnvironment.reused = $true }
     $pythonEnvironment.path = $venv

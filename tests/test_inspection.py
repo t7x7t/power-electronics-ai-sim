@@ -68,7 +68,7 @@ def test_inspect_run_reports_a_current_manifest_schema(tmp_path):
 
 def test_an_older_manifest_is_read_only_and_not_reported_as_tampered(tmp_path):
     run_dir, _, manifest = _published_buck_run(tmp_path)
-    manifest["schema_version"] = "0.0"
+    manifest["schema_version"] = "0.1"
     _rewrite_manifest(run_dir, manifest)
 
     result = inspect_run(run_dir)
@@ -76,14 +76,17 @@ def test_an_older_manifest_is_read_only_and_not_reported_as_tampered(tmp_path):
     # Integrity and readability are separate verdicts: an old package is
     # still intact, and the reader refuses to rewrite it.
     assert result.status == "ok", result.problems
-    assert result.summary["compatibility"]["status"] == "read_only"
-    assert result.summary["compatibility"]["cross_version_comparison"] == "not_assessed"
-    assert result.summary["compatibility"]["may_rewrite"] is False
+    compatibility = result.summary["compatibility"]
+    assert compatibility["status"] == "read_only"
+    assert compatibility["cross_version_comparison"] == "not_assessed"
+    assert compatibility["may_rewrite"] is False
+    assert compatibility["migration"]["from"] == "0.1"
+    assert result.summary["migration"]["path"] == ["0.1", CURRENT_SCHEMA_VERSION]
 
 
 def test_a_newer_manifest_is_incompatible_but_still_inspectable(tmp_path):
     run_dir, _, manifest = _published_buck_run(tmp_path)
-    manifest["schema_version"] = "0.2"
+    manifest["schema_version"] = "0.3"
     _rewrite_manifest(run_dir, manifest)
 
     result = inspect_run(run_dir)
@@ -91,6 +94,7 @@ def test_a_newer_manifest_is_incompatible_but_still_inspectable(tmp_path):
     assert result.status == "ok", result.problems
     assert result.summary["compatibility"]["status"] == "incompatible"
     assert result.summary["compatibility"]["may_rewrite"] is False
+    assert "migration" not in result.summary
 
 
 def test_inspect_run_rechecks_the_recorded_implementation_against_the_current_pin(tmp_path):
