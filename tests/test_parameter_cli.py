@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+import pe_sim
 from pe_sim.artifacts import artifact_index, manifest_digest, package_digest
 from pe_sim.cli import main
 
@@ -282,8 +283,10 @@ def test_verify_parameter_confirmation_rejects_a_missing_confirmation_file(tmp_p
 
 
 def test_cli_version_reports_the_parameter_view_release(capsys):
+    # The version has one source (``pe_sim._version``); this test asserts that
+    # the CLI reports it instead of pinning a literal that drifts every release.
     with pytest.raises(SystemExit) as exit_info:
         main(["--version"])
 
     assert exit_info.value.code == 0
-    assert capsys.readouterr().out.strip() == "0.8.0"
+    assert capsys.readouterr().out.strip() == pe_sim.__version__

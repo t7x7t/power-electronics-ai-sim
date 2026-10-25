@@ -171,6 +171,7 @@ GET /v1/runs/{run_id}/topology
 GET /v1/runs/{run_id}/trace
 GET /v1/runs/{run_id}/outputs
 GET /v1/runs/{run_id}/parameters
+GET /v1/runs/{run_id}/review
 ```
 
 - `GET /health` returns service status and `read_only: true`.
@@ -182,6 +183,13 @@ GET /v1/runs/{run_id}/parameters
 - `GET /v1/runs/{run_id}/parameters` returns the read-only parameter view
   `pe-sim.parameter-view.v1` defined by `docs/54`. It is projected from the
   published manifest on every request and is never written to disk.
+- `GET /v1/runs/{run_id}/review` returns the text-first run review
+  `pe-sim.run-review.v1` defined by `docs/55`. It is projected from the
+  published package on every request and is never written to disk. Unlike the
+  JSON routes above, its default body is `text/plain; charset=utf-8` rendered
+  text; `?format=markdown` selects `text/markdown; charset=utf-8` and
+  `?format=json` selects the JSON envelope. Any other `format` value is a
+  `400` with `error.code = "invalid_request"`.
 
 `/v1/discovery` lists only verified, displayable reference runs.  Each plane
 route verifies the run package before returning a contract.
@@ -193,9 +201,10 @@ directory identifier; packages where those identities differ are not served.
 
 `contract_schemas` carries exactly those three visualization contracts.
 Discovery separately reports an `inspection_schemas` object,
-`{"parameters": "pe-sim.parameter-view.v1", "claim": "pe-sim.claim.v1"}`; the
-parameter view and the claim are inspection surfaces, not visualization
-contracts, so they are not added to `contract_schemas`.
+`{"parameters": "pe-sim.parameter-view.v1", "claim": "pe-sim.claim.v1",
+"review": "pe-sim.run-review.v1"}`; the parameter view, the claim, and the
+review are inspection surfaces, not visualization contracts, so they are not
+added to `contract_schemas`.
 
 `run_id` is a single safe path component. Parent traversal, separators,
 symlinks, unknown routes, and non-GET methods are rejected. The service sends

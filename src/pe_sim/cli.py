@@ -48,6 +48,7 @@ from .parameter_confirmation import (
     write_confirmation,
 )
 from .parameter_view import ParameterViewError, build_parameter_view
+from .review import ReviewError, build_run_review, render_markdown, render_text
 from .provenance import ExecutableBackendAdapter
 from .reproducibility import ToleranceSpec, audit_repeated_runs, compare_runs, cross_machine_evidence
 from .baseline import build_baseline_report
@@ -243,6 +244,22 @@ def main(argv: list[str] | None = None) -> int:
     inspect.add_argument("--attestation", type=Path, default=None, help="optional detached attestation to verify")
     inspect.add_argument("--repo", type=Path, default=None, help="Git repository used for anchor verification")
     inspect.add_argument("--require-anchored", action="store_true", help="require trust level L1_anchored")
+    review_run = sub.add_parser(
+        "review-run",
+        help="print the hierarchical text review of a published run package",
+    )
+    review_run.add_argument("run_dir", type=Path)
+    review_run.add_argument(
+        "--format",
+        choices=("text", "markdown"),
+        default="text",
+        help="rendered report format; ignored when --json is used",
+    )
+    review_run.add_argument(
+        "--json",
+        action="store_true",
+        help="emit the pe-sim.run-review.v1 envelope instead of a rendered report",
+    )
     parameter_view = sub.add_parser(
         "parameter-view",
         help="show the recorded parameter set of a published run package",
@@ -446,6 +463,15 @@ def main(argv: list[str] | None = None) -> int:
                 if args.require_anchored and attestation.get("trust_level") != "L1_anchored":
                     return 2
             return 0
+        elif args.command == "review-run":
+            review = build_run_review(args.run_dir)
+            if args.json:
+                print(json.dumps(review, sort_keys=True, indent=2))
+            elif args.format == "markdown":
+                print(render_markdown(review), end="")
+            else:
+                print(render_text(review), end="")
+            return 0
         elif args.command == "parameter-view":
             view = build_parameter_view(args.run_dir)
             print(
@@ -586,6 +612,16 @@ def main(argv: list[str] | None = None) -> int:
             "run_inspection_rejected",
             str(exc),
             scope="parameter_view" if isinstance(exc, ParameterViewError) else "parameter_confirmation",
+        )
+        return 2
+    except ReviewError as exc:
+        # A refused review is an inspection outcome, not a new error family:
+        # the package was not read, or it did not support the envelope.
+        _emit_rejection(
+            "RUN_INSPECTION_REJECTED",
+            "run_inspection_rejected",
+            str(exc),
+            scope="run_review",
         )
         return 2
     except FormalComparisonError as exc:
