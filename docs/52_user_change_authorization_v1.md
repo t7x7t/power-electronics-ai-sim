@@ -63,7 +63,7 @@ config snapshot:
     },
     "controller:pi": {
       "changed": true,
-      "files": ["src/pe_sim/pi_controller.py"],
+      "files": ["adapters/pi_controller.py"],
       "status": "unauthorized"
     }
   },
@@ -73,8 +73,9 @@ config snapshot:
 }
 ```
 
-The report appears in `manifest.json` and in `inspect-run`. It never changes a
-published package.
+The paths in this example are illustrative; the project's component map declares
+the actual scope. The report appears in `manifest.json` and in `inspect-run`.
+It never changes a published package.
 
 ### 3.2 User grant (`pe-sim.user-grant.v1`)
 
@@ -101,7 +102,7 @@ Fields:
     "components": ["plant:buck", "controller:pi"],
     "paths": [
       "src/pe_sim/reference_plants.py",
-      "src/pe_sim/pi_controller.py"
+      "adapters/pi_controller.py"
     ],
     "operations": ["edit", "configure"]
   },
