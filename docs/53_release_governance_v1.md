@@ -174,6 +174,10 @@ Exit codes: `0` pass, `1` failure, `2` partial. `partial` means a check was
 **requested but could not be performed**, for example `--require-tag` outside a
 Git repository. Both `1` and `2` are release-blocking.
 
+The example above is the **post-tag** run. The procedure runs it twice: first
+without `--require-tag`, to bind the approval to the record and the artifacts,
+then again with `--require-tag` after the annotated tag exists.
+
 `check-identity` guards repository-level drift and is cheap enough for every
 run:
 
