@@ -109,3 +109,21 @@ def test_pyproject_declares_mit_license_with_license_file():
     assert first_line.startswith("MIT License"), (
         f"LICENSE 首行应为 MIT License：{first_line!r}"
     )
+
+def test_no_test_file_pins_the_current_version_as_a_literal():
+    """A test that asserts a version literal goes stale on the next bump.
+
+    The version has one source; tests must compare against ``pe_sim.__version__``
+    (or a synthetic fixture version that is deliberately different).
+    """
+
+    version = pe_sim.__version__
+    offending = []
+    for path in sorted(Path(__file__).resolve().parent.glob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        if f'== "{version}"' in text or f"== '{version}'" in text:
+            offending.append(path.name)
+    assert not offending, (
+        "compare against pe_sim.__version__ instead of pinning "
+        f"{version!r}: {offending}"
+    )

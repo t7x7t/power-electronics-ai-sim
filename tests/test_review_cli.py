@@ -187,9 +187,11 @@ def test_review_run_help_documents_the_output_flags(capsys):
 
 
 def test_cli_version_reports_the_review_release(capsys):
+    # The version has one source (``pe_sim._version``); asserting a literal here
+    # would go stale on the next patch release.
     with pytest.raises(SystemExit) as exit_info:
         main(["--version"])
 
     assert exit_info.value.code == 0
-    assert capsys.readouterr().out.strip() == "0.9.0"
-    assert __version__ == "0.9.0"
+    assert capsys.readouterr().out.strip() == __version__
+
