@@ -270,6 +270,59 @@ def package_digest(run_dir: str | Path, manifest: Mapping[str, Any]) -> str:
     return sha256_bytes(canonical_json(payload))
 
 
+_PACKAGE_HASH = re.compile(r"[0-9a-f]{64}")
+
+
+def verify_package(manifest: Mapping[str, Any], run_dir: str | Path) -> tuple[str, ...]:
+    """Return every way a package contradicts its own recorded derived hashes.
+
+    This is the single implementation of the package self-consistency rule.
+    Publication, inspection, attestation, restricted post-processing, workbench
+    export, and reproducibility comparison all call it instead of re-deriving
+    the rule, because the copies had drifted: ``inspect-run`` once accepted an
+    altered ``hashes`` summary that every other reader rejected.
+
+    The rule covers the derived-hash protocol only — the summary, plus the two
+    digests recomputed from the manifest and from the files on disk.  Artifact
+    index equality, the ``PUBLISHED`` marker, and provenance eligibility are
+    separate rules that not every reader needs, so they stay with their readers.
+
+    An empty tuple means the package is self-consistent.  The order is stable,
+    so a caller that reports only the first problem gets a deterministic
+    message; the messages are the ones readers already reported.
+    """
+
+    problems: list[str] = []
+    manifest_hash = manifest.get("manifest_sha256")
+    package_hash = manifest.get("package_sha256")
+    manifest_hash_ok = isinstance(manifest_hash, str) and bool(_PACKAGE_HASH.fullmatch(manifest_hash))
+    package_hash_ok = isinstance(package_hash, str) and bool(_PACKAGE_HASH.fullmatch(package_hash))
+    if not manifest_hash_ok:
+        problems.append("manifest_sha256 is missing or malformed")
+    if not package_hash_ok:
+        problems.append("package_sha256 is missing or malformed")
+    hashes = manifest.get("hashes")
+    if (
+        not isinstance(hashes, Mapping)
+        or hashes.get("manifest_sha256") != manifest_hash
+        or hashes.get("package_sha256") != package_hash
+    ):
+        problems.append("manifest hash summary is missing or inconsistent")
+    if manifest_hash_ok:
+        try:
+            if manifest_digest(manifest) != manifest_hash:
+                problems.append("manifest_sha256 does not match manifest contents")
+        except (TypeError, ValueError):
+            problems.append("manifest cannot be canonically hashed")
+    if package_hash_ok:
+        try:
+            if package_digest(run_dir, manifest) != package_hash:
+                problems.append("package_sha256 does not match package contents")
+        except (OSError, TypeError, ValueError):
+            problems.append("package cannot be canonically hashed")
+    return tuple(problems)
+
+
 def _validate_runtime_manifest(directory: Path) -> None:
     """Reject an incomplete runtime summary before directory publication.
 
@@ -295,16 +348,6 @@ def _validate_runtime_manifest(directory: Path) -> None:
     actual = artifact_index(directory)
     if dict(artifacts) != actual:
         raise ValueError("runtime manifest artifact index is incomplete or inconsistent")
-    manifest_hash = loaded.get("manifest_sha256")
-    package_hash = loaded.get("package_sha256")
-    hashes = loaded.get("hashes")
-    if not isinstance(manifest_hash, str) or len(manifest_hash) != 64:
-        raise ValueError("runtime manifest_sha256 is missing or malformed")
-    if not isinstance(package_hash, str) or len(package_hash) != 64:
-        raise ValueError("runtime package_sha256 is missing or malformed")
-    if not isinstance(hashes, Mapping) or hashes.get("manifest_sha256") != manifest_hash or hashes.get("package_sha256") != package_hash:
-        raise ValueError("runtime manifest hash summary is missing or inconsistent")
-    if manifest_digest(loaded) != manifest_hash:
-        raise ValueError("runtime manifest_sha256 does not match manifest contents")
-    if package_digest(directory, loaded) != package_hash:
-        raise ValueError("runtime package_sha256 does not match package contents")
+    problems = verify_package(loaded, directory)
+    if problems:
+        raise ValueError(f"runtime {problems[0]}")

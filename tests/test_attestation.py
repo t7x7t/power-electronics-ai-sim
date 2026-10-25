@@ -114,7 +114,9 @@ def test_tampered_hashes_summary_is_detected(tmp_path):
     verification = verify_attestation(run_dir, result.attestation_path, check_git=False)
 
     assert verification.status == "invalid"
-    assert any("hashes summary" in problem for problem in verification.problems)
+    # The wording comes from the single package-integrity implementation, so
+    # assert on the defect rather than on one reader's phrasing.
+    assert any("hash summary" in problem for problem in verification.problems)
 
 
 def test_reattestation_is_idempotent(tmp_path):

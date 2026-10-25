@@ -20,7 +20,7 @@ import math
 from pathlib import Path
 from typing import Any, Mapping
 
-from .artifacts import artifact_index, manifest_digest, package_digest
+from .artifacts import artifact_index, verify_package
 from .checks import normalize_check_level
 from .claim import derive_claim
 from .compatibility import assess_package_compatibility
@@ -186,16 +186,9 @@ def inspect_run(
         problems.append(f"artifact index could not be verified: {type(exc).__name__}: {exc}")
 
     try:
-        if manifest_digest(manifest) != manifest.get("manifest_sha256"):
-            problems.append("manifest_sha256 does not match manifest contents")
-    except (TypeError, ValueError) as exc:
-        problems.append(f"manifest_sha256 could not be verified: {type(exc).__name__}: {exc}")
-
-    try:
-        if package_digest(directory, manifest) != manifest.get("package_sha256"):
-            problems.append("package_sha256 does not match package contents")
-    except (OSError, TypeError, ValueError) as exc:
-        problems.append(f"package_sha256 could not be verified: {type(exc).__name__}: {exc}")
+        problems.extend(verify_package(manifest, directory))
+    except (OSError, TypeError, ValueError) as exc:  # pragma: no cover - defensive
+        problems.append(f"package hashes could not be verified: {type(exc).__name__}: {exc}")
 
     stats, non_finite = _numeric_stats(samples)
     if non_finite:

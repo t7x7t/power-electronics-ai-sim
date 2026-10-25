@@ -93,21 +93,17 @@ agent that copied a reference implementation, forgot to declare its own
 backend, or edited a file without updating the pin. It is not a sandbox.
 
 Deliberately **not** defended against, and therefore not findings when
-reported:
-
-1. in-process mutation of `sys.modules` namespaces or of `pe_sim.identity`
-   itself — that process can rewrite the checker;
-2. rebinding a plant's instance attributes (`plant.step = ...`) — the caller
-   supplied the object, which is equivalent to supplying a different one;
-3. callables with no code object (C extensions, some descriptors), which have
-   no source file to compare and are skipped rather than guessed at;
-4. `code.replace(co_filename=...)`, which forges the source file name directly;
-5. rewriting both the solve-path file and the pin — visible in Git review, not
-   resolvable at runtime.
+reported — the canonical, numbered list lives in
+`docs/57_frozen_bypass_surface_v1.md` §3 (N1-N8) and covers in-process
+mutation of the checker, instance-attribute rebinding, callables without code
+objects, `code.replace(co_filename=...)`, and rewriting both the file and the
+pin. It also covers the cases outside identity verification: rebuilding a
+self-consistent package by hand, concurrent anchor-index appends, and anything
+requiring a sandbox, signature, or key.
 
 The project's assurance comes from recomputable records plus review of the pin
-in Git, not from runtime self-defence. An audit finding in categories 1-5 is
-answered by this section, not by another check.
+in Git, not from runtime self-defence. An audit finding covered by that list is
+answered by it, not by another check.
 
 ## 3. External-simulator interface
 

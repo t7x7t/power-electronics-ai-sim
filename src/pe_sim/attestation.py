@@ -27,8 +27,7 @@ from typing import Any, Mapping, Protocol, runtime_checkable
 from .artifacts import (
     artifact_index,
     canonical_json,
-    manifest_digest,
-    package_digest,
+    verify_package,
 )
 from .jsonutil import stable_sha256
 
@@ -391,17 +390,9 @@ def build_payload(run_dir: str | Path) -> tuple[AttestationPayload, Mapping[str,
     recorded_artifacts = manifest.get("artifacts")
     if not isinstance(recorded_artifacts, Mapping) or dict(recorded_artifacts) != dict(actual_artifacts):
         raise AttestationError("manifest artifact index does not match the package contents")
-    if manifest_digest(manifest) != manifest.get("manifest_sha256"):
-        raise AttestationError("manifest_sha256 does not match the manifest contents")
-    if package_digest(directory, manifest) != manifest.get("package_sha256"):
-        raise AttestationError("package_sha256 does not match the package contents")
-    hashes = manifest.get("hashes")
-    if not isinstance(hashes, Mapping):
-        raise AttestationError("manifest hashes summary is missing")
-    if hashes.get("manifest_sha256") != manifest.get("manifest_sha256"):
-        raise AttestationError("manifest hashes summary does not match manifest_sha256")
-    if hashes.get("package_sha256") != manifest.get("package_sha256"):
-        raise AttestationError("manifest hashes summary does not match package_sha256")
+    problems = verify_package(manifest, directory)
+    if problems:
+        raise AttestationError(problems[0])
 
     environment = manifest.get("environment") if isinstance(manifest.get("environment"), Mapping) else {}
     runner = environment.get("runner") if isinstance(environment.get("runner"), Mapping) else {}

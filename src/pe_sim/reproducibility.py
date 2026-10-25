@@ -16,7 +16,7 @@ import math
 import re
 from typing import Any, Mapping, Sequence
 
-from .artifacts import ArtifactWriter, artifact_index, manifest_digest, package_digest
+from .artifacts import ArtifactWriter, artifact_index, verify_package
 from .compatibility import assess_package_compatibility
 from .jsonutil import stable_sha256
 
@@ -329,24 +329,9 @@ def _integrity_gate(directory: Path, manifest: Mapping[str, Any]) -> tuple[bool,
         if not isinstance(declared, Mapping) or declared.get("path") != name or declared.get("sha256") != expected.get("sha256"):
             return False, f"artifact hash mismatch for {name}", False
 
-    manifest_hash = manifest.get("manifest_sha256")
-    package_hash = manifest.get("package_sha256")
-    if not isinstance(manifest_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", manifest_hash):
-        return False, "manifest_sha256 is missing or malformed", False
-    if not isinstance(package_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", package_hash):
-        return False, "package_sha256 is missing or malformed", False
-    hashes = manifest.get("hashes")
-    if not isinstance(hashes, Mapping) or hashes.get("manifest_sha256") != manifest_hash or hashes.get("package_sha256") != package_hash:
-        return False, "manifest hash summary is missing or inconsistent", False
-    try:
-        expected_manifest = manifest_digest(manifest)
-        expected_package = package_digest(directory, manifest)
-    except (OSError, TypeError, ValueError) as exc:
-        return False, f"published hash could not be recomputed: {type(exc).__name__}: {exc}", False
-    if manifest_hash != expected_manifest:
-        return False, "manifest_sha256 does not match manifest contents", False
-    if package_hash != expected_package:
-        return False, "package_sha256 does not match package contents", False
+    problems = verify_package(manifest, directory)
+    if problems:
+        return False, problems[0], False
     state_path = directory / ".run-state.json"
     if not state_path.is_file():
         return False, "published run state marker is missing", False

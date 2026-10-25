@@ -16,7 +16,7 @@ import os
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from .artifacts import artifact_index, manifest_digest, package_digest
+from .artifacts import artifact_index, verify_package
 from .catalog import recorded_plant_class
 from .outputs import OutputCollector, OutputDefinition, OutputRegistry
 from .plant_registry import PlantRegistration, resolve
@@ -104,12 +104,6 @@ def _mapping(value: Any, description: str) -> Mapping[str, Any]:
     return value
 
 
-def _hash(value: Any, field: str) -> str:
-    if not isinstance(value, str) or len(value) != 64 or any(character not in "0123456789abcdef" for character in value.lower()):
-        raise WorkbenchExportError(f"{field} must be a SHA-256 hex digest")
-    return value
-
-
 def _published_manifest(run_dir: Path) -> Mapping[str, Any]:
     manifest_path = run_dir / "manifest.json"
     state_path = run_dir / ".run-state.json"
@@ -133,15 +127,9 @@ def _published_manifest(run_dir: Path) -> Mapping[str, Any]:
     recorded_artifacts = manifest.get("artifacts")
     if not isinstance(recorded_artifacts, Mapping) or dict(recorded_artifacts) != artifact_index(run_dir):
         raise WorkbenchExportError("manifest artifact index does not match package contents")
-    manifest_sha256 = _hash(manifest.get("manifest_sha256"), "manifest_sha256")
-    package_sha256 = _hash(manifest.get("package_sha256"), "package_sha256")
-    hashes = manifest.get("hashes")
-    if not isinstance(hashes, Mapping) or hashes.get("manifest_sha256") != manifest_sha256 or hashes.get("package_sha256") != package_sha256:
-        raise WorkbenchExportError("manifest hash summary is missing or inconsistent")
-    if manifest_digest(manifest) != manifest_sha256:
-        raise WorkbenchExportError("manifest_sha256 does not match manifest contents")
-    if package_digest(run_dir, manifest) != package_sha256:
-        raise WorkbenchExportError("package_sha256 does not match package contents")
+    problems = verify_package(manifest, run_dir)
+    if problems:
+        raise WorkbenchExportError(problems[0])
     return manifest
 
 

@@ -18,7 +18,7 @@ import re
 from statistics import fmean
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
-from .artifacts import ArtifactWriter, artifact_index, canonical_json, manifest_digest, package_digest
+from .artifacts import ArtifactWriter, artifact_index, canonical_json, verify_package
 from .builtin_plants import builtin_registrations
 from .catalog import recorded_plant_class
 
@@ -343,27 +343,7 @@ def _check_package(run_dir: Path, manifest: Mapping[str, Any]) -> list[str]:
             if dict(declared_artifacts) != actual_artifacts:
                 reasons.append("artifact index is incomplete or inconsistent")
 
-    manifest_hash = manifest.get("manifest_sha256")
-    package_hash = manifest.get("package_sha256")
-    hashes = manifest.get("hashes")
-    if not isinstance(manifest_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", manifest_hash):
-        reasons.append("manifest_sha256 is missing or malformed")
-    if not isinstance(package_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", package_hash):
-        reasons.append("package_sha256 is missing or malformed")
-    if not isinstance(hashes, Mapping) or hashes.get("manifest_sha256") != manifest_hash or hashes.get("package_sha256") != package_hash:
-        reasons.append("manifest hash summary is missing or inconsistent")
-    if isinstance(manifest_hash, str) and len(manifest_hash) == 64:
-        try:
-            if manifest_digest(manifest) != manifest_hash:
-                reasons.append("manifest_sha256 does not match manifest contents")
-        except (TypeError, ValueError):
-            reasons.append("manifest cannot be canonically hashed")
-    if isinstance(package_hash, str) and len(package_hash) == 64:
-        try:
-            if package_digest(run_dir, manifest) != package_hash:
-                reasons.append("package_sha256 does not match package contents")
-        except (OSError, TypeError, ValueError):
-            reasons.append("package cannot be canonically hashed")
+    reasons.extend(verify_package(manifest, run_dir))
     return reasons
 
 
