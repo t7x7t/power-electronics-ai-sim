@@ -28,7 +28,7 @@
 | S3 | 0.11.0 | —（已完成：初始状态载荷） | `contract`（ADR 0006） | S2 | 已交付：载荷可验证；无载荷文档行为不变 |
 | S4 | 0.12.0 | —（已完成：派生指标） | `postprocess` | S0 | 已交付：父包链接、原包不变、体积上限 |
 | S5 | 0.13.0 | —（已完成：相位连续与变更点） | `kernel-impl` | S3 | 已交付：pin 记录已更新；ADR 0004 两条验收通过 |
-| S6 | 0.14.1 | B9 A7 | `controller` seam | S5（A7 依赖亚窗口变更点） | B2 已在 0.14.0 交付；剩余：保护状态机、故障注入、延迟上限登记 |
+| S6 | 0.14.1 | —（已完成：控制器 seam） | `controller` seam | S5 | 已交付：B2 注册表/Type II-III（0.14.0）；B9/A7 保护与短路恢复（0.14.1） |
 | S7 | 0.15.0 | A10 C3 C9 | `study` seam | S1 | 聚合不自动继承 `comparable`；每点保留自己的证据 |
 | S8 | 0.16.0 | C4 C5 C6 | `capability` seam | S7 | 缺失能力 = 不可用（不是 `limited`）；AC/阻抗方法必须自报 |
 | S9 | 0.17.0 | A8 A9 A11 B7 B8 B3 D3 | `adapter` 扩面 + 比较器事件 | S5 | T1 仍然成立：新能力是注册，不是内核分支 |
@@ -109,8 +109,9 @@
 
 - 已交付（0.14.0，B2）：ADR 0007；`controller_id` 由枚举改为安全标识符 + 控制器注册表；
   `type2`/`type3`/`biquad`（Tustin 离散、系数记录在身份中）；`pi`/`pid` 行为不变。
-- 剩余交付：保护状态机（OCP/OVP/UVLO/hiccup/latch）作为可组合包装；
-  故障注入（短路/负载突卸）落到 `input_schedule` 的变更点。
+- 已交付（0.14.1，B9/A7）：`ProtectedController` 包装（OVP/OCP/UVLO、hiccup/latch）；
+  0.2 Ω 短路在窗口中点触发，越界后一个控制周期内输出 trip 动作，故障移除后打嗝重试。
+  上限 `protection_latency_is_one_control_period` 已由包装声明。
 - 验收：JSON 可选 `type2`/`type3` 并发布带控制器身份的 `QUALIFIED` 包；
   `pi`/`pid` 的现有测试逐字不变；保护动作及其延迟出现在 manifest。
 - 上限：A7 登记 `protection_latency_is_one_control_period`（§2.3）。

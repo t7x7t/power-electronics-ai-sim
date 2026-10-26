@@ -2,9 +2,10 @@
 
 ## Status
 
-Accepted, 2026-10-26. B2 is implemented in 0.14.0. B9/A7 build on the same
-registry. Does not change `PlantAdapter`, `ControllerAdapter`, or the Runner
-loop.
+Accepted, 2026-10-26. B2 is implemented in 0.14.0; B9 (protection state
+machine) and A7 (short-circuit hiccup recovery) are implemented in 0.14.1 as a
+controller wrapper over the same registry. Does not change `PlantAdapter`,
+`ControllerAdapter`, or the Runner loop.
 
 ## Context
 

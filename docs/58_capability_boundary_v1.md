@@ -25,9 +25,11 @@
 1. **段内 duty 恒定。** Plant 契约是 `advance(action, duration)`，一次传入一个标量
    执行器值；因此一个求解段内的占空比必须视为零阶保持。段内部的高频波形是被采样出来
    的旁产物，不是被整段积分的对象。（`backends/ngspice_plants.py` 模块 docstring）
-2. **补偿器必须在内核侧（`control_location=kernel`）。** 闭环由内核的 Controller
+2. **补偿器与保护都在内核侧（`control_location=kernel`）。** 闭环由内核的 Controller
    每个控制窗口给出 `duty`；网表里没有控制器。Type III 也是 Controller——输入
-   `vout`/`vref`，输出 `duty`——但它是插件，不是网表内容。
+   `vout`/`vref`，输出 `duty`——但它是插件，不是网表内容。保护状态机（OVP/OCP/UVLO/
+   hiccup）同样是 Controller 包装，它在每个控制采样点评估，因此故障最迟在下一个
+   控制周期执行；这不是逐周期比较器保护的声明。
 3. **载波相位是求解段参数，不再需要整数倍。** 段起点相位由 `window_start mod Tsw`
    给出，网表把 PULSE 延迟渲染为到下一个载波起始的时长 `(-phase) mod Tsw`，因此任意
    `control_period_s` 都能保持相位连续；如果段起点落在导通脉冲内部，网表还用一段
@@ -48,6 +50,7 @@
 | --- | --- | --- |
 | 网表内闭环（Type III 等） | 控制器不在网表里；每个求解段只有一次求解 | 把补偿器写成 Controller 插件；或另写 `control_location=model` 的 Adapter（ADR 0004 步骤 3） |
 | 需要单次不可分割的整段开关级积分 | 求解段仍按窗口与变更点切分，每段重启一次 ngspice | 使用开关级 whole-run 适配器（ADR 0004 步骤 3 / `docs/61` S9），或直接用 ngspice |
+| 逐周期比较器保护 / 峰值电流模式 | 控制器只在控制采样点看测量，保护最迟在下一个控制周期执行 | 尚未提供；见 `docs/60` B3 与 `docs/61` S9（模型内比较器） |
 | 微秒级全波形长时导出 | 采样分辨率有界，且成本随窗口数线性增长（每窗口一个子进程） | 直接 ngspice，或降低时长/提高采样步长后接受证据降级 |
 | 器件级、电热、磁饱和、EMI | 非本仓库范围 | 走外部工具链 |
 

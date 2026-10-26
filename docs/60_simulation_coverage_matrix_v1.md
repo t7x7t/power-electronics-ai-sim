@@ -31,7 +31,7 @@
 | A4 | 负载阶跃落在控制窗口内部 / 亚开关周期 | very-common | yes | covered | kernel | `tests/test_event_boundaries.py`（窗口中点阶跃；导通区内 0.01% 变更对照；与单窗口分段一致） |
 | A5 | 软启动（vref 斜坡） | very-common | yes | covered | controller/adapter | `tests/test_stage16_expressible_scenarios.py`（逐窗口 vref 序列与 duty 单调） |
 | A6 | 预偏置启动（输出已预充） | very-common | partial | covered | adapter | `tests/test_initial_state_payload.py`（首个采样为预充值并向目标收敛；未接受键在首次 advance 前失败）；ADR 0006 |
-| A7 | 短路/逐周期限流/打嗝恢复 | very-common | partial | expressible | controller/adapter | duty 限幅已有；保护状态机与故障注入缺测试；亚窗口事件依赖 A4 |
+| A7 | 短路/逐周期限流/打嗝恢复 | very-common | partial | covered | controller/adapter | `tests/test_protection.py`（0.2 Ω 短路落在窗口中点；越界后一个控制周期内 trip；打嗝重试）；上限 `protection_latency_is_one_control_period` |
 | A8 | 轻载 / DCM / burst | very-common | partial | expressible | adapter | 开关级网表物理上可表现 DCM；平均模型声明 CCM 假设（`uncheckable_rules`）；无检测 |
 | A9 | 死区与同步整流时序 | common | yes | expressible | adapter | 当前模板无死区/SR/栅驱动（`docs/31`）；需新网表模板，零内核改动 |
 | A10 | 输入/负载/duty 参数扫掠 | very-common | no | kernel_gap | kernel | `docs/00` S4B（拓扑级扫掠）；无批量入口 |
@@ -49,7 +49,7 @@
 | B6 | 多环级联（电压外环+电流内环） | very-common | yes | covered | controller | `tests/test_stage16_expressible_scenarios.py`（`state_update` 在下一步可见） |
 | B7 | 多相/均流/相位增减 | common | partial | expressible | adapter | 无多相模型；共享 duty + 相位内部管理可覆盖常见共相；逐相电流环属 specialized（ADR 0005） |
 | B8 | 控制器放进网表 | common | no | kernel_gap | kernel | ADR 0004（`control_location=model`，上限 `limited`） |
-| B9 | 保护状态机（OCP/OVP/UVLO/hiccup/latch） | very-common | partial | expressible | controller | 可用控制器状态机表达；缺故障注入与测试 |
+| B9 | 保护状态机（OCP/OVP/UVLO/hiccup/latch） | very-common | yes | covered | controller | `tests/test_protection.py`（OVP/OCP/UVLO、启动掩码、hiccup/latch、快照恢复） |
 
 ### C. 分析类型
 
@@ -94,11 +94,11 @@
 
 | 类别 | 行 | 含义 |
 | --- | --- | --- |
-| `closed` | A1, A2, A3, A4, A5, A6, B1, B2, B4, B5, B6, C1, C2, C7, C10, D1, D2, D4, D5 | 今天可用且已有测试 |
+| `closed` | A1, A2, A3, A4, A5, A6, A7, B1, B2, B4, B5, B6, B9, C1, C2, C7, C10, D1, D2, D4, D5 | 今天可用且已有测试 |
 | `test-only` | —（当前为空：可表达性行已在 0.10.0 闭合） | 今天已能表达，只缺用例 |
 | `postprocess` | —（当前为空：派生指标已在 0.12.0 闭合） | 单次运行样本上的派生指标 |
 | `adapter` | A8, A9, A11, B7 | 新模型或新网表模板，零内核改动（T1） |
-| `controller` | A7, B9 | 新控制器或保护状态机 |
+| `controller` | —（当前为空：保护在 0.14.1 闭合） | 新控制器或保护状态机 |
 | `study` | A10, C3, C9 | 需要在单次运行之上编排（ADR 0005 Seam 1） |
 | `capability` | C4, C5, C6 | 需要模型回答 `advance()` 答不了的问题（ADR 0005 Seam 2） |
 | `kernel-impl` | B3, D3 | 内核实现改动，**不改协议** |
