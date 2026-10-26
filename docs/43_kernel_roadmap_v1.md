@@ -311,6 +311,16 @@ depends on them starts. A phase does not begin on an unresolved decision.
 D1 and D2 are prerequisites for Phase A. D3 and D4 may be decided later but
 must be settled before Phase C starts.
 
+`docs/adr/0004-solve-route-capabilities.md` (proposed) extends D1 without
+superseding it: who owns the clock stays a two-valued declaration, and two
+further independent facts — where the closed loop closes, and whether external
+inputs may change between observation points — are declared alongside it. The
+evidence cap remains derived rather than declared, so `stepped` + in-model
+control is expressible at `limited` and `whole_run` + kernel control is
+rejected at construction. Two current obstacles (integer switching periods per
+control window; inputs constant within a window) are recorded there as
+implementation choices to remove, not as physics.
+
 ### D1 record: dual ownership, priced by evidence
 
 **Decision.** The kernel owns time for stepped adapters and enforces safety,
