@@ -72,6 +72,13 @@ evidence cap, as `whole-run-buck` does at `limited`).
 Full statement, including the three-backend comparison and the bypass criteria:
 [docs/58_capability_boundary_v1.md](docs/58_capability_boundary_v1.md).
 
+Scenario-level coverage — which operating conditions are covered, which are
+expressible but unimplemented, which are registered kernel gaps, and which are
+declared out of scope — is tracked in
+[docs/60_simulation_coverage_matrix_v1.md](docs/60_simulation_coverage_matrix_v1.md).
+That ledger is machine-checked: a row may not claim `covered` without naming the
+test that proves it.
+
 ## Quick start (installed package)
 
 A user who does not read source can run, view, and verify with three documented

@@ -72,5 +72,6 @@
 - `docs/31_ngspice_backend_scope_v1.md` —— ngspice 后端范围
 - `docs/40_validity_and_authenticity_v1.md` —— 适用域声明与检查阶段
 - `docs/43_kernel_roadmap_v1.md` —— I1 不变量、T1、证据等级
+- `docs/60_simulation_coverage_matrix_v1.md` —— 工况级覆盖矩阵与已登记缺口
 - `src/pe_sim/backends/ngspice_plants.py` —— 窗口化实现与适用域原文
 - `src/pe_sim/backends/whole_run_engine.py` —— 整段路线的自我降级声明
