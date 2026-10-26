@@ -448,3 +448,5 @@ regression, not a schedule trade-off.
 | `docs/37` | Backlog only. Its priority list is a user-impact ordering, **not** a work sequence |
 | `docs/39`, `docs/40`, `docs/41`, `docs/42` | Unchanged: credibility model, validity/authenticity, compatibility surface, interface topology |
 | `docs/43` (this file) | Sequencing, gates, invariants, decision ledger |
+| `docs/60` | Requirements ledger: which operating conditions exist, and what proves each one |
+| `docs/61` | Closure sequence for the open rows of `docs/60`, with per-stage gates and evidence ceilings |

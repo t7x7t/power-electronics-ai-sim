@@ -234,3 +234,106 @@ def test_out_of_scope_rows_are_classified_never():
         if row["status"] == "out_of_scope" and CLASSES.get(row["id"]) != "never"
     ]
     assert wrong == [], f"out-of-scope rows not classified `never`: {wrong}"
+
+
+# ---------------------------------------------------------------------------
+# Closure plan (docs/61): the open rows have one sequence, not many opinions.
+# ---------------------------------------------------------------------------
+
+PLAN = REPOSITORY / "docs" / "61_gap_closure_plan_v1.md"
+STAGE_ID = re.compile(r"S\d+")
+
+
+def plan_stages() -> list[dict[str, object]]:
+    """Return ``[{id, version, rows}]`` parsed from the plan's stage table."""
+
+    stages: list[dict[str, object]] = []
+    for line in PLAN.read_text(encoding="utf-8").splitlines():
+        cells = _cells(line)
+        if cells is None or len(cells) != 6:
+            continue
+        stage_id = cells[0].strip("`")
+        if STAGE_ID.fullmatch(stage_id) is None:
+            continue
+        stages.append(
+            {
+                "id": stage_id,
+                "version": cells[1],
+                "owner": cells[3],
+                "gate": cells[5],
+                "rows": re.findall(r"[A-D]\d+", cells[2]),
+            }
+        )
+    return stages
+
+
+STAGES = plan_stages()
+
+
+def _open_rows() -> set[str]:
+    return {row["id"] for row in ROWS if row["status"] in {"expressible", "kernel_gap"}}
+
+
+def test_the_plan_is_present_and_has_stages():
+    assert PLAN.is_file(), "docs/61 (the closure plan) is missing"
+    assert len(STAGES) >= 6, f"the plan has only {len(STAGES)} stages"
+
+
+def test_the_plan_assigns_every_open_row_to_exactly_one_stage():
+    """A gap that is in the ledger but in no stage is just an unscheduled gap."""
+
+    assigned: dict[str, str] = {}
+    for stage in STAGES:
+        for row_id in stage["rows"]:
+            assert row_id not in assigned, (
+                f"{row_id} is scheduled in both {assigned[row_id]} and {stage['id']}"
+            )
+            assigned[row_id] = str(stage["id"])
+
+    open_rows = _open_rows()
+    missing = sorted(open_rows - set(assigned))
+    stale = sorted(set(assigned) - open_rows)
+
+    assert missing == [], f"open rows with no stage: {missing}"
+    assert stale == [], f"the plan schedules rows that are not open: {stale}"
+
+
+def test_stages_are_numbered_and_versioned_in_order():
+    ids = [int(str(stage["id"])[1:]) for stage in STAGES]
+    assert ids == list(range(len(ids))), f"stage ids are not consecutive: {ids}"
+
+    def version(value: object) -> tuple[int, ...]:
+        text = str(value)
+        assert re.fullmatch(r"\d+(\.\d+)+", text), f"unparseable stage version {text!r}"
+        return tuple(int(part) for part in text.split("."))
+
+    versions = [version(stage["version"]) for stage in STAGES]
+    assert versions == sorted(versions), f"stage versions go backwards: {versions}"
+
+
+def test_every_stage_declares_its_layer_and_its_gate():
+    for stage in STAGES:
+        assert str(stage["owner"]).strip(), f"{stage['id']} declares no closure layer"
+        assert str(stage["gate"]).strip(), f"{stage['id']} declares no gate"
+
+
+def test_the_evidence_ceiling_register_names_rows_that_exist():
+    """A ceiling that names a row outside the ledger would be unenforceable."""
+
+    text = PLAN.read_text(encoding="utf-8")
+    rows_by_id = {row["id"]: row for row in ROWS}
+    ceilings: dict[str, str] = {}
+    for line in text.splitlines():
+        cells = _cells(line)
+        if cells is None or len(cells) != 3 or not re.fullmatch(r"[A-D]\d+", cells[0]):
+            continue
+        ceilings[cells[0]] = cells[1]
+
+    assert len(ceilings) >= 10, f"only {len(ceilings)} rows declare an evidence ceiling"
+    unknown = sorted(set(ceilings) - set(rows_by_id))
+    assert unknown == [], f"the ceiling register names unknown rows: {unknown}"
+    vocabulary = {"comparable", "limited", "functional", "per-point", "inherit"}
+    for row_id, ceiling in ceilings.items():
+        assert any(token in ceiling for token in vocabulary), (
+            f"{row_id} declares a ceiling outside the closed vocabulary: {ceiling!r}"
+        )

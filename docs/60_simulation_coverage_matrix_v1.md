@@ -30,7 +30,7 @@
 | A3 | 负载阶跃/突卸（窗口边界） | very-common | yes | expressible | adapter | 适配器级已被 `tests/test_stage4_reference_plants.py` 覆盖；无 Runner 级用例 |
 | A4 | 负载阶跃落在控制窗口内部 / 亚开关周期 | very-common | no | kernel_gap | kernel | ADR 0004 §3（求解段边界改为变更点）；`UD-05` 的近亲 |
 | A5 | 软启动（vref 斜坡） | very-common | yes | expressible | controller/adapter | 逐窗口 vref 调度即可；缺测试 |
-| A6 | 预偏置启动（输出已预充） | very-common | partial | expressible | adapter | 需 warm_start/snapshot 携带 `vout`；网表 `IC={VC0}` 已支持；缺运行级测试 |
+| A6 | 预偏置启动（输出已预充） | very-common | partial | kernel_gap | adapter | ADR 0006（`InitialState.state` 承载预充电状态）；现状只能给定 `mode`，`vout` 无法进入运行 |
 | A7 | 短路/逐周期限流/打嗝恢复 | very-common | partial | expressible | controller/adapter | duty 限幅已有；保护状态机与故障注入缺测试；亚窗口事件依赖 A4 |
 | A8 | 轻载 / DCM / burst | very-common | partial | expressible | adapter | 开关级网表物理上可表现 DCM；平均模型声明 CCM 假设（`uncheckable_rules`）；无检测 |
 | A9 | 死区与同步整流时序 | common | yes | expressible | adapter | 当前模板无死区/SR/栅驱动（`docs/31`）；需新网表模板，零内核改动 |
@@ -95,17 +95,17 @@
 | 类别 | 行 | 含义 |
 | --- | --- | --- |
 | `closed` | A1, A2, B1, C1, C2, D1, D4, D5 | 今天可用且已有测试 |
-| `test-only` | A3, A5, A6, B4, B5, B6 | 今天已能表达，只缺用例 |
+| `test-only` | A3, A5, B4, B5, B6 | 今天已能表达，只缺用例 |
 | `postprocess` | C7, C10 | 单次运行样本上的派生指标 |
 | `adapter` | A8, A9, A11, B7 | 新模型或新网表模板，零内核改动（T1） |
 | `controller` | A7, B9 | 新控制器或保护状态机 |
 | `study` | A10, C3, C9 | 需要在单次运行之上编排（ADR 0005 Seam 1） |
 | `capability` | C4, C5, C6 | 需要模型回答 `advance()` 答不了的问题（ADR 0005 Seam 2） |
 | `kernel-impl` | A4, B2, B3, D2, D3 | 内核实现改动，**不改协议** |
-| `contract` | B8 | 真正需要改契约，且已由 ADR 0004 决定 |
+| `contract` | A6, B8 | 真正需要改契约，且已由 ADR 决定（ADR 0006、ADR 0004） |
 | `never` | C8 | 已声明不做 |
 
-**读数说明:** 35 行里只有 **1 行**需要改契约，5 行需要内核实现但不改协议；其余 29 行是
+**读数说明:** 35 行里只有 **2 行**需要改契约，5 行需要内核实现但不改协议；其余 28 行是
 适配器、控制器、study、后处理或补测试。这说明 `plant + controller + runner` 本身是适配的，
 缺的是 Runner **之上**的一层编排与 Plant **之下**的一层可选能力声明（ADR 0005），而不是重写。
 
@@ -124,13 +124,16 @@
 | 把 `whole-run` 结果当实时拦截证据（A11） | 已由证据上限 `limited` 阻断 | 已闭合 |
 | 需要 AC 环路裕度却只看瞬态（C4） | 不会报错，用户可能误判稳定性 | 在 `docs/58` 明确"无 AC 分析"；C4 落地前不得暗示 |
 
-## 4. 落地顺序（与 ADR 0004 对齐）
+## 4. 落地顺序
 
-1. **ADR 0004 步骤 1**：三个声明落地（`control_location`、`event_granularity`），把 A4/D2/D3 从"隐式限制"变成"显式声明"。
-2. **ADR 0004 步骤 2**：相位参数化 + 变更点分段。闭合 A4、D2、D3；`UD-05` 关闭。
-3. **B2 + C4**：自定义控制器 + AC 环路增益。这两项是"very-common"里影响面最大的，且互不依赖。
-4. **C6 + C7**：损耗与频谱派生指标（纯后处理，风险低）。
-5. 其余按 §2 的频率排序推进；`expressible` 行优先补测试，而不是补功能。
+顺序不在本文件维护。唯一施工顺序权威是 `docs/61_gap_closure_plan_v1.md`：它把本文件
+每个未闭合行分配到且仅分配到一个阶段，`tests/test_coverage_matrix.py` 检查这一点。
+
+本文件只保留两条纪律：
+
+1. `expressible` 行优先补测试，而不是补功能——它们声称的正是"内核已够"。
+2. 任何行从 `kernel_gap` 升级前，必须先有声明（ADR 0004）或计划层（ADR 0005）的落点，
+   不允许用"先加一个开关"的方式绕过。
 
 ## 5. 变更规则
 
