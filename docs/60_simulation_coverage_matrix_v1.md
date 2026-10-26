@@ -61,10 +61,10 @@
 | C4 | AC 小信号 / 环路增益（Bode、PM、GM） | very-common | no | kernel_gap | kernel | 全域无 `.ac`/Bode/相位裕度；`GAP-01` |
 | C5 | 阻抗扇帚（输入/输出、Middlebrook） | common | no | kernel_gap | kernel | 无扇频能力；依赖 C4；`GAP-02` |
 | C6 | 效率与损耗分解 | very-common | no | kernel_gap | adapter+kernel | 无损耗模型，也无派生指标；`docs/00` S10；`GAP-03` |
-| C7 | 纹波频谱 / THD / PF | very-common | no | kernel_gap | kernel | 无 FFT/加窗；`docs/00` S10 |
+| C7 | 纹波频谱 / THD / PF | very-common | partial | covered | kernel | `tests/test_derived_metrics.py`（Hann 频谱、THD、PF；边界样本上限已声明） |
 | C8 | 电热 / 热网络 | common | no | out_of_scope | adapter | `docs/43`（器件/热模型非内核工作）；`no_thermal_state_modelled` |
 | C9 | Monte Carlo / 容差 / 最坏情况 | very-common | no | kernel_gap | kernel | 无采样与批量；`docs/00` S4B |
-| C10 | 波形导出与派生分析工件 | very-common | partial | expressible | kernel | `samples.json`/`npz` 已存在；`UD-03`（窗口内波形访问/抽取上限） |
+| C10 | 波形导出与派生分析工件 | very-common | partial | covered | kernel | `tests/test_derived_metrics.py`（父包链接、原包不变、体积上限）；窗口内波形仍属 `UD-03` |
 
 ### D. 数值与时间尺度
 
@@ -94,9 +94,9 @@
 
 | 类别 | 行 | 含义 |
 | --- | --- | --- |
-| `closed` | A1, A2, A3, A5, A6, B1, B4, B5, B6, C1, C2, D1, D4, D5 | 今天可用且已有测试 |
+| `closed` | A1, A2, A3, A5, A6, B1, B4, B5, B6, C1, C2, C7, C10, D1, D4, D5 | 今天可用且已有测试 |
 | `test-only` | —（当前为空：可表达性行已在 0.10.0 闭合） | 今天已能表达，只缺用例 |
-| `postprocess` | C7, C10 | 单次运行样本上的派生指标 |
+| `postprocess` | —（当前为空：派生指标已在 0.12.0 闭合） | 单次运行样本上的派生指标 |
 | `adapter` | A8, A9, A11, B7 | 新模型或新网表模板，零内核改动（T1） |
 | `controller` | A7, B9 | 新控制器或保护状态机 |
 | `study` | A10, C3, C9 | 需要在单次运行之上编排（ADR 0005 Seam 1） |
