@@ -968,7 +968,7 @@ def _run_preview_netlist(args) -> int:
         raise ValueError(
             f"plant {registration.plant_id!r} does not declare a netlist preview"
         )
-    plant.reset(spec.initial_state.to_dict())
+    plant.reset(spec.initial_state.reset_arguments())
     netlist = plant.preview_netlist(duty=args.duty, duration_s=args.duration)
     digest = hashlib.sha256(netlist.encode("utf-8")).hexdigest()
     duration_s = plant.control_period_s if args.duration is None else float(args.duration)

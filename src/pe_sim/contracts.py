@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any, Mapping, Protocol
 import math
+import numbers
 import re
 import hashlib
 import json
@@ -13,6 +15,12 @@ from pathlib import Path
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+_INITIAL_STATE_MAX_ENTRIES = 16
+_INITIAL_STATE_KEY_MAX_LENGTH = 64
+#: Payload keys that would collide with the route control fields once the
+#: payload is flattened for ``PlantAdapter.reset``.  Rejecting them at
+#: construction keeps the failure where the document is written, not at run time.
+_INITIAL_STATE_RESERVED_KEYS = frozenset({"mode", "snapshot_path", "snapshot_hash"})
 CURRENT_SCHEMA_VERSION = "0.2"
 
 
@@ -330,6 +338,10 @@ class InitialState:
     mode: str = "cold_start"
     snapshot_path: str | None = None
     snapshot_hash: str | None = None
+    #: Explicit model state for a pre-biased or warm start.  The mapping is
+    #: deliberately small (16 entries) and sorted at construction so two
+    #: documents that differ only in key order serialize identically.
+    state: Mapping[str, float] | None = None
 
     def __post_init__(self) -> None:
         if self.mode not in {"cold_start", "warm_start", "qualified_snapshot"}:
@@ -338,9 +350,76 @@ class InitialState:
             raise ValueError("qualified_snapshot requires snapshot_path and snapshot_hash")
         if self.snapshot_hash is not None and not _SHA256_RE.fullmatch(self.snapshot_hash):
             raise ValueError("snapshot_hash must be a SHA-256 hex digest")
+        if self.state is None:
+            return
+        # A snapshot and an explicit payload are two sources of truth for the
+        # same initial condition, so combining them fails closed.
+        if self.mode == "qualified_snapshot":
+            raise ValueError("initial_state.state cannot be combined with qualified_snapshot")
+        if not isinstance(self.state, Mapping):
+            raise TypeError("initial_state.state must be a mapping or null")
+        if len(self.state) > _INITIAL_STATE_MAX_ENTRIES:
+            raise ValueError(
+                f"initial_state.state must contain at most {_INITIAL_STATE_MAX_ENTRIES} entries"
+            )
+        frozen: dict[str, float] = {}
+        for key, value in self.state.items():
+            if not isinstance(key, str) or not key or len(key) > _INITIAL_STATE_KEY_MAX_LENGTH:
+                raise ValueError(
+                    "initial_state.state keys must be non-empty strings of at most "
+                    f"{_INITIAL_STATE_KEY_MAX_LENGTH} characters"
+                )
+            # The shared identifier grammar rejects path separators, whitespace,
+            # '.', '..' and any embedded '..' segment.
+            validate_safe_identifier(key, field="initial_state.state key")
+            if key in _INITIAL_STATE_RESERVED_KEYS:
+                raise ValueError(
+                    f"initial_state.state key {key!r} is reserved for the route "
+                    "control fields and cannot carry model state"
+                )
+            if isinstance(value, bool) or not isinstance(value, numbers.Real):
+                raise ValueError("initial_state.state values must be finite real numbers")
+            try:
+                number = float(value)
+            except (OverflowError, TypeError, ValueError):
+                raise ValueError(
+                    "initial_state.state values must be finite real numbers"
+                ) from None
+            if not math.isfinite(number):
+                raise ValueError("initial_state.state values must be finite real numbers")
+            frozen[key] = number
+        object.__setattr__(
+            self, "state", MappingProxyType({key: frozen[key] for key in sorted(frozen)})
+        )
 
     def to_dict(self) -> dict[str, Any]:
-        return {"mode": self.mode, "snapshot_path": self.snapshot_path, "snapshot_hash": self.snapshot_hash}
+        """Return the document/manifest shape of this initial condition.
+
+        The payload stays nested under ``state``.  When no payload was
+        supplied the output is byte-identical to the pre-payload contract: no
+        ``state`` key is emitted at all.
+        """
+
+        result: dict[str, Any] = {"mode": self.mode, "snapshot_path": self.snapshot_path, "snapshot_hash": self.snapshot_hash}
+        if self.state is not None:
+            result["state"] = {key: self.state[key] for key in sorted(self.state)}
+        return result
+
+    def reset_arguments(self) -> dict[str, Any]:
+        """Return the plant/engine-facing reset mapping.
+
+        ``to_dict`` is the manifest/document shape, where the payload is nested
+        so its provenance is explicit.  ``PlantAdapter.reset`` and the
+        whole-run engine read state fields directly from the top level, so this
+        method expands the payload and keeps the route control keys
+        authoritative on a name collision.
+        """
+
+        result: dict[str, Any] = {}
+        if self.state is not None:
+            result.update({key: self.state[key] for key in sorted(self.state)})
+        result.update({"mode": self.mode, "snapshot_path": self.snapshot_path, "snapshot_hash": self.snapshot_hash})
+        return result
 
 
 @dataclass(frozen=True)

@@ -29,6 +29,10 @@ silent-gap class `docs/60` §3 exists to eliminate.
 
 - Keys must be non-empty, at most 64 characters, and match the existing safe
   identifier grammar (no path separators, no whitespace).
+- The names `mode`, `snapshot_path`, and `snapshot_hash` are reserved. They are
+  route control fields, and a payload key that collides with one of them would
+  be silently overridden when the payload is flattened for `reset()`. The
+  collision is rejected where the document is written, not at run time.
 - Values must be finite real numbers; `bool` is rejected (it is an `int` in
   Python and would encode 0/1 by accident).
 - At most 16 entries. This is a startup condition, not a state dump; a larger

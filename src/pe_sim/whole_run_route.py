@@ -178,7 +178,7 @@ def _build_request(spec: ExperimentSpec) -> WholeRunRequest:
 
     return WholeRunRequest(
         duration_s=spec.timebase.duration_s,
-        initial_state=spec.initial_state.to_dict(),
+        initial_state=spec.initial_state.reset_arguments(),
         seed=spec.seed,
         metadata={
             "input_schedule": [dict(item) for item in spec.input_schedule],

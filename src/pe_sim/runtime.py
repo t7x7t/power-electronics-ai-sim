@@ -19,7 +19,7 @@ from .artifacts import (
     sha256_bytes,
     validate_run_location,
 )
-from .contracts import ActionRequest, ExperimentSpec, PlantObservation, SimulationCancelledError, negotiate_capabilities, snapshot_file_hash, validate_observation_visibility
+from .contracts import ActionRequest, ExperimentSpec, InitialState, PlantObservation, SimulationCancelledError, negotiate_capabilities, snapshot_file_hash, validate_observation_visibility
 from .qualification import (
     BasicQualificationPlugin,
     qualification_document,
@@ -754,7 +754,10 @@ class Runner:
                 else:
                     if not callable(getattr(plant, "reset", None)):
                         raise TypeError("plant missing reset()")
-                    audit.call("plant", "reset", lambda: plant.reset(spec.initial_state.to_dict()))
+                    reset_result = audit.call(
+                        "plant", "reset", lambda: plant.reset(spec.initial_state.reset_arguments())
+                    )
+                    _verify_initial_state_echo(spec.initial_state, reset_result, plant)
                 if not callable(getattr(controller, "reset", None)):
                     raise TypeError("controller missing reset()")
                 controller_state = audit.call("controller", "reset", lambda: controller.reset(None, spec.seed if spec.seed is not None else 0))
@@ -1258,6 +1261,39 @@ class Runner:
         )
 
 
+def _verify_initial_state_echo(initial_state: InitialState, applied: Any, plant: Any) -> None:
+    """Require the plant to echo every explicitly requested state key.
+
+    The kernel does not know plant state names (the I5 boundary), so an
+    ignored key would otherwise leave the plant at its own default while the
+    manifest recorded a different initial condition.  Raising here, before the
+    first observation or advance, keeps that mismatch from producing samples
+    that look qualified.  Runs without a payload are untouched.
+    """
+
+    requested = initial_state.state
+    if requested is None:
+        return
+    returned = applied if isinstance(applied, Mapping) else {}
+    rejected: list[str] = []
+    for key in sorted(requested):
+        if key not in returned:
+            rejected.append(key)
+            continue
+        try:
+            accepted = float(returned[key])
+        except (OverflowError, TypeError, ValueError):
+            rejected.append(key)
+            continue
+        if accepted != float(requested[key]):
+            rejected.append(key)
+    if rejected:
+        raise ValueError(
+            f"plant {type(plant).__qualname__} did not accept initial_state keys: "
+            f"{rejected}"
+        )
+
+
 def _advance_segments(plant: Any, action: float, duration: float, external: Mapping[str, Any], plant_step: float | None, audit: _Audit, step_index: int, *, expected_end_s: float | None = None, tolerance_s: float = 1e-12) -> PlantObservation | None:
     if duration <= 1e-15:
         return None
@@ -1553,6 +1589,15 @@ def _build_run_manifest(
         control_location=control_location,
         event_granularity=event_granularity,
     )
+    initial_state_manifest = spec.initial_state.to_dict()
+    if spec.initial_state.state is not None:
+        # The digest covers the sorted payload and nothing else, so a manifest
+        # reader can verify it without re-running the plant.
+        initial_state_manifest["state_sha256"] = sha256_bytes(
+            canonical_json(
+                {key: spec.initial_state.state[key] for key in sorted(spec.initial_state.state)}
+            )
+        )
     manifest: dict[str, Any] = {
         "schema_version": spec.schema_version,
         "experiment_id": spec.experiment_id,
@@ -1578,7 +1623,7 @@ def _build_run_manifest(
         "action_policy": dict(action_policy_manifest),
         "contracts": {key: value["hash"] for key, value in spec.contracts.items()},
         "timebase": spec.timebase.to_dict(),
-        "initial_state": spec.initial_state.to_dict(),
+        "initial_state": initial_state_manifest,
         "random_seed": spec.seed,
         "artifacts": {},
         "status": status,

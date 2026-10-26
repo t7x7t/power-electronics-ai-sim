@@ -30,7 +30,7 @@
 | A3 | 负载阶跃/突卸（窗口边界） | very-common | yes | covered | adapter | `tests/test_stage16_expressible_scenarios.py`（Runner 级：command 与 truth 在边界窗口后更新） |
 | A4 | 负载阶跃落在控制窗口内部 / 亚开关周期 | very-common | no | kernel_gap | kernel | ADR 0004 §3（求解段边界改为变更点）；`UD-05` 的近亲 |
 | A5 | 软启动（vref 斜坡） | very-common | yes | covered | controller/adapter | `tests/test_stage16_expressible_scenarios.py`（逐窗口 vref 序列与 duty 单调） |
-| A6 | 预偏置启动（输出已预充） | very-common | partial | kernel_gap | adapter | ADR 0006（`InitialState.state` 承载预充电状态）；现状只能给定 `mode`，`vout` 无法进入运行 |
+| A6 | 预偏置启动（输出已预充） | very-common | partial | covered | adapter | `tests/test_initial_state_payload.py`（首个采样为预充值并向目标收敛；未接受键在首次 advance 前失败）；ADR 0006 |
 | A7 | 短路/逐周期限流/打嗝恢复 | very-common | partial | expressible | controller/adapter | duty 限幅已有；保护状态机与故障注入缺测试；亚窗口事件依赖 A4 |
 | A8 | 轻载 / DCM / burst | very-common | partial | expressible | adapter | 开关级网表物理上可表现 DCM；平均模型声明 CCM 假设（`uncheckable_rules`）；无检测 |
 | A9 | 死区与同步整流时序 | common | yes | expressible | adapter | 当前模板无死区/SR/栅驱动（`docs/31`）；需新网表模板，零内核改动 |
@@ -94,7 +94,7 @@
 
 | 类别 | 行 | 含义 |
 | --- | --- | --- |
-| `closed` | A1, A2, A3, A5, B1, B4, B5, B6, C1, C2, D1, D4, D5 | 今天可用且已有测试 |
+| `closed` | A1, A2, A3, A5, A6, B1, B4, B5, B6, C1, C2, D1, D4, D5 | 今天可用且已有测试 |
 | `test-only` | —（当前为空：可表达性行已在 0.10.0 闭合） | 今天已能表达，只缺用例 |
 | `postprocess` | C7, C10 | 单次运行样本上的派生指标 |
 | `adapter` | A8, A9, A11, B7 | 新模型或新网表模板，零内核改动（T1） |
@@ -102,11 +102,11 @@
 | `study` | A10, C3, C9 | 需要在单次运行之上编排（ADR 0005 Seam 1） |
 | `capability` | C4, C5, C6 | 需要模型回答 `advance()` 答不了的问题（ADR 0005 Seam 2） |
 | `kernel-impl` | A4, B2, B3, D2, D3 | 内核实现改动，**不改协议** |
-| `contract` | A6, B8 | 真正需要改契约，且已由 ADR 决定（ADR 0006、ADR 0004） |
+| `contract` | B8 | 真正需要改契约，且已由 ADR 决定（ADR 0004）；A6 曾属此类，已在 0.11.0 关闭并转入 `closed` |
 | `never` | C8 | 已声明不做 |
 
-**读数说明:** 35 行里只有 **2 行**需要改契约，5 行需要内核实现但不改协议；其余 28 行是
-适配器、控制器、study、后处理或补测试。这说明 `plant + controller + runner` 本身是适配的，
+**读数说明:** 35 行里曾有 **2 行**需要改契约（A6 已关闭，B8 待做），5 行需要内核实现但不改协议；
+其余行是适配器、控制器、study、后处理或补测试。这说明 `plant + controller + runner` 本身是适配的，
 缺的是 Runner **之上**的一层编排与 Plant **之下**的一层可选能力声明（ADR 0005），而不是重写。
 
 **预算规则:** `contract` 类不得超过 3 行，且每行必须引用 ADR。想扩大契约，先写决策。
