@@ -123,9 +123,15 @@ def render_buck_netlist(
     phase of the PWM carrier at the segment start (the segment's start time
     modulo the switching period).  The global carrier starts its on-interval at
     absolute multiples of the switching period, so the PULSE delay is the time
-    to the *next* multiple, ``(-carrier_phase_s) mod Tsw``; a zero phase renders
-    a zero delay and reproduces the previous window netlist apart from the
-    explicit parameter.
+    to the *next* multiple, ``(-carrier_phase_s) mod Tsw``.
+
+    A segment that starts **inside** an on-interval needs more than a shifted
+    rising edge: the remaining part of that pulse must still be applied.  The
+    template therefore renders a second, finite PWL pulse of
+    ``duty*Tsw - phase`` and sums it with the periodic source through a linear
+    behavioural source.  Without that tail the segment would silently lose the
+    remaining on-time, which changes the delivered energy while every
+    observation still looks plausible.
     """
 
     duty_value = float(duty)
@@ -151,6 +157,24 @@ def render_buck_netlist(
     step = default_sample_step_s(parameters, duration) if sample_step_s is None else _positive("sample_step_s", sample_step_s)
     step = min(step, duration / 10.0)
     pulse_width = max(duty_value * switching_period, 1e-15)
+    # Remaining on-time when the segment starts inside the on-interval.  A phase
+    # exactly at the rising edge is handled by the periodic source itself, and a
+    # phase at or after the falling edge has no tail.
+    tail_s = 0.0
+    if 0.0 < phase < pulse_width:
+        tail_s = pulse_width - phase
+    if tail_s <= 1e-12:
+        tail_s = 0.0
+    if tail_s > 0.0:
+        pulse_lines = [
+            f"Vpwm pwm_pulse 0 PULSE(0 1 {{TD}} 1e-9 1e-9 {_format(pulse_width)} {{Tsw}})",
+            f"Vtail pwm_tail 0 PWL(0 1 {_format(tail_s)} 1 {_format(tail_s + 1e-9)} 0)",
+            "Bpwm pwm 0 V = V(pwm_pulse) + V(pwm_tail)",
+        ]
+    else:
+        pulse_lines = [
+            f"Vpwm pwm 0 PULSE(0 1 {{TD}} 1e-9 1e-9 {_format(pulse_width)} {{Tsw}})",
+        ]
 
     lines = [
         "* pe-sim ngspice buck reference",
@@ -170,7 +194,7 @@ def render_buck_netlist(
         f".param VC0={_format(parameters.initial_output_voltage_v)}",
         "",
         "V1 vin 0 DC {Vin}",
-        f"Vpwm pwm 0 PULSE(0 1 {{TD}} 1e-9 1e-9 {_format(pulse_width)} {{Tsw}})",
+        *pulse_lines,
         "S1 vin sw pwm 0 SWMOD",
         "D1 0 sw DMOD",
         "L1 sw vout {L} IC={IL0}",

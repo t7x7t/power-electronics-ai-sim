@@ -423,7 +423,9 @@ class NgspiceBuckPlant:
                 "ideal voltage-controlled switch (Ron/Roff) and Shockley diode with the declared emission coefficient",
                 "no thermal model and no temperature coefficients",
                 "no ESR/ESL, magnetic saturation, or device self-heating",
-                "the window netlist restarts the PWM carrier, so phase continuity requires integer switching periods per control window",
+                "the carrier is reconstructed from the segment-start phase; a segment "
+                "that starts inside an on-pulse applies the remaining on-time as a "
+                "finite PWL tail",
                 "restore is state-equivalent, not bit-identical",
                 "waveform values between printed wrdata points are linearly interpolated",
             ),
@@ -642,11 +644,12 @@ class NgspiceBuckPlant:
 
     def _solve_window(self, duty: float, duration_s: float) -> _WindowCache:
         window_start = self.time_s
-        # Solve to the end of the current control window, never past it.  A
-        # sub-segment call can therefore reuse the cached table, while a change
-        # point inside the window forces a new solve because the inputs no
-        # longer match.  ``max(duration, control_period_s)`` used to overrun
-        # the window end on a short final segment; this bound cannot.
+        # Solve to the end of the current control window, or to the requested
+        # duration when it is longer (a direct API caller may ask for more than
+        # one window).  The Runner never requests past the window end, so a
+        # Runner-driven solve stops exactly at the window end.  A change point
+        # inside the window forces a new solve because the inputs no longer
+        # match; a stale tail beyond the change point is never read.
         period = self.control_period_s
         cycles = math.floor(window_start / period + 1e-9)
         window_end = (cycles + 1) * period

@@ -217,9 +217,10 @@ S5 修改 `backends/netlist.py` 与 `backends/ngspice_plants.py`，二者在被�
    没有这次授权，S5 不得合并，S6 的 A7 与 S9 的 `continuous` 声明也不得开始。
 3. 该授权是一次性的、按提交记录的；它不构成对后续改动的预先批准。
 4. 如果维护者拒绝或要求拆分，S5 回到"S2/S3 已发布、S5 待定"状态，
-   S4/S7/S8 以及 S6 的 B2/B9 可以继续，但 A7 与 S9 阻塞。5. **执行记录（0.13.0）：**新摘要 `200a29788392d2b3b94a9401655e6faf79de95b060fbed8ca282bd1bb4dc7b4e`，
-   验收为 `tests/test_event_boundaries.py`（D2 1.5×Tsw 对照、A4 窗口中点阶跃、D3 非零差异、
-   路线声明），已写入 `reviewed_identities.json` 的 `acceptance_ids` 与 `review_note`。
+   S4/S7/S8 以及 S6 的 B2/B9 可以继续，但 A7 与 S9 阻塞。5. **执行记录（0.13.0/0.13.1）：**新摘要 `1af1fcdbd1b311410639e5328b03275b22f5bf3a586a7880519f875c3e347a2e`，
+   验收为 `tests/test_event_boundaries.py`（D2 1.5× 与 1.2×Tsw 对照、A4 关断区阶跃与导通区
+   0.01% 变更对照、D3 非零差异、路线声明）；0.13.1 修复了“段起点在导通脉冲内丢失剩余
+   导通时间”的静默缺陷，已写入 `reviewed_identities.json` 的 `acceptance_ids` 与 `review_note`。
 ## 6. 回退与失败处理
 
 - 每个阶段一个提交；失败即回退到上一提交，不在同一提交里"再试一次"。

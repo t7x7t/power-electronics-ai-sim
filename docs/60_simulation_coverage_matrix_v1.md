@@ -28,7 +28,7 @@
 | A1 | 恒定 duty/vref 冷启动到稳态 | very-common | yes | covered | adapter | `tests/test_stage15_buck_boost_acceptance.py`, `tests/test_ngspice_real_backend.py` |
 | A2 | 输入电压阶跃/跌落（窗口边界） | very-common | yes | covered | adapter | `tests/test_stage15_buck_boost_acceptance.py`（调度 Vin 12 V→9 V） |
 | A3 | 负载阶跃/突卸（窗口边界） | very-common | yes | covered | adapter | `tests/test_stage16_expressible_scenarios.py`（Runner 级：command 与 truth 在边界窗口后更新） |
-| A4 | 负载阶跃落在控制窗口内部 / 亚开关周期 | very-common | yes | covered | kernel | `tests/test_event_boundaries.py`（窗口中点阶跃与边界反事实对比；与单窗口分段一致） |
+| A4 | 负载阶跃落在控制窗口内部 / 亚开关周期 | very-common | yes | covered | kernel | `tests/test_event_boundaries.py`（窗口中点阶跃；导通区内 0.01% 变更对照；与单窗口分段一致） |
 | A5 | 软启动（vref 斜坡） | very-common | yes | covered | controller/adapter | `tests/test_stage16_expressible_scenarios.py`（逐窗口 vref 序列与 duty 单调） |
 | A6 | 预偏置启动（输出已预充） | very-common | partial | covered | adapter | `tests/test_initial_state_payload.py`（首个采样为预充值并向目标收敛；未接受键在首次 advance 前失败）；ADR 0006 |
 | A7 | 短路/逐周期限流/打嗝恢复 | very-common | partial | expressible | controller/adapter | duty 限幅已有；保护状态机与故障注入缺测试；亚窗口事件依赖 A4 |
@@ -71,7 +71,7 @@
 | ID | 工况 | 频率 | 内核可表达 | 现状 | 责任方 | 证据 / 缺什么 |
 | --- | --- | --- | --- | --- | --- | --- |
 | D1 | 窗口内子步（plant_step_s） | very-common | yes | covered | kernel | `tests/test_runtime_preflight_contracts.py`（窗口端点校验） |
-| D2 | 任意控制/开关周期比下的相位连续 PWM | common | yes | covered | kernel | `tests/test_event_boundaries.py`（1.5×Tsw 连跑与单次直跑对照）；`UD-05` 关闭 |
+| D2 | 任意控制/开关周期比下的相位连续 PWM | common | yes | covered | kernel | `tests/test_event_boundaries.py`（1.5× 与 1.2×Tsw 连跑均与单次直跑一致）；`UD-05` 关闭 |
 | D3 | 事件精确时刻（比较器/二极管过零） | very-common | partial | kernel_gap | kernel | ADR 0004 §3：外部输入变更点已按声明时刻求解（`tests/test_event_boundaries.py`）；比较器/器件级事件随 B3 在 `docs/61` S9 处理 |
 | D4 | 中断/恢复、快照等价 | common | yes | covered | kernel | `tests/test_stage5_runner.py`, `tests/test_stage8_failure_recovery.py` |
 | D5 | 确定性/可复现与包可复核 | common | yes | covered | kernel | `tests/test_stage9_reproducibility.py`, `tests/test_inspection.py` |

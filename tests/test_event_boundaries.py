@@ -94,6 +94,10 @@ def test_the_netlist_carries_the_segment_start_carrier_phase():
     # a segment starting at phase 3 us waits 7 us for the next on-interval.
     assert ".param TD=7.000000000000e-06" in mid_phase
     assert "PULSE(0 1 {TD} 1e-9 1e-9" in mid_phase
+    # The segment starts inside the 4 us on-pulse, so the remaining 1 us must be
+    # rendered as a finite tail and summed with the periodic source.
+    assert "Vtail pwm_tail 0 PWL(0 1 1.000000000000e-06 1 1.001000000000e-06 0)" in mid_phase
+    assert "Bpwm pwm 0 V = V(pwm_pulse) + V(pwm_tail)" in mid_phase
     assert zero_phase != mid_phase
 
 
@@ -125,6 +129,82 @@ def test_control_period_not_an_integer_multiple_keeps_the_carrier_phase():
     )
     assert observation.measurement["inductor_current"] == pytest.approx(
         expected.measurement["inductor_current"], rel=0.15
+    )
+
+
+@needs_ngspice
+def test_a_window_boundary_inside_the_on_pulse_keeps_the_energy():
+    """D2 with a ratio whose window boundaries fall inside the on-pulse.
+
+    At 1.2 switching periods the boundaries alternate through phases
+    0, 2, 4, 6, 8, 10 us.  Phase 2 us is inside the 4 us on-pulse, so a shifted
+    rising edge alone loses 2 us of on-time per affected window.  This ratio
+    is the case the 1.5-period test cannot see.
+    """
+
+    control_period_s = 1.2 * _SWITCHING_PERIOD_S
+    windows = 8
+    chained = _plant(control_period_s)
+    chained.reset({})
+    observation = None
+    for _ in range(windows):
+        observation = chained.advance(0.4, control_period_s)
+
+    reference = _plant(windows * control_period_s)
+    reference.reset({})
+    expected = reference.advance(0.4, windows * control_period_s)
+
+    assert observation is not None
+    assert observation.measurement["vout"] == pytest.approx(
+        expected.measurement["vout"], rel=0.01
+    )
+    assert observation.measurement["inductor_current"] == pytest.approx(
+        expected.measurement["inductor_current"], rel=0.02
+    )
+
+
+@needs_ngspice
+def test_a_change_inside_the_on_pulse_is_applied_at_its_declared_time(tmp_path):
+    """A4/D3 at a phase inside the on-pulse, with a change too small to matter.
+
+    A 0.01% load change cannot move the final state by a measurable amount.  If
+    a segment that starts inside the on-pulse loses its remaining on-time, the
+    same tiny change moves the output by tens of percent.  The comparison is
+    therefore a direct test of the carrier reconstruction, not of the load.
+    """
+
+    load_builtin_plants()
+    control_period_s = 1.5 * _SWITCHING_PERIOD_S
+    duration_s = 2 * control_period_s
+
+    unchanged_schedule = (({"time_s": 0.0, "load_ohm": 10.0}),)
+    on_pulse_schedule = (
+        {"time_s": 0.0, "load_ohm": 10.0},
+        {"time_s": 0.25 * control_period_s, "load_ohm": 10.001},
+    )
+
+    def run(run_id, schedule):
+        plant = _plant(control_period_s, sample_step_s=5e-9)
+        Runner().run(
+            _spec(
+                tmp_path,
+                run_id,
+                duration_s=duration_s,
+                control_period_s=control_period_s,
+                schedule=schedule,
+            ),
+            plant,
+            FakePIController(kp=0.0, ki=0.0, kff_v=0.4),
+        )
+        return plant.observe().measurement
+
+    unchanged = run("no-change", unchanged_schedule)
+    changed = run("on-pulse-change", on_pulse_schedule)
+
+    # 2.5 us of a 10 us period is inside the 4 us on-pulse.
+    assert changed["vout"] == pytest.approx(unchanged["vout"], rel=0.01)
+    assert changed["inductor_current"] == pytest.approx(
+        unchanged["inductor_current"], rel=0.01
     )
 
 
