@@ -38,7 +38,12 @@ from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, Callable, Mapping
 
-from .time_model import TIME_MODEL_STEPPED, TIME_MODELS
+from .time_model import (
+    CONTROL_LOCATION_KERNEL,
+    EVENT_GRANULARITY_WINDOW,
+    TIME_MODEL_STEPPED,
+    RouteCapabilities,
+)
 
 
 # Declared provenance classes.  ``reference`` means the project reviewed the
@@ -69,11 +74,13 @@ class PlantRegistration:
     ``config_keys`` of ``None`` means "the factory validates its own keys".
     ``schedule_keys`` defaults to the base schedule every plant understands.
     ``trust_level`` is a declaration for reporting; it is never used to decide
-    how the kernel behaves.  ``time_model`` is likewise a declaration: the
-    registry reports who owns the clock and never branches on the value.
-    ``topology_exporter`` is an optional ``parameters -> descriptor`` callable
-    owned by the registration; ``None`` means the plant publishes no display
-    topology, and the catalog reports that as ``topology_export: false``.
+    how the kernel behaves.  ``time_model``, ``control_location``, and
+    ``event_granularity`` are likewise declarations: the registry validates
+    their vocabulary and records them for the manifest, but it never branches
+    on their values.  ``topology_exporter`` is an optional ``parameters ->
+    descriptor`` callable owned by the registration; ``None`` means the plant
+    publishes no display topology, and the catalog reports that as
+    ``topology_export: false``.
     """
 
     plant_id: str
@@ -88,6 +95,12 @@ class PlantRegistration:
     #: to the requested endpoint; ``whole_run`` means the engine owns its time
     #: axis.  Both are recorded as data; only the evidence cap differs.
     time_model: str = TIME_MODEL_STEPPED
+    #: ``kernel`` means a kernel-owned ControllerAdapter closes the loop;
+    #: ``model`` means the compensator lives inside the model or the netlist.
+    control_location: str = CONTROL_LOCATION_KERNEL
+    #: ``window`` means external inputs are resolved once per control window;
+    #: ``continuous`` means the solve honours every declared change point.
+    event_granularity: str = EVENT_GRANULARITY_WINDOW
     #: Builds the reviewed display descriptor from the parameters a run records
     #: in its manifest.  The registry validates that it is callable and reports
     #: whether it exists; it never calls it and never imports a topology module.
@@ -140,11 +153,17 @@ def _validated(registration: PlantRegistration) -> PlantRegistration:
         raise TypeError(f"plant_id {plant_id!r} factory must be callable")
     if not isinstance(registration.class_name, str) or not registration.class_name.strip():
         raise ValueError(f"plant_id {plant_id!r} must declare a non-empty class_name")
-    if registration.time_model not in TIME_MODELS:
-        raise ValueError(
-            f"plant_id {plant_id!r} declares time_model {registration.time_model!r}; "
-            f"expected one of {list(TIME_MODELS)}"
+    # The route declarations share one validation definition with the runtime
+    # record, so the vocabulary and the ``whole_run + kernel`` contradiction are
+    # refused here, at registration, rather than during a run.
+    try:
+        RouteCapabilities(
+            time_model=registration.time_model,
+            control_location=registration.control_location,
+            event_granularity=registration.event_granularity,
         )
+    except ValueError as exc:
+        raise ValueError(f"plant_id {plant_id!r}: {exc}") from None
     if not isinstance(registration.export_eligible, bool):
         raise TypeError(f"plant_id {plant_id!r} export_eligible must be a bool")
     if registration.topology_exporter is not None and not callable(registration.topology_exporter):

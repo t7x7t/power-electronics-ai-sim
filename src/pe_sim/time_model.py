@@ -27,6 +27,23 @@ TIME_MODEL_STEPPED = "stepped"
 TIME_MODEL_WHOLE_RUN = "whole_run"
 TIME_MODELS: tuple[str, ...] = (TIME_MODEL_STEPPED, TIME_MODEL_WHOLE_RUN)
 
+#: Where the closed loop closes.  ``kernel`` means a kernel-owned
+#: ``ControllerAdapter`` shapes the actuator; ``model`` means the compensator
+#: lives inside the model or the netlist and the kernel cannot shape it.
+CONTROL_LOCATION_KERNEL = "kernel"
+CONTROL_LOCATION_MODEL = "model"
+CONTROL_LOCATIONS: tuple[str, ...] = (CONTROL_LOCATION_KERNEL, CONTROL_LOCATION_MODEL)
+
+#: Whether an external input may change between observation points.  ``window``
+#: means inputs are resolved once per control window; ``continuous`` means the
+#: solve honours every declared change point.
+EVENT_GRANULARITY_WINDOW = "window"
+EVENT_GRANULARITY_CONTINUOUS = "continuous"
+EVENT_GRANULARITIES: tuple[str, ...] = (
+    EVENT_GRANULARITY_WINDOW,
+    EVENT_GRANULARITY_CONTINUOUS,
+)
+
 TRACE_CONTRACT_SCHEMA = "pe-sim.trace-contract.v1"
 
 #: The runtime evidence vocabulary recorded in ``manifest["evidence_level"]``.
@@ -36,12 +53,20 @@ RUNTIME_EVIDENCE_LEVELS = ("diagnostic_only", "functional", "limited", "comparab
 
 _EVIDENCE_RANK = {level: rank for rank, level in enumerate(RUNTIME_EVIDENCE_LEVELS)}
 
-_ROUTE_EVIDENCE_CAP = {
-    TIME_MODEL_STEPPED: "comparable",
-    TIME_MODEL_WHOLE_RUN: "limited",
+# The one and only evidence-cap table.  It is keyed by the two declarations
+# that decide what the kernel can still enforce; ``whole_run + kernel`` is
+# deliberately absent because :class:`RouteCapabilities` refuses it.  Every
+# consumer must call :func:`evidence_cap_for` (directly or through a helper in
+# this module) instead of restating a cap locally.
+_ROUTE_EVIDENCE_CAP: dict[tuple[str, str], str] = {
+    (TIME_MODEL_STEPPED, CONTROL_LOCATION_KERNEL): "comparable",
+    (TIME_MODEL_STEPPED, CONTROL_LOCATION_MODEL): "limited",
+    (TIME_MODEL_WHOLE_RUN, CONTROL_LOCATION_MODEL): "limited",
 }
 
-_ROUTE_LIMITATIONS = {
+# Limitations that come from the time model itself, before the finer-grained
+# declarations add their own codes.
+_ROUTE_INHERENT_LIMITATIONS: dict[str, tuple[str, ...]] = {
     TIME_MODEL_STEPPED: (),
     TIME_MODEL_WHOLE_RUN: (
         "in_run_enforcement_unavailable",
@@ -50,7 +75,14 @@ _ROUTE_LIMITATIONS = {
 }
 
 __all__ = [
+    "CONTROL_LOCATIONS",
+    "CONTROL_LOCATION_KERNEL",
+    "CONTROL_LOCATION_MODEL",
+    "EVENT_GRANULARITIES",
+    "EVENT_GRANULARITY_CONTINUOUS",
+    "EVENT_GRANULARITY_WINDOW",
     "RUNTIME_EVIDENCE_LEVELS",
+    "RouteCapabilities",
     "TIME_MODELS",
     "TIME_MODEL_STEPPED",
     "TIME_MODEL_WHOLE_RUN",
@@ -60,9 +92,13 @@ __all__ = [
     "WholeRunRequest",
     "WholeRunResult",
     "cap_evidence_level",
+    "cap_evidence_level_for",
     "evidence_cap",
+    "evidence_cap_for",
     "formal_comparison_allowed",
+    "route_inherent_limitations_for",
     "route_limitations",
+    "route_limitations_for",
     "validate_whole_run_result",
 ]
 
@@ -364,26 +400,148 @@ def validate_whole_run_result(
     return tuple(problems)
 
 
-def evidence_cap(time_model: str) -> str:
-    """Return the strongest evidence level a route can reach."""
+@dataclass(frozen=True)
+class RouteCapabilities:
+    """The three independent declarations that describe a solve route.
 
+    ``time_model`` says who owns the clock, ``control_location`` says where the
+    closed loop closes, and ``event_granularity`` says whether an external input
+    may change between observation points.  The three facts are independent;
+    the evidence cap is *derived* from the first two and never declared.
+
+    ``whole_run`` with ``control_location="kernel"`` is contradictory: when the
+    model owns the clock there is no per-window executor for the kernel to
+    drive.  The combination is refused here, at construction, rather than being
+    discovered at run time.
+    """
+
+    time_model: str
+    control_location: str = CONTROL_LOCATION_KERNEL
+    event_granularity: str = EVENT_GRANULARITY_WINDOW
+
+    def __post_init__(self) -> None:
+        if self.time_model not in TIME_MODELS:
+            raise ValueError(
+                f"unknown time_model {self.time_model!r}; "
+                f"expected one of {list(TIME_MODELS)}"
+            )
+        if self.control_location not in CONTROL_LOCATIONS:
+            raise ValueError(
+                f"unknown control_location {self.control_location!r}; "
+                f"expected one of {list(CONTROL_LOCATIONS)}"
+            )
+        if self.event_granularity not in EVENT_GRANULARITIES:
+            raise ValueError(
+                f"unknown event_granularity {self.event_granularity!r}; "
+                f"expected one of {list(EVENT_GRANULARITIES)}"
+            )
+        if (
+            self.time_model == TIME_MODEL_WHOLE_RUN
+            and self.control_location == CONTROL_LOCATION_KERNEL
+        ):
+            raise ValueError(
+                "contradictory route: whole_run with control_location='kernel' "
+                "is impossible because the model owns the clock, so there is "
+                "no per-window executor for the kernel to drive; declare "
+                "control_location='model'"
+            )
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "time_model": self.time_model,
+            "control_location": self.control_location,
+            "event_granularity": self.event_granularity,
+        }
+
+
+def _legacy_capabilities(time_model: str) -> RouteCapabilities:
+    """Map the one-field legacy form onto a complete record.
+
+    A time model alone cannot say where the loop closes, so the historical
+    reading is kept: the kernel drives the actuator when it owns the clock, and
+    the engine holds the compensator when it owns the clock itself.
+    """
+
+    control_location = (
+        CONTROL_LOCATION_MODEL
+        if time_model == TIME_MODEL_WHOLE_RUN
+        else CONTROL_LOCATION_KERNEL
+    )
+    return RouteCapabilities(time_model=time_model, control_location=control_location)
+
+
+def evidence_cap_for(capabilities: RouteCapabilities) -> str:
+    """Return the strongest evidence level a declared route can reach."""
+
+    if not isinstance(capabilities, RouteCapabilities):
+        raise ValueError("capabilities must be a RouteCapabilities record")
     try:
-        return _ROUTE_EVIDENCE_CAP[time_model]
-    except (KeyError, TypeError):
-        raise ValueError(f"unknown time model: {time_model!r}") from None
+        return _ROUTE_EVIDENCE_CAP[
+            (capabilities.time_model, capabilities.control_location)
+        ]
+    except KeyError:
+        raise ValueError(
+            "no evidence cap is declared for time_model "
+            f"{capabilities.time_model!r} with control_location "
+            f"{capabilities.control_location!r}"
+        ) from None
 
 
-def cap_evidence_level(level: str, time_model: str) -> str:
-    """Return the weaker of ``level`` and the cap of ``time_model``."""
+def cap_evidence_level_for(level: str, capabilities: RouteCapabilities) -> str:
+    """Return the weaker of ``level`` and the cap of ``capabilities``."""
 
     try:
         rank = _EVIDENCE_RANK[level]
     except (KeyError, TypeError):
         raise ValueError(f"unknown evidence level: {level!r}") from None
-    cap = evidence_cap(time_model)
+    cap = evidence_cap_for(capabilities)
     if rank <= _EVIDENCE_RANK[cap]:
         return level
     return cap
+
+
+def route_inherent_limitations_for(capabilities: RouteCapabilities) -> tuple[str, ...]:
+    """Return the limitations that come from the time model alone.
+
+    This is the compatibility subset reported under the historical
+    ``route_limitations`` manifest key.  :func:`route_limitations_for` adds the
+    codes contributed by the other two declarations.
+    """
+
+    if not isinstance(capabilities, RouteCapabilities):
+        raise ValueError("capabilities must be a RouteCapabilities record")
+    return _ROUTE_INHERENT_LIMITATIONS[capabilities.time_model]
+
+
+def route_limitations_for(capabilities: RouteCapabilities) -> tuple[str, ...]:
+    """Return every limitation a declared route reports, in stable order.
+
+    The order is route-inherent first, then the control declaration, then the
+    event declaration, so two reports can be compared positionally.
+    """
+
+    limitations = list(route_inherent_limitations_for(capabilities))
+    if capabilities.control_location == CONTROL_LOCATION_MODEL:
+        limitations.append("actuator_control_in_model")
+    if capabilities.event_granularity == EVENT_GRANULARITY_WINDOW:
+        limitations.append("events_quantized_to_control_windows")
+    return tuple(limitations)
+
+
+def evidence_cap(time_model: str) -> str:
+    """Return the strongest evidence level a route can reach.
+
+    Compatibility wrapper for the one-field form; the derivation lives in
+    :func:`evidence_cap_for`.
+    """
+
+    return evidence_cap_for(_legacy_capabilities(time_model))
+
+
+def cap_evidence_level(level: str, time_model: str) -> str:
+    """Return the weaker of ``level`` and the cap of ``time_model``."""
+
+    return cap_evidence_level_for(level, _legacy_capabilities(time_model))
 
 
 def formal_comparison_allowed(time_model: str) -> bool:
@@ -397,9 +555,10 @@ def formal_comparison_allowed(time_model: str) -> bool:
 
 
 def route_limitations(time_model: str) -> tuple[str, ...]:
-    """Return the limitations that come with a route, empty for stepped."""
+    """Return the limitations that come with a route, empty for stepped.
 
-    try:
-        return _ROUTE_LIMITATIONS[time_model]
-    except (KeyError, TypeError):
-        raise ValueError(f"unknown time model: {time_model!r}") from None
+    Compatibility wrapper: it reports the route-inherent subset only, because
+    the one-field form has no control or event declaration to report.
+    """
+
+    return route_inherent_limitations_for(_legacy_capabilities(time_model))

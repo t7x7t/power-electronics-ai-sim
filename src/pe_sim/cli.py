@@ -708,6 +708,8 @@ def _execute_experiment(
         controller,
         options=options,
         time_model=registration.time_model,
+        control_location=registration.control_location,
+        event_granularity=registration.event_granularity,
     )
     payload = {
         "schema": RUN_RESULT_SCHEMA,

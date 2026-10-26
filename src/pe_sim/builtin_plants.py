@@ -19,10 +19,12 @@ the knowledge into data, and a later change removes the duplicate.  Keeping
 them in sync is checked by tests rather than by importing the CLI, so the CLI
 stays free to change.
 
-A plant declares which time model it uses.  The kernel reads that declaration
-and routes the run; it never decides what a plant is.  Both time models are
-executable, and the whole-run route is priced at a lower evidence level rather
-than hidden from the catalogue.
+A plant declares which time model it uses, where the closed loop closes
+(``control_location``), and whether external inputs may change between
+observation points (``event_granularity``).  The kernel reads those
+declarations, derives the evidence cap from them, and routes the run; it never
+decides what a plant is.  Both time models are executable, and the whole-run
+route is priced at a lower evidence level rather than hidden from the catalogue.
 
 A plant that can be displayed also declares a ``topology_exporter``: a small
 function that rebuilds the reviewed display descriptor from the parameters a
@@ -51,7 +53,12 @@ from .contracts import Timebase
 from .plant_registry import PlantRegistration, register_plant, registered_plants
 from .reference_plants import BuckPlant, BoostPlant
 from .runtime import FakeLoadPlant, FakePlant
-from .time_model import TIME_MODEL_WHOLE_RUN
+from .time_model import (
+    CONTROL_LOCATION_KERNEL,
+    CONTROL_LOCATION_MODEL,
+    EVENT_GRANULARITY_WINDOW,
+    TIME_MODEL_WHOLE_RUN,
+)
 from .topology import (
     TopologyDescriptor,
     buck_topology_descriptor,
@@ -345,6 +352,8 @@ _BUILTIN_REGISTRATIONS: tuple[PlantRegistration, ...] = (
         config_keys=_REFERENCE_PLANT_CONFIG_KEYS,
         trust_level="reference",
         export_eligible=True,
+        control_location=CONTROL_LOCATION_KERNEL,
+        event_granularity=EVENT_GRANULARITY_WINDOW,
         topology_exporter=_export_buck_topology,
     ),
     PlantRegistration(
@@ -356,6 +365,8 @@ _BUILTIN_REGISTRATIONS: tuple[PlantRegistration, ...] = (
         config_keys=_REFERENCE_PLANT_CONFIG_KEYS,
         trust_level="reference",
         export_eligible=True,
+        control_location=CONTROL_LOCATION_KERNEL,
+        event_granularity=EVENT_GRANULARITY_WINDOW,
         topology_exporter=_export_boost_topology,
     ),
     PlantRegistration(
@@ -367,6 +378,8 @@ _BUILTIN_REGISTRATIONS: tuple[PlantRegistration, ...] = (
         config_keys=None,
         trust_level="reference",
         export_eligible=True,
+        control_location=CONTROL_LOCATION_KERNEL,
+        event_granularity=EVENT_GRANULARITY_WINDOW,
         topology_exporter=_export_ngspice_buck_topology,
     ),
     PlantRegistration(
@@ -379,6 +392,8 @@ _BUILTIN_REGISTRATIONS: tuple[PlantRegistration, ...] = (
         trust_level="reference",
         export_eligible=True,
         time_model=TIME_MODEL_WHOLE_RUN,
+        control_location=CONTROL_LOCATION_MODEL,
+        event_granularity=EVENT_GRANULARITY_WINDOW,
         topology_exporter=_export_whole_run_buck_topology,
     ),
 )

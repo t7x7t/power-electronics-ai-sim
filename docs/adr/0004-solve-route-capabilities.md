@@ -2,9 +2,11 @@
 
 ## Status
 
-Proposed, 2026-10-26. Sequenced by `docs/43_kernel_roadmap_v1.md`. Nothing here
-changes behaviour until step 1 lands, and step 1 is required to be
-behaviour-neutral.
+Accepted, 2026-10-26. Step 1 (declarations, derived cap, manifest reporting) is
+implemented in 0.10.1 and behaviour-neutral; steps 2–3 are sequenced by
+`docs/61_gap_closure_plan_v1.md` as S4 and S9. Nothing here changes behaviour
+until step 2 lands, and step 2 requires a maintainer review record for the
+reviewed solve path.
 
 ## Context
 

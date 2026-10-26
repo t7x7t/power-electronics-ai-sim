@@ -56,10 +56,16 @@ from .checks import (
 from .model_claim import collect_model_claim, collect_parameter_provenance
 from .plant_registry import resolve
 from .time_model import (
+    CONTROL_LOCATION_KERNEL,
+    CONTROL_LOCATION_MODEL,
+    EVENT_GRANULARITY_WINDOW,
     TIME_MODEL_STEPPED,
     TIME_MODEL_WHOLE_RUN,
     TIME_MODELS,
-    cap_evidence_level,
+    RouteCapabilities,
+    cap_evidence_level_for,
+    evidence_cap_for,
+    route_limitations_for,
 )
 
 
@@ -408,7 +414,7 @@ class FakePIController:
 
 class Runner:
     """Run a Plant/Controller pair with explicit timing and evidence."""
-    def run(self, spec: ExperimentSpec, plant: Any, controller: Any, mode: str = "exploratory", *, checkpoint_interval_steps: int | None = None, resume_from: str | Path | None = None, interrupt_after_steps: int | None = None, cancel_after_steps: int | None = None, measurement_key: str | None = None, safety_checker: Callable[[Mapping[str, float]], Any] | None = None, qualification_checker: Callable[[list[Mapping[str, Any]]], tuple[bool, list[str]]] | None = None, action_policy: ActionPolicy | None = None, safety_plugins: tuple[Any, ...] | None = None, validity_plugins: tuple[Any, ...] | None = None, qualification_plugins: tuple[Any, ...] | None = None, options: RunOptions | None = None, time_model: str | None = None) -> RunResult:
+    def run(self, spec: ExperimentSpec, plant: Any, controller: Any, mode: str = "exploratory", *, checkpoint_interval_steps: int | None = None, resume_from: str | Path | None = None, interrupt_after_steps: int | None = None, cancel_after_steps: int | None = None, measurement_key: str | None = None, safety_checker: Callable[[Mapping[str, float]], Any] | None = None, qualification_checker: Callable[[list[Mapping[str, Any]]], tuple[bool, list[str]]] | None = None, action_policy: ActionPolicy | None = None, safety_plugins: tuple[Any, ...] | None = None, validity_plugins: tuple[Any, ...] | None = None, qualification_plugins: tuple[Any, ...] | None = None, options: RunOptions | None = None, time_model: str | None = None, control_location: str | None = None, event_granularity: str | None = None) -> RunResult:
         if options is not None:
             if not isinstance(options, RunOptions):
                 raise TypeError("options must be a RunOptions instance")
@@ -487,6 +493,12 @@ class Runner:
                 f"plant {spec.plant_id!r} declares unknown time_model {time_model!r}; "
                 f"expected one of {list(TIME_MODELS)}"
             )
+        # The route is a record of three declarations.  ``None`` means "take the
+        # route's own default": a stepped route closes the loop in the kernel,
+        # while a whole-run engine necessarily holds the compensator itself.  An
+        # explicit ``kernel`` with ``whole_run`` is contradictory and is refused
+        # by the record before anything touches the filesystem.
+        route = _route_capabilities(time_model, control_location, event_granularity)
         # A plant that publishes ``manifest_identity`` claims to be a specific
         # registered model.  The CLI cross-checks that claim against the
         # registry; the Python API must apply the same rule and must do it
@@ -544,6 +556,8 @@ class Runner:
                 safety_plugins=tuple(safety_plugins or ()),
                 validity_plugins=tuple(validity_plugins or ()),
                 qualification_plugins=tuple(qualification_plugins or ()),
+                control_location=route.control_location,
+                event_granularity=route.event_granularity,
             )
         applicability_policy = (
             options.applicability if options is not None else ApplicabilityPolicy()
@@ -1162,10 +1176,12 @@ class Runner:
         )
         # One derivation drives both the manifest field and the terminal event,
         # so a client can never be told a level the package does not carry.
-        evidence_level = _derive_evidence_level(status, mode, worktree, environment, plant_manifest, qualification, time_model=time_model)
+        evidence_level = _derive_evidence_level(status, mode, worktree, environment, plant_manifest, qualification, capabilities=route)
         manifest = _build_run_manifest(
             spec,
             time_model=time_model,
+            control_location=route.control_location,
+            event_granularity=route.event_granularity,
             mode=mode,
             git_fields=git_fields,
             provenance=provenance,
@@ -1396,6 +1412,33 @@ def _preflight_document(
     }
 
 
+def _route_capabilities(
+    time_model: str,
+    control_location: str | None,
+    event_granularity: str | None,
+) -> RouteCapabilities:
+    """Build the route record, applying the route's own defaults.
+
+    ``None`` means the caller did not declare the fact.  A stepped route keeps
+    the kernel as the loop closure; a whole-run route cannot, because the model
+    owns the clock.  An explicit contradictory pair still raises here.
+    """
+
+    if control_location is None:
+        control_location = (
+            CONTROL_LOCATION_MODEL
+            if time_model == TIME_MODEL_WHOLE_RUN
+            else CONTROL_LOCATION_KERNEL
+        )
+    if event_granularity is None:
+        event_granularity = EVENT_GRANULARITY_WINDOW
+    return RouteCapabilities(
+        time_model=time_model,
+        control_location=control_location,
+        event_granularity=event_granularity,
+    )
+
+
 def _derive_evidence_level(
     status: str,
     mode: str,
@@ -1404,48 +1447,61 @@ def _derive_evidence_level(
     plant: Mapping[str, Any],
     qualification: Mapping[str, Any],
     time_model: str = TIME_MODEL_STEPPED,
+    control_location: str | None = None,
+    event_granularity: str | None = None,
+    capabilities: RouteCapabilities | None = None,
 ) -> str:
     """Derive the recorded evidence level from the actual run evidence.
 
-    ``time_model`` prices the route that produced the samples: a route whose
+    The route record prices the route that produced the samples: a route whose
     execution the kernel cannot observe at the requested cadence is capped by
-    ``cap_evidence_level`` instead of being reported at a level its evidence
-    does not support.  ``diagnostic_only`` stays terminal either way.
+    :func:`pe_sim.time_model.cap_evidence_level_for` instead of being reported
+    at a level its evidence does not support.  ``diagnostic_only`` stays
+    terminal either way.  The cap itself lives in exactly one table, owned by
+    :mod:`pe_sim.time_model`; nothing here restates it.
     """
 
+    if capabilities is None:
+        capabilities = _route_capabilities(
+            time_model, control_location, event_granularity
+        )
+    elif not isinstance(capabilities, RouteCapabilities):
+        raise TypeError("capabilities must be a RouteCapabilities record")
     if status not in {"RUN_OK", "QUALIFIED"}:
         return "diagnostic_only"
     if mode != "formal_comparison":
-        return cap_evidence_level("functional", time_model)
+        return cap_evidence_level_for("functional", capabilities)
     if str(getattr(worktree, "status", "unknown")) != "clean":
-        return cap_evidence_level("limited", time_model)
+        return cap_evidence_level_for("limited", capabilities)
     if str(environment.get("status")) != "known":
-        return cap_evidence_level("limited", time_model)
+        return cap_evidence_level_for("limited", capabilities)
     backends = environment.get("backends", ())
     if not isinstance(backends, (list, tuple)) or any(
         not isinstance(item, Mapping) or str(item.get("status")) != "known"
         for item in backends
     ):
-        return cap_evidence_level("limited", time_model)
+        return cap_evidence_level_for("limited", capabilities)
     identity = plant.get("identity")
     implementation = identity.get("implementation") if isinstance(identity, Mapping) else None
     review = implementation.get("review") if isinstance(implementation, Mapping) else None
     if not isinstance(review, Mapping) or review.get("status") != "reviewed":
-        return cap_evidence_level("limited", time_model)
+        return cap_evidence_level_for("limited", capabilities)
     verification = plant.get("verification")
     if not isinstance(verification, Mapping) or verification.get("status") != "verified":
-        return cap_evidence_level("limited", time_model)
+        return cap_evidence_level_for("limited", capabilities)
     if qualification.get("level") == "failed":
         return "diagnostic_only"
     if qualification.get("level") in {"partial", "limited"}:
-        return cap_evidence_level("limited", time_model)
-    return cap_evidence_level("comparable", time_model)
+        return cap_evidence_level_for("limited", capabilities)
+    return cap_evidence_level_for("comparable", capabilities)
 
 
 def _build_run_manifest(
     spec: ExperimentSpec,
     *,
     time_model: str,
+    control_location: str = CONTROL_LOCATION_KERNEL,
+    event_granularity: str = EVENT_GRANULARITY_WINDOW,
     mode: str,
     git_fields: Mapping[str, Any],
     provenance: Mapping[str, Any],
@@ -1490,6 +1546,13 @@ def _build_run_manifest(
         "validity": validity_report.to_dict(),
         "applicability": applicability_manifest,
     }
+    # Every declaration is reported; the cap and limitation codes are derived by
+    # the single owner in :mod:`pe_sim.time_model`, never restated here.
+    route = RouteCapabilities(
+        time_model=time_model,
+        control_location=control_location,
+        event_granularity=event_granularity,
+    )
     manifest: dict[str, Any] = {
         "schema_version": spec.schema_version,
         "experiment_id": spec.experiment_id,
@@ -1500,6 +1563,13 @@ def _build_run_manifest(
         "worktree_analysis": dict(worktree_manifest),
         "worktree_analysis_sha256": worktree_analysis_sha256,
         "time_model": time_model,
+        "route": {
+            "time_model": route.time_model,
+            "control_location": route.control_location,
+            "event_granularity": route.event_granularity,
+            "evidence_cap": evidence_cap_for(route),
+            "limitations": list(route_limitations_for(route)),
+        },
         "run_mode": mode,
         "applicability": applicability_manifest,
         "environment": dict(environment),

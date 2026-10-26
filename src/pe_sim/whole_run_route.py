@@ -83,11 +83,14 @@ from .runtime import (
     _run_plugins_audited,
 )
 from .time_model import (
+    CONTROL_LOCATION_MODEL,
+    EVENT_GRANULARITY_WINDOW,
     TIME_MODEL_WHOLE_RUN,
+    RouteCapabilities,
     TraceContract,
     WholeRunRequest,
     WholeRunResult,
-    route_limitations,
+    route_inherent_limitations_for,
     validate_whole_run_result,
 )
 
@@ -276,12 +279,23 @@ def run_whole_run_route(
     safety_plugins: tuple[Any, ...],
     validity_plugins: tuple[Any, ...],
     qualification_plugins: tuple[Any, ...],
+    control_location: str = CONTROL_LOCATION_MODEL,
+    event_granularity: str = EVENT_GRANULARITY_WINDOW,
 ) -> RunResult:
     """Execute one whole-run experiment and publish a normal run package.
 
     The function is deliberately linear: every refusal happens before
     ``ArtifactWriter`` is constructed, and the engine is called exactly once.
     """
+
+    # An engine that owns the clock cannot leave the actuator to the kernel.
+    # The record therefore refuses ``control_location='kernel'`` before any
+    # refusal logic, filesystem work, or engine call.
+    route = RouteCapabilities(
+        time_model=TIME_MODEL_WHOLE_RUN,
+        control_location=control_location,
+        event_granularity=event_granularity,
+    )
 
     applicability_policy = (
         options.applicability if options is not None else ApplicabilityPolicy()
@@ -775,11 +789,13 @@ def run_whole_run_route(
         environment,
         plant_manifest,
         qualification,
-        time_model=TIME_MODEL_WHOLE_RUN,
+        capabilities=route,
     )
     manifest = _build_run_manifest(
         spec,
         time_model=TIME_MODEL_WHOLE_RUN,
+        control_location=route.control_location,
+        event_granularity=route.event_granularity,
         mode=mode,
         git_fields=git_fields,
         provenance=provenance,
@@ -821,7 +837,7 @@ def run_whole_run_route(
         audit=audit,
         machine=machine,
         extra={
-            "route_limitations": list(route_limitations(TIME_MODEL_WHOLE_RUN)),
+            "route_limitations": list(route_inherent_limitations_for(route)),
             "enforcement": POST_HOC_ONLY,
         },
     )
