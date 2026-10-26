@@ -1,6 +1,5 @@
 from __future__ import annotations
 import argparse
-from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path
@@ -20,8 +19,10 @@ from .qualification_rules import QualificationRulePack
 from .run_events import DEMO_RESULT_SCHEMA, RUN_RESULT_SCHEMA, ProgressPolicy
 from .run_store import discovery_root
 from .runner import RunOptions
-from .runtime import FakePIController, Runner
+from .runtime import Runner
+from .builtin_controllers import load_builtin_controllers
 from .builtin_plants import PlantBuildContext, load_builtin_plants
+from .controller_registry import ControllerBuildContext, resolve_controller
 from .plant_registry import PlantRegistration, plant_catalog, resolve
 from .time_model import TIME_MODEL_STEPPED, TIME_MODEL_WHOLE_RUN, TIME_MODELS
 from .backends import (
@@ -873,53 +874,21 @@ def _validate_plant_adapter(registration: PlantRegistration, plant: object) -> N
         )
 
 
-_PI_CONFIG_KEYS = frozenset(
-    {"kp", "ki", "output_min", "output_max", "anti_windup", "measurement_key"}
-)
-_PID_CONFIG_KEYS = _PI_CONFIG_KEYS | {"kd", "kd_filter_tau_s", "kff_v"}
+def _build_controller(spec: ExperimentSpec):
+    """Build the controller declared by a registered controller_id.
 
-
-@dataclass(frozen=True)
-class _ControllerBinding:
-    """One built-in CLI controller and the configuration keys it accepts.
-
-    The controller class is shared: a ``pi`` binding rejects derivative and
-    feedforward keys instead of silently ignoring them, which keeps a typo or a
-    copied PID configuration from looking like it took effect.
+    The registry supplies both the factory and the accepted configuration key
+    set.  Loading the built-ins here keeps every CLI entry point working even
+    when a caller never asked for the composition root explicitly; the loader
+    is idempotent.
     """
 
-    controller_id: str
-    class_name: str
-    config_keys: frozenset[str]
-
-
-_CONTROLLER_BINDINGS: dict[str, _ControllerBinding] = {
-    "pi": _ControllerBinding("pi", "FakePIController", _PI_CONFIG_KEYS),
-    "pid": _ControllerBinding("pid", "FakePIController", _PID_CONFIG_KEYS),
-}
-
-
-def _build_controller(spec: ExperimentSpec):
-    """Build the reviewed controller from a registered controller_id."""
-
-    binding = _CONTROLLER_BINDINGS.get(spec.controller_id)
-    if binding is None:
-        raise ValueError(
-            f"unsupported controller_id {spec.controller_id!r}; "
-            f"supported: {sorted(_CONTROLLER_BINDINGS)}"
-        )
-    unknown = set(spec.controller_config) - binding.config_keys
-    if unknown:
-        raise ValueError(
-            f"unsupported {spec.controller_id} controller_config fields: {sorted(unknown)}"
-        )
-    controller = FakePIController.from_config(spec.controller_config)
-    if type(controller).__name__ != binding.class_name:
-        raise ValueError(
-            f"controller_id {spec.controller_id!r} built {type(controller).__name__!r}, "
-            f"expected {binding.class_name!r}"
-        )
-    return controller
+    load_builtin_controllers()
+    return resolve_controller(
+        spec.controller_id,
+        spec.controller_config,
+        ControllerBuildContext(control_period_s=spec.timebase.control_period_s),
+    )
 
 
 def _build_plant(

@@ -184,8 +184,9 @@ def test_cli_lists_supported_controllers(tmp_path, capsys, monkeypatch):
 
     assert main(["run", str(config)]) == 2
     payload = json.loads(capsys.readouterr().out)
-    # The experiment schema rejects the unknown id before any plant is built,
-    # and its message names the registered controllers.
+    # The experiment schema now accepts this safe identifier; the controller
+    # registry rejects it while building the controller and names the
+    # registered controllers in the error.
     assert "controller_id" in payload["error"]
     assert "pid" in payload["error"]
 
@@ -196,11 +197,16 @@ def test_experiment_schema_accepts_pid_and_rejects_unknown_controller():
 
     validator.validate("pid")
     validator.validate("pi")
-    with pytest.raises(jsonschema.ValidationError):
-        validator.validate("lag-compensator")
+    # The schema no longer enumerates controller ids.  Every safe identifier is
+    # accepted here; the controller registry rejects an unregistered id when
+    # the controller is built.
+    validator.validate("lag-compensator")
 
     config_schema = schema["properties"]["controller_config"]
     validator = jsonschema.Draft202012Validator(config_schema)
     validator.validate({"kp": 1.0, "kd": 0.01, "kd_filter_tau_s": 1e-4, "kff_v": 0.5})
-    with pytest.raises(jsonschema.ValidationError):
-        validator.validate({"kd_filter_tau_s": -1.0})
+    # Value validation belongs to the factory now, so the schema accepts the
+    # negative constant and the factory is what rejects it.
+    validator.validate({"kd_filter_tau_s": -1.0})
+    with pytest.raises(ValueError, match="kd_filter_tau_s"):
+        FakePIController.from_config({"kd_filter_tau_s": -1.0})

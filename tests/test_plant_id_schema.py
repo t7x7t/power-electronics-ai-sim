@@ -127,6 +127,14 @@ def test_plant_id_agrees_with_the_experiment_id_identifier_pattern(schema, probe
     )
 
 
-def test_controller_id_remains_a_closed_enum(schema):
-    # Controller extensibility is out of scope for this change.
-    assert _definition(schema, "controller_id") == {"enum": ["pi", "pid"]}
+def test_controller_id_uses_the_same_identifier_contract_as_plant_id(schema):
+    # Controller extensibility is registry-owned: the schema must accept the
+    # same safe identifiers as ``plant_id`` and leave the "is this controller
+    # implemented?" decision to resolution.
+    controller_id = _definition(schema, "controller_id")
+    plant_id = _definition(schema, "plant_id")
+
+    assert controller_id == plant_id
+    assert "enum" not in controller_id
+    for probe in IDENTIFIER_PROBES:
+        assert _is_valid(controller_id, probe) == _is_valid(plant_id, probe)

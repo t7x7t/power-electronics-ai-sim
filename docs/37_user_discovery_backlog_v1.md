@@ -74,6 +74,14 @@ industrial anti-windup variants are out of scope for a reference controller.
 Custom controller *classes* still require the Python API; adapter discovery is
 tracked by UD-04.
 
+**Implemented in 0.14.0 (registry and compensators):** `controller_id` is no
+longer a schema enum. It is resolved through `pe_sim.controller_registry`, and
+`pi`, `pid`, `type2`, `type3`, and `biquad` are registered built-ins. Type II and
+Type III are Tustin-mapped at the control period and record their discrete
+coefficients in the controller identity; the runtime applies one explicit
+difference equation (ADR 0007). A configuration copied from another controller
+still fails, because the registration declares the keys it accepts.
+
 ### UD-02: topology coverage
 
 **Finding:** the reviewed real-solver path covers only the switching Buck;

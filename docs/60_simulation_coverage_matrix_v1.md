@@ -42,7 +42,7 @@
 | ID | 工况 | 频率 | 内核可表达 | 现状 | 责任方 | 证据 / 缺什么 |
 | --- | --- | --- | --- | --- | --- | --- |
 | B1 | 电压模式 PI/PID（内核控制器） | very-common | yes | covered | kernel | `tests/test_pi_controller.py`, `tests/test_pid_controller.py` |
-| B2 | Type II/III 补偿器（内核侧、按控制周期离散） | very-common | partial | kernel_gap | kernel | `controller_config` 是封闭键集（仅 kp/ki/kd/kff）；`controller_id` 仅 `pi`/`pid`；`UD-01` |
+| B2 | Type II/III 补偿器（内核侧、按控制周期离散） | very-common | yes | covered | kernel | `tests/test_controller_registry.py`（注册表解析、Tustin 系数独立对照、钳位/快照、CLI 端到端）；ADR 0007 |
 | B3 | 峰值/平均电流模式（逐周期比较器） | very-common | no | kernel_gap | kernel | 需比较器级事件（A4 的超集）；`UD-01` |
 | B4 | 数字环路的采样/ZOH/计算延迟 | very-common | yes | covered | controller | `tests/test_stage16_expressible_scenarios.py`（`sample_offset_s`/`control_period_s`/观测时刻一致） |
 | B5 | 前馈（line/load） | common | yes | covered | controller | `tests/test_stage16_expressible_scenarios.py`（零误差时 duty 仅由 `kff_v` 决定，含零前馈对照） |
@@ -94,18 +94,18 @@
 
 | 类别 | 行 | 含义 |
 | --- | --- | --- |
-| `closed` | A1, A2, A3, A4, A5, A6, B1, B4, B5, B6, C1, C2, C7, C10, D1, D2, D4, D5 | 今天可用且已有测试 |
+| `closed` | A1, A2, A3, A4, A5, A6, B1, B2, B4, B5, B6, C1, C2, C7, C10, D1, D2, D4, D5 | 今天可用且已有测试 |
 | `test-only` | —（当前为空：可表达性行已在 0.10.0 闭合） | 今天已能表达，只缺用例 |
 | `postprocess` | —（当前为空：派生指标已在 0.12.0 闭合） | 单次运行样本上的派生指标 |
 | `adapter` | A8, A9, A11, B7 | 新模型或新网表模板，零内核改动（T1） |
 | `controller` | A7, B9 | 新控制器或保护状态机 |
 | `study` | A10, C3, C9 | 需要在单次运行之上编排（ADR 0005 Seam 1） |
 | `capability` | C4, C5, C6 | 需要模型回答 `advance()` 答不了的问题（ADR 0005 Seam 2） |
-| `kernel-impl` | B2, B3, D3 | 内核实现改动，**不改协议** |
-| `contract` | B8 | 真正需要改契约，且已由 ADR 决定（ADR 0004）；A6 曾属此类，已在 0.11.0 关闭并转入 `closed` |
+| `kernel-impl` | B3, D3 | 内核实现改动，**不改协议** |
+| `contract` | B8 | 真正需要改契约，且已由 ADR 决定（ADR 0004）；A6（ADR 0006）与 B2（ADR 0007）曾属此类，已关闭并转入 `closed` |
 | `never` | C8 | 已声明不做 |
 
-**读数说明:** 35 行里曾有 **2 行**需要改契约（A6 已关闭，B8 待做），5 行需要内核实现但不改协议；
+**读数说明:** 35 行里曾有 **3 行**需要改契约（A6、B2 已关闭，B8 待做），2 行需要内核实现但不改协议（B3、D3）；
 其余行是适配器、控制器、study、后处理或补测试。这说明 `plant + controller + runner` 本身是适配的，
 缺的是 Runner **之上**的一层编排与 Plant **之下**的一层可选能力声明（ADR 0005），而不是重写。
 
