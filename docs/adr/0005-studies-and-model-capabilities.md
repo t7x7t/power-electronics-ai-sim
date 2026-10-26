@@ -2,8 +2,16 @@
 
 ## Status
 
-Proposed, 2026-10-26. Complements ADR 0004 (route capabilities). Does not change
-`PlantAdapter`, `ControllerAdapter`, or the Runner loop.
+Seam 1 (Study) **implemented in 0.15.0**. Seam 2 (optional model capabilities)
+remains Proposed; it is `docs/61` stage S8. Complements ADR 0004 (route
+capabilities). Does not change `PlantAdapter`, `ControllerAdapter`, or the
+Runner loop.
+
+Implemented by `src/pe_sim/study.py` (planning rules) and
+`src/pe_sim/study_runner.py` (orchestration), with `pe-sim study` as the only
+entry point. Neither module imports the runtime, the CLI, or a solver: a point
+is executed through an injected callable, so the same runner works with a real
+`Runner` composition and with fakes in tests.
 
 ## Context
 
@@ -95,8 +103,44 @@ Rules:
 - **Thermal, device physics, EMI, PCB parasitics** stay out of scope
   (`docs/43`); adapters may consume extracted data.
 
-## Consequences
+## Seam 1 — implementation notes (0.15.0)
 
+These are the concrete rules Seam 1 was implemented with. They are decisions,
+not options: a study that cannot express its result under them is out of scope.
+
+1. **A point is an ordinary experiment document.** `pe-sim study` writes each
+   point's document to `<output>/points/pNN/config.json` before running it, and
+   the point's package is published under `<output>/runs/<study>-pNN`. The
+   document — not the study report — is the reproducible input of that point.
+2. **Aggregates are `per-point`, never `comparable`.**
+   `aggregate.evidence_level` is the literal string `per-point`. The aggregate
+   also reports `inherited_ceiling` (the weakest level any point published) and
+   `cross_point_comparability`, which is `claimed` only when every point is
+   `QUALIFIED`, every point is itself `comparable`, and all points share the
+   same `run_mode`, `plant.id`, and route triple. Otherwise it is
+   `not_claimed` with a closed set of reason codes. Every aggregate carries the
+   limitation `aggregate_does_not_inherit_comparable`.
+3. **Points are read, never re-derived.** Per-point `status`,
+   `evidence_level`, and `manifest_sha256` come from the published
+   `manifest.json`. The study layer re-derives no evidence level and recomputes
+   no digest: the cap has exactly one producer (ADR 0004 rule 2).
+4. **Monte Carlo determinism is a contract.** Draws consume only
+   `random.Random(seed).random()`; a normal draw uses the module's own
+   Box-Muller transform. The report records every draw and their canonical
+   `draws_sha256`, and the runner replays the draws before starting a run, so a
+   planning bug fails before any point executes.
+5. **`periodicity` is a tolerance-based repetition test, not a PSS solver.**
+   Each point lengthens the transient (`duration × extend_factor^k`); within one
+   point the trailing `compare_windows` samples are compared pairwise with a lag
+   of `compare_period` control periods. Convergence is a declared-tolerance
+   statement (`pss_convergence_is_tolerance_based`), and the report keeps the
+   per-point numbers even when the study ends without converging.
+6. **Statistics are descriptive.** `mean`/`min`/`max`/`rms`/`peak_to_peak`/
+   `last`/`ratio_of_means` over recorded samples are labelled
+   `descriptive_statistics_only_no_loss_claim`. Power, efficiency, and loss
+   decomposition require a `loss_model()` and stay in Seam 2.
+
+## Consequences
 - The kernel keeps three objects; two layers are added around them. Adding a
   scenario means adding an adapter, a controller, a study, or a capability —
   never editing the protocols.
@@ -105,6 +149,8 @@ Rules:
   class is **budgeted** — it may not exceed three rows, and every row in it must
   cite an ADR. Growing the contract therefore requires a recorded decision, not
   a new field.
-- Study-level evidence is a new vocabulary problem. It is deliberately deferred:
-  until a study route exists, aggregates must be presented as a set of per-run
-  results, not as a new evidence level.
+- Study-level evidence is a new vocabulary problem, and 0.15.0 resolved it
+  **without** adding a level: an aggregate reports the literal
+  `per-point`, names the weakest point it inherited, and states separately
+  whether it claims cross-point comparability. Until that rule existed,
+  aggregates had to be presented as a set of per-run results only.

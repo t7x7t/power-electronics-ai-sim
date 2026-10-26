@@ -29,7 +29,7 @@
 | S4 | 0.12.0 | —（已完成：派生指标） | `postprocess` | S0 | 已交付：父包链接、原包不变、体积上限 |
 | S5 | 0.13.0 | —（已完成：相位连续与变更点） | `kernel-impl` | S3 | 已交付：pin 记录已更新；ADR 0004 两条验收通过 |
 | S6 | 0.14.1 | —（已完成：控制器 seam） | `controller` seam | S5 | 已交付：B2 注册表/Type II-III（0.14.0）；B9/A7 保护与短路恢复（0.14.1） |
-| S7 | 0.15.0 | A10 C3 C9 | `study` seam | S1 | 聚合不自动继承 `comparable`；每点保留自己的证据 |
+| S7 | 0.15.0 | —（已完成：study 计划层） | `study` seam | S1 | 已交付：A10 C3 C9 闭合；聚合恒为 `per-point`，不自动继承 `comparable` |
 | S8 | 0.16.0 | C4 C5 C6 | `capability` seam | S7 | 缺失能力 = 不可用（不是 `limited`）；AC/阻抗方法必须自报 |
 | S9 | 0.17.0 | A8 A9 A11 B7 B8 B3 D3 | `adapter` 扩面 + 比较器事件 | S5 | T1 仍然成立：新能力是注册，不是内核分支 |
 | S10 | 0.18.0 | —（收口与发布） | 发布 | S1–S9 | `docs/60` 无 `kernel_gap` / `expressible` 残留 |
@@ -118,10 +118,21 @@
 
 **S7 — Study seam（A10 C3 C9）**
 
-- 交付：`Study` 计划层（`parameter_sweep` / `monte_carlo` / `periodicity`），
-  每个点是一次普通运行，结果带每点清单链接；`pe-sim study` 子命令。
-- 验收：duty 扫掠生成效率曲线；固定 seed 的 Monte Carlo 可复现；
-  buck 的 periodicity 收敛判定可达；聚合结果不自动获得 `comparable`。
+- 已交付（0.15.0）：`src/pe_sim/study.py`（纯计划层：文档解析、扫掠/采样展开、描述统计、
+  容差式周期性判定、聚合规则、报告）与 `src/pe_sim/study_runner.py`（编排：逐点落盘
+  `points/pNN/config.json` → 调用注入的执行器 → 读回该点 `manifest.json`/`samples.json`）；
+  `pe-sim study` 子命令（参数与 `run` 同集合，不加新开关）。
+- 验收：duty/kp 扫掠生成参数曲线；固定 seed 的 Monte Carlo 可复现（同时记录 `draws_sha256`）；
+  buck 的 periodicity 收敛判定可达（`kp=0.02`、时长 2 ms → 16 ms → 128 ms 时第三轮收敛）；
+  聚合结果不自动获得 `comparable`：`aggregate.evidence_level` 恒为 `per-point`，
+  `inherited_ceiling` 取最弱点，`cross_point_comparability` 默认 `not_claimed`。
+- 偏差（登记，非静默降级）：本阶段验收原写“效率曲线”，但效率与损耗分解属 **C6**，
+  按 §2.1 的顺序纪律属 S8，S7 不主张任何功率/损耗结论；扫掠输出的是**样本描述统计**
+  （`mean`/`min`/`max`/`rms`/`peak_to_peak`/`last`/`ratio_of_means`），并登记
+  `descriptive_statistics_only_no_loss_claim`。
+- 实施教训（供后续阶段参考）：比例通道 + `duty∈[0,1]` 限幅会产生继电式极限环
+  （`kp=0.2`、`vref=5 V` 时 1.02 s 后相对差仍为 2.1e-2），因此“收敛”验收必须选择
+  执行器全程不撞限幅的工况；`periodicity` 判定只声称容差内重复，不声称物理稳态。
 
 **S8 — 模型能力 seam（C4 C5 C6）**
 

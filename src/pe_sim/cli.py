@@ -20,6 +20,8 @@ from .run_events import DEMO_RESULT_SCHEMA, RUN_RESULT_SCHEMA, ProgressPolicy
 from .run_store import discovery_root
 from .runner import RunOptions
 from .runtime import Runner
+from .study import parse_study_document
+from .study_runner import run_study
 from .builtin_controllers import load_builtin_controllers
 from .builtin_plants import PlantBuildContext, load_builtin_plants
 from .controller_registry import ControllerBuildContext, resolve_controller
@@ -141,6 +143,39 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         metavar="PATH",
         help="cancel the run when this path exists; checked once per control window",
+    )
+    study = sub.add_parser(
+        "study",
+        help="run a study document as independent per-point experiments",
+    )
+    study.add_argument("config", type=Path)
+    study.add_argument(
+        "--backend",
+        default=None,
+        help="backend adapter; defaults to the plant_id registration and must match it",
+    )
+    study.add_argument("--mode", choices=("exploratory", "formal_comparison"), default="exploratory")
+    study.add_argument(
+        "--applicability",
+        choices=("default", "record", "warn", "enforce", "off"),
+        default="default",
+        help="model-envelope policy; default records exploratory runs and enforces formal comparisons",
+    )
+    study.add_argument(
+        "--no-standard-qualification",
+        action="store_true",
+        help="use only the baseline structural qualification checks",
+    )
+    study.add_argument(
+        "--ngspice",
+        default=None,
+        help="reviewed ngspice executable; defaults to PE_SIM_NGSPICE or PATH",
+    )
+    study.add_argument(
+        "--model-builder",
+        choices=("native", "pyspice"),
+        default="native",
+        help="netlist builder for the ngspice-buck backend; 'pyspice' requires the optional PySpice install",
     )
     demo = sub.add_parser(
         "demo",
@@ -377,6 +412,8 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(json.dumps(payload, sort_keys=True))
             return code
+        if args.command == "study":
+            return _execute_study(args)
         elif args.command == "git-status":
             print(json.dumps(analyze_git_worktree(args.path).to_dict(), sort_keys=True))
             return 0
@@ -641,6 +678,56 @@ def main(argv: list[str] | None = None) -> int:
         code = exc.code if isinstance(exc, RequestRejected) else "invalid_request"
         _emit_rejection("CONFIG_REJECTED", code, str(exc))
         return 2
+
+
+def _execute_study(args) -> int:
+    """Run one study document as independent, ordinary per-point runs.
+
+    Parsing and the per-point preflight happen before any directory is
+    created: a document that cannot be planned, or a point whose plant/route
+    would be rejected by ``run``, must leave the output directory untouched.
+    """
+
+    try:
+        document = json.loads(Path(args.config).read_text(encoding="utf-8"))
+        plan = parse_study_document(document)
+    except (OSError, ValueError) as exc:
+        # StudyPlanError is a ValueError; a malformed document is a rejected
+        # request, not a partially created study.
+        _emit_rejection("CONFIG_REJECTED", "invalid_request", str(exc))
+        return 2
+
+    for point in plan.points:
+        point_document = dict(point.document)
+        registration = _select_registration(point_document, args.backend)
+        _validate_schedule_keys(point_document, registration)
+        if args.mode == "formal_comparison" and registration.time_model == TIME_MODEL_WHOLE_RUN:
+            # Same refusal as ``run``: an engine that owns the clock cannot be
+            # constrained window by window, so it cannot support a formal
+            # comparison.  No point may start before every point passes.
+            raise RequestRejected(
+                "formal_comparison_rejected",
+                f"plant_id {registration.plant_id!r} declares time_model "
+                f"{TIME_MODEL_WHOLE_RUN!r}; formal comparison requires in-run "
+                "enforcement, which this route cannot provide",
+            )
+
+    def execute_point(point, config_path):
+        return _execute_experiment(
+            Path(config_path),
+            backend=args.backend,
+            mode=args.mode,
+            applicability=args.applicability,
+            ngspice=args.ngspice,
+            model_builder=args.model_builder,
+            no_standard_qualification=args.no_standard_qualification,
+            progress=False,
+            cancel_file=None,
+        )
+
+    result = run_study(plan, execute_point=execute_point)
+    print(json.dumps(result.report, sort_keys=True))
+    return result.exit_code
 
 
 def _execute_experiment(

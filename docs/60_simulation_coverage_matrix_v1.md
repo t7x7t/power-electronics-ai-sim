@@ -34,7 +34,7 @@
 | A7 | 短路/逐周期限流/打嗝恢复 | very-common | partial | covered | controller/adapter | `tests/test_protection.py`（0.2 Ω 短路落在窗口中点；越界后一个控制周期内 trip；打嗝重试）；上限 `protection_latency_is_one_control_period` |
 | A8 | 轻载 / DCM / burst | very-common | partial | expressible | adapter | 开关级网表物理上可表现 DCM；平均模型声明 CCM 假设（`uncheckable_rules`）；无检测 |
 | A9 | 死区与同步整流时序 | common | yes | expressible | adapter | 当前模板无死区/SR/栅驱动（`docs/31`）；需新网表模板，零内核改动 |
-| A10 | 输入/负载/duty 参数扫掠 | very-common | no | kernel_gap | kernel | `docs/00` S4B（拓扑级扫掠）；无批量入口 |
+| A10 | 输入/负载/duty 参数扫掠 | very-common | yes | covered | kernel | `tests/test_study_plan.py`（笛卡尔展开、路径白名单、单点文档仍是合法实验文档）、`tests/test_study_cli.py`（`pe-sim study` 端到端）；上限 `per-point`，聚合为派生（`aggregate_does_not_inherit_comparable`） |
 | A11 | 长时程高分辨率连续波形（放弃窗口拦截） | common | partial | expressible | adapter | `whole_run` 路线已有（`limited`）；缺开关级整段适配器，见 ADR 0004 §Implementation 3 |
 
 ### B. 控制与环路
@@ -57,13 +57,13 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | C1 | 时域瞬态（开关级/平均） | very-common | yes | covered | kernel+adapter | `tests/test_ngspice_plant_contract.py`, `tests/test_stage15_buck_boost_acceptance.py` |
 | C2 | 解析稳态/平衡点判定 | very-common | yes | covered | kernel | `tests/test_stage15_buck_boost_acceptance.py`（`analytical_steady_state` + 稳态规则） |
-| C3 | 周期稳态解（PSS） | very-common | no | kernel_gap | kernel | 无求解器；`docs/00` S3/S10 |
+| C3 | 周期稳态解（PSS） | very-common | yes | covered | kernel | `tests/test_study_cli.py`（averaged buck 上时长扩展至收敛，末次运行样本独立复算一致）；上限 `per-point`、`pss_convergence_is_tolerance_based` |
 | C4 | AC 小信号 / 环路增益（Bode、PM、GM） | very-common | no | kernel_gap | kernel | 全域无 `.ac`/Bode/相位裕度；`GAP-01` |
 | C5 | 阻抗扇帚（输入/输出、Middlebrook） | common | no | kernel_gap | kernel | 无扇频能力；依赖 C4；`GAP-02` |
 | C6 | 效率与损耗分解 | very-common | no | kernel_gap | adapter+kernel | 无损耗模型，也无派生指标；`docs/00` S10；`GAP-03` |
 | C7 | 纹波频谱 / THD / PF | very-common | partial | covered | kernel | `tests/test_derived_metrics.py`（Hann 频谱、THD、PF；边界样本上限已声明） |
 | C8 | 电热 / 热网络 | common | no | out_of_scope | adapter | `docs/43`（器件/热模型非内核工作）；`no_thermal_state_modelled` |
-| C9 | Monte Carlo / 容差 / 最坏情况 | very-common | no | kernel_gap | kernel | 无采样与批量；`docs/00` S4B |
+| C9 | Monte Carlo / 容差 / 最坏情况 | very-common | yes | covered | kernel | `tests/test_study_plan.py`、`tests/test_study_cli.py`（同 seed 逐点可复现、`draws_sha256` 与点参数一致）；上限 `per-point`、`aggregate_does_not_inherit_comparable` |
 | C10 | 波形导出与派生分析工件 | very-common | partial | covered | kernel | `tests/test_derived_metrics.py`（父包链接、原包不变、体积上限）；窗口内波形仍属 `UD-03` |
 
 ### D. 数值与时间尺度
@@ -94,12 +94,12 @@
 
 | 类别 | 行 | 含义 |
 | --- | --- | --- |
-| `closed` | A1, A2, A3, A4, A5, A6, A7, B1, B2, B4, B5, B6, B9, C1, C2, C7, C10, D1, D2, D4, D5 | 今天可用且已有测试 |
+| `closed` | A1, A2, A3, A4, A5, A6, A7, A10, B1, B2, B4, B5, B6, B9, C1, C2, C3, C7, C9, C10, D1, D2, D4, D5 | 今天可用且已有测试 |
 | `test-only` | —（当前为空：可表达性行已在 0.10.0 闭合） | 今天已能表达，只缺用例 |
 | `postprocess` | —（当前为空：派生指标已在 0.12.0 闭合） | 单次运行样本上的派生指标 |
 | `adapter` | A8, A9, A11, B7 | 新模型或新网表模板，零内核改动（T1） |
 | `controller` | —（当前为空：保护在 0.14.1 闭合） | 新控制器或保护状态机 |
-| `study` | A10, C3, C9 | 需要在单次运行之上编排（ADR 0005 Seam 1） |
+| `study` | —（当前为空：study 计划层已在 0.15.0 闭合） | 需要在单次运行之上编排（ADR 0005 Seam 1） |
 | `capability` | C4, C5, C6 | 需要模型回答 `advance()` 答不了的问题（ADR 0005 Seam 2） |
 | `kernel-impl` | B3, D3 | 内核实现改动，**不改协议** |
 | `contract` | B8 | 真正需要改契约，且已由 ADR 决定（ADR 0004）；A6（ADR 0006）与 B2（ADR 0007）曾属此类，已关闭并转入 `closed` |

@@ -38,6 +38,14 @@
 4. **输入变更点按声明时刻求解。** 允许的调度键是 `time_s`、`vref`、`vin_v`、
    `input_voltage_v`、`load_ohm`、`load_resistance_ohm`；内核在下一个变更点结束当前
    求解段，并在新段起点重新解析输入。控制器的观测与动作仍然只发生在窗口边界。
+5. **study 层是运行之上的编排，不是新的证据等级。** `pe-sim study` 把每个点展开成一份
+   普通实验文档（`<output>/points/pNN/config.json`）并各自发布运行包；报告里每点的
+   `status`/`evidence_level`/`manifest_sha256` 都从该点自己的 `manifest.json` 读出。
+   聚合恒报 `per-point`，并单列 `inherited_ceiling`（各点最弱等级）与
+   `cross_point_comparability`（只有全部点都 `comparable`、同一 `run_mode`、同一
+   `plant.id`、同一路线三元组时才 `claimed`）。`periodicity` 只声称“在声明的相对容差内
+   重复”，不声称物理周期稳态；统计量只描述样本，不构成效率或损耗结论——那是
+   C6/S8 的可选 `loss_model`。
 
 **为什么这样设计：** 不变量 I1——约束必须在运行**期间**强制执行，而不是事后重建。
 只有能逐窗口拦截的路线才配 `comparable`；一次性整段求解无法在飞行中拦截，因此
@@ -52,6 +60,7 @@
 | 需要单次不可分割的整段开关级积分 | 求解段仍按窗口与变更点切分，每段重启一次 ngspice | 使用开关级 whole-run 适配器（ADR 0004 步骤 3 / `docs/61` S9），或直接用 ngspice |
 | 逐周期比较器保护 / 峰值电流模式 | 控制器只在控制采样点看测量，保护最迟在下一个控制周期执行 | 尚未提供；见 `docs/60` B3 与 `docs/61` S9（模型内比较器） |
 | 微秒级全波形长时导出 | 采样分辨率有界，且成本随窗口数线性增长（每窗口一个子进程） | 直接 ngspice，或降低时长/提高采样步长后接受证据降级 |
+| 把 study 聚合结果当成 `comparable` 证据 | 聚合只报 `per-point`，并把继承上限与跨点可比性单列 | 逐点引用该点的运行包；需要跨点可比时，先让每点都达到 `comparable` 并声明同一路线 |
 | 器件级、电热、磁饱和、EMI | 非本仓库范围 | 走外部工具链 |
 
 ## 5. 什么时候应当绕过 `pe-sim`
@@ -78,6 +87,9 @@
 - `docs/40_validity_and_authenticity_v1.md` —— 适用域声明与检查阶段
 - `docs/43_kernel_roadmap_v1.md` —— I1 不变量、T1、证据等级
 - `docs/adr/0004-solve-route-capabilities.md` —— 路线声明、载波相位与变更点分段
+- `docs/adr/0005-studies-and-model-capabilities.md` —— study 编排与可选模型能力的两个 seam
 - `docs/60_simulation_coverage_matrix_v1.md` —— 工况级覆盖矩阵与已登记缺口
 - `src/pe_sim/backends/ngspice_plants.py` —— 窗口化实现与适用域原文
 - `src/pe_sim/backends/whole_run_engine.py` —— 整段路线的自我降级声明
+- `src/pe_sim/study.py` —— study 计划层（展开、抽样、容差判定、聚合规则）
+- `src/pe_sim/study_runner.py` —— study 编排（逐点文档落盘、读回发布包、写报告）
