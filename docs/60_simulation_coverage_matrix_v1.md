@@ -33,7 +33,7 @@
 | A6 | 预偏置启动（输出已预充） | very-common | partial | expressible | adapter | 需 warm_start/snapshot 携带 `vout`；网表 `IC={VC0}` 已支持；缺运行级测试 |
 | A7 | 短路/逐周期限流/打嗝恢复 | very-common | partial | expressible | controller/adapter | duty 限幅已有；保护状态机与故障注入缺测试；亚窗口事件依赖 A4 |
 | A8 | 轻载 / DCM / burst | very-common | partial | expressible | adapter | 开关级网表物理上可表现 DCM；平均模型声明 CCM 假设（`uncheckable_rules`）；无检测 |
-| A9 | 死区与同步整流时序 | common | no | out_of_scope | adapter | `docs/31`（网表模板无死区、SR、栅驱动）；需新网表模板 |
+| A9 | 死区与同步整流时序 | common | yes | expressible | adapter | 当前模板无死区/SR/栅驱动（`docs/31`）；需新网表模板，零内核改动 |
 | A10 | 输入/负载/duty 参数扫掠 | very-common | no | kernel_gap | kernel | `docs/00` S4B（拓扑级扫掠）；无批量入口 |
 | A11 | 长时程高分辨率连续波形（放弃窗口拦截） | common | partial | expressible | adapter | `whole_run` 路线已有（`limited`）；缺开关级整段适配器，见 ADR 0004 §Implementation 3 |
 
@@ -47,7 +47,7 @@
 | B4 | 数字环路的采样/ZOH/计算延迟 | very-common | yes | expressible | controller | 控制器按控制周期调用、`timing` 已给 `control_period_s`/`sample_offset_s`；缺测试 |
 | B5 | 前馈（line/load） | common | yes | expressible | controller | `command` 已传入控制器；`UD-01` |
 | B6 | 多环级联（电压外环+电流内环） | very-common | yes | expressible | controller | 控制器内部状态可承载；缺测试 |
-| B7 | 多相/均流/相位增减 | common | no | out_of_scope | adapter | 无多相模型；`docs/43`（新拓扑属适配器职责） |
+| B7 | 多相/均流/相位增减 | common | partial | expressible | adapter | 无多相模型；共享 duty + 相位内部管理可覆盖常见共相；逐相电流环属 specialized（ADR 0005） |
 | B8 | 控制器放进网表 | common | no | kernel_gap | kernel | ADR 0004（`control_location=model`，上限 `limited`） |
 | B9 | 保护状态机（OCP/OVP/UVLO/hiccup/latch） | very-common | partial | expressible | controller | 可用控制器状态机表达；缺故障注入与测试 |
 
@@ -86,6 +86,30 @@
 | GAP-01 | AC 小信号 / 环路增益：无 `.ac`、无注入源、无 Bode/相位裕度 | C4 | 内核（新 ADR：频域分析路线） |
 | GAP-02 | 阻抗扫描：无输入/输出阻抗与 Middlebrook 判据 | C5 | 内核（依赖 GAP-01） |
 | GAP-03 | 效率与损耗分解：无导通/开关/磁性损耗模型与派生指标 | C6 | 适配器提供损耗模型 + 内核提供派生指标 |
+
+### 2.2 按"关闭它需要动哪一层"分类
+
+这决定了架构是否适配：**能否在不改 `PlantAdapter` / `ControllerAdapter` / Runner 循环的前提下
+补上这个工况**。词表见 ADR 0005。
+
+| 类别 | 行 | 含义 |
+| --- | --- | --- |
+| `closed` | A1, A2, B1, C1, C2, D1, D4, D5 | 今天可用且已有测试 |
+| `test-only` | A3, A5, A6, B4, B5, B6 | 今天已能表达，只缺用例 |
+| `postprocess` | C7, C10 | 单次运行样本上的派生指标 |
+| `adapter` | A8, A9, A11, B7 | 新模型或新网表模板，零内核改动（T1） |
+| `controller` | A7, B9 | 新控制器或保护状态机 |
+| `study` | A10, C3, C9 | 需要在单次运行之上编排（ADR 0005 Seam 1） |
+| `capability` | C4, C5, C6 | 需要模型回答 `advance()` 答不了的问题（ADR 0005 Seam 2） |
+| `kernel-impl` | A4, B2, B3, D2, D3 | 内核实现改动，**不改协议** |
+| `contract` | B8 | 真正需要改契约，且已由 ADR 0004 决定 |
+| `never` | C8 | 已声明不做 |
+
+**读数说明:** 35 行里只有 **1 行**需要改契约，5 行需要内核实现但不改协议；其余 29 行是
+适配器、控制器、study、后处理或补测试。这说明 `plant + controller + runner` 本身是适配的，
+缺的是 Runner **之上**的一层编排与 Plant **之下**的一层可选能力声明（ADR 0005），而不是重写。
+
+**预算规则:** `contract` 类不得超过 3 行，且每行必须引用 ADR。想扩大契约，先写决策。
 
 ## 3. 静默缺口（最危险的一类）
 
