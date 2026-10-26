@@ -27,9 +27,9 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | A1 | 恒定 duty/vref 冷启动到稳态 | very-common | yes | covered | adapter | `tests/test_stage15_buck_boost_acceptance.py`, `tests/test_ngspice_real_backend.py` |
 | A2 | 输入电压阶跃/跌落（窗口边界） | very-common | yes | covered | adapter | `tests/test_stage15_buck_boost_acceptance.py`（调度 Vin 12 V→9 V） |
-| A3 | 负载阶跃/突卸（窗口边界） | very-common | yes | expressible | adapter | 适配器级已被 `tests/test_stage4_reference_plants.py` 覆盖；无 Runner 级用例 |
+| A3 | 负载阶跃/突卸（窗口边界） | very-common | yes | covered | adapter | `tests/test_stage16_expressible_scenarios.py`（Runner 级：command 与 truth 在边界窗口后更新） |
 | A4 | 负载阶跃落在控制窗口内部 / 亚开关周期 | very-common | no | kernel_gap | kernel | ADR 0004 §3（求解段边界改为变更点）；`UD-05` 的近亲 |
-| A5 | 软启动（vref 斜坡） | very-common | yes | expressible | controller/adapter | 逐窗口 vref 调度即可；缺测试 |
+| A5 | 软启动（vref 斜坡） | very-common | yes | covered | controller/adapter | `tests/test_stage16_expressible_scenarios.py`（逐窗口 vref 序列与 duty 单调） |
 | A6 | 预偏置启动（输出已预充） | very-common | partial | kernel_gap | adapter | ADR 0006（`InitialState.state` 承载预充电状态）；现状只能给定 `mode`，`vout` 无法进入运行 |
 | A7 | 短路/逐周期限流/打嗝恢复 | very-common | partial | expressible | controller/adapter | duty 限幅已有；保护状态机与故障注入缺测试；亚窗口事件依赖 A4 |
 | A8 | 轻载 / DCM / burst | very-common | partial | expressible | adapter | 开关级网表物理上可表现 DCM；平均模型声明 CCM 假设（`uncheckable_rules`）；无检测 |
@@ -44,9 +44,9 @@
 | B1 | 电压模式 PI/PID（内核控制器） | very-common | yes | covered | kernel | `tests/test_pi_controller.py`, `tests/test_pid_controller.py` |
 | B2 | Type II/III 补偿器（内核侧、按控制周期离散） | very-common | partial | kernel_gap | kernel | `controller_config` 是封闭键集（仅 kp/ki/kd/kff）；`controller_id` 仅 `pi`/`pid`；`UD-01` |
 | B3 | 峰值/平均电流模式（逐周期比较器） | very-common | no | kernel_gap | kernel | 需比较器级事件（A4 的超集）；`UD-01` |
-| B4 | 数字环路的采样/ZOH/计算延迟 | very-common | yes | expressible | controller | 控制器按控制周期调用、`timing` 已给 `control_period_s`/`sample_offset_s`；缺测试 |
-| B5 | 前馈（line/load） | common | yes | expressible | controller | `command` 已传入控制器；`UD-01` |
-| B6 | 多环级联（电压外环+电流内环） | very-common | yes | expressible | controller | 控制器内部状态可承载；缺测试 |
+| B4 | 数字环路的采样/ZOH/计算延迟 | very-common | yes | covered | controller | `tests/test_stage16_expressible_scenarios.py`（`sample_offset_s`/`control_period_s`/观测时刻一致） |
+| B5 | 前馈（line/load） | common | yes | covered | controller | `tests/test_stage16_expressible_scenarios.py`（零误差时 duty 仅由 `kff_v` 决定，含零前馈对照） |
+| B6 | 多环级联（电压外环+电流内环） | very-common | yes | covered | controller | `tests/test_stage16_expressible_scenarios.py`（`state_update` 在下一步可见） |
 | B7 | 多相/均流/相位增减 | common | partial | expressible | adapter | 无多相模型；共享 duty + 相位内部管理可覆盖常见共相；逐相电流环属 specialized（ADR 0005） |
 | B8 | 控制器放进网表 | common | no | kernel_gap | kernel | ADR 0004（`control_location=model`，上限 `limited`） |
 | B9 | 保护状态机（OCP/OVP/UVLO/hiccup/latch） | very-common | partial | expressible | controller | 可用控制器状态机表达；缺故障注入与测试 |
@@ -94,8 +94,8 @@
 
 | 类别 | 行 | 含义 |
 | --- | --- | --- |
-| `closed` | A1, A2, B1, C1, C2, D1, D4, D5 | 今天可用且已有测试 |
-| `test-only` | A3, A5, B4, B5, B6 | 今天已能表达，只缺用例 |
+| `closed` | A1, A2, A3, A5, B1, B4, B5, B6, C1, C2, D1, D4, D5 | 今天可用且已有测试 |
+| `test-only` | —（当前为空：可表达性行已在 0.10.0 闭合） | 今天已能表达，只缺用例 |
 | `postprocess` | C7, C10 | 单次运行样本上的派生指标 |
 | `adapter` | A8, A9, A11, B7 | 新模型或新网表模板，零内核改动（T1） |
 | `controller` | A7, B9 | 新控制器或保护状态机 |
