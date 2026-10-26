@@ -2,7 +2,7 @@
   "schema": "pe-sim.reviewed-identities.v1",
   "backends": {
     "ngspice-buck": {
-      "implementation_sha256": "53c245ffbe2fa66fca2f81eb2a593296da4bb599a6176475636da3d0bbc854d3",
+      "implementation_sha256": "200a29788392d2b3b94a9401655e6faf79de95b060fbed8ca282bd1bb4dc7b4e",
       "solve_path": [
         "backends/ngspice_plants.py",
         "backends/netlist.py",
@@ -11,19 +11,22 @@
         "backends/settings.py",
         "backends/wrdata.py"
       ],
-      "reviewed_at": "2026-10-24",
+      "reviewed_at": "2026-10-26",
       "reviewer": "project maintainer",
       "acceptance_ids": [
         "stage15-buck-boost-acceptance",
         "stage16-safety-validity-qualification",
-        "applicability-envelope-v1"
+        "applicability-envelope-v1",
+        "event-boundary-acceptance"
       ],
       "evidence_refs": [
         "docs/23_stage15_l1_buck_boost_acceptance_v1.md",
         "docs/38_kernel_review_v0.md",
-        "docs/40_validity_and_authenticity_v1.md"
+        "docs/40_validity_and_authenticity_v1.md",
+        "docs/adr/0004-solve-route-capabilities.md",
+        "docs/61_gap_closure_plan_v1.md"
       ],
-      "review_note": "Reviewed switching Buck reference solve path. Update only with an explicit model-review record; a changed digest means the numerical construction, execution, or parsing code changed. 0.5.1: the reviewed-identity module moved from pe_sim/backends/identity.py to pe_sim/identity.py and the adapters import it from the package root; digests were recomputed after that import-only change, no numerical code was modified. 0.5.2: the adapter now declares a class-level backend_id so the kernel can recompute its reviewed identity instead of trusting the self-reported record; the netlist template, solver settings, process invocation, and wrdata parsing are untouched."
+      "review_note": "Reviewed switching Buck reference solve path. Update only with an explicit model-review record; a changed digest means the numerical construction, execution, or parsing code changed. 0.5.1: the reviewed-identity module moved from pe_sim/backends/identity.py to pe_sim/identity.py and the adapters import it from the package root; digests were recomputed after that import-only change, no numerical code was modified. 0.5.2: the adapter now declares a class-level backend_id so the kernel can recompute its reviewed identity instead of trusting the self-reported record; the netlist template, solver settings, process invocation, and wrdata parsing are untouched. 0.13.0 (ADR 0004 step 2): the window netlist renders the PWM carrier delay as the time to the next absolute carrier start ((-phase) mod Tsw) instead of restarting at zero; the constructor no longer requires the control period to be an integer multiple of the switching period; the adapter solves exactly to the end of the current control window and lets a change point inside that window force a re-solve; the Runner ends a solve segment at the next external-input change point. Acceptance: tests/test_event_boundaries.py (D2 1.5x ratio vs one direct run; A4 mid-window load step vs boundary counterfactual and vs one long window; D3 non-zero difference; route declares continuous). Template version bumped to ngspice-buck-v2; Tsw, duty, device models, solver settings, process invocation, and wrdata parsing are otherwise untouched."
     },
     "buck": {
       "implementation_sha256": "943b081eea21ecfd4ffd472c59d661dd34bb5c2aad2f95063aed61c4bf18bdaf",

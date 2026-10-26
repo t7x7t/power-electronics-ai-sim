@@ -15,7 +15,7 @@ from typing import Any
 from .settings import NgspiceSolverSettings
 
 
-NETLIST_TEMPLATE_VERSION = "ngspice-buck-v1"
+NETLIST_TEMPLATE_VERSION = "ngspice-buck-v2"
 
 
 class NetlistParameterError(ValueError):
@@ -115,12 +115,17 @@ def render_buck_netlist(
     duration_s: float,
     solver: NgspiceSolverSettings,
     sample_step_s: float | None = None,
+    carrier_phase_s: float = 0.0,
 ) -> str:
-    """Render one zero-order-hold simulation window as an ngspice netlist.
+    """Render one zero-order-hold solve segment as an ngspice netlist.
 
-    ``duty`` is held constant for the whole window.  The adapter solves one
-    control window at a time, so this is exactly the Runner's control-window
-    semantics rather than an approximation of it.
+    ``duty`` is held constant for the whole segment.  ``carrier_phase_s`` is the
+    phase of the PWM carrier at the segment start (the segment's start time
+    modulo the switching period).  The global carrier starts its on-interval at
+    absolute multiples of the switching period, so the PULSE delay is the time
+    to the *next* multiple, ``(-carrier_phase_s) mod Tsw``; a zero phase renders
+    a zero delay and reproduces the previous window netlist apart from the
+    explicit parameter.
     """
 
     duty_value = float(duty)
@@ -130,9 +135,22 @@ def render_buck_netlist(
     if not isinstance(solver, NgspiceSolverSettings):
         raise NetlistParameterError("solver must be NgspiceSolverSettings")
 
+    switching_period = parameters.switching_period_s
+    phase = float(carrier_phase_s)
+    if not math.isfinite(phase):
+        raise NetlistParameterError("carrier_phase_s must be finite")
+    phase %= switching_period
+    # A phase within floating-point noise of one period is zero phase; leaving
+    # it as Tsw would make PULSE wait a whole extra period before switching.
+    if switching_period - phase <= 1e-12 * max(1.0, switching_period):
+        phase = 0.0
+    pulse_delay = (-phase) % switching_period
+    if switching_period - pulse_delay <= 1e-12 * max(1.0, switching_period):
+        pulse_delay = 0.0
+
     step = default_sample_step_s(parameters, duration) if sample_step_s is None else _positive("sample_step_s", sample_step_s)
     step = min(step, duration / 10.0)
-    pulse_width = max(duty_value * parameters.switching_period_s, 1e-15)
+    pulse_width = max(duty_value * switching_period, 1e-15)
 
     lines = [
         "* pe-sim ngspice buck reference",
@@ -140,6 +158,7 @@ def render_buck_netlist(
         f".param Vin={_format(parameters.input_voltage_v)}",
         f".param Tsw={_format(parameters.switching_period_s)}",
         f".param D={_format(duty_value)}",
+        f".param TD={_format(pulse_delay)}",
         f".param L={_format(parameters.inductance_h)}",
         f".param C={_format(parameters.capacitance_f)}",
         f".param Rload={_format(parameters.load_resistance_ohm)}",
@@ -151,7 +170,7 @@ def render_buck_netlist(
         f".param VC0={_format(parameters.initial_output_voltage_v)}",
         "",
         "V1 vin 0 DC {Vin}",
-        f"Vpwm pwm 0 PULSE(0 1 0 1e-9 1e-9 {_format(pulse_width)} {{Tsw}})",
+        f"Vpwm pwm 0 PULSE(0 1 {{TD}} 1e-9 1e-9 {_format(pulse_width)} {{Tsw}})",
         "S1 vin sw pwm 0 SWMOD",
         "D1 0 sw DMOD",
         "L1 sw vout {L} IC={IL0}",

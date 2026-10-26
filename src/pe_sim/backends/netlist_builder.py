@@ -42,7 +42,7 @@ _INITIAL_CONDITION_RE = re.compile(r"\b(ic=)([-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-
 
 
 class NetlistBuilder(Protocol):
-    """Strategy that renders one zero-order-hold simulation window."""
+    """Strategy that renders one zero-order-hold solve segment."""
 
     name: str
 
@@ -54,6 +54,7 @@ class NetlistBuilder(Protocol):
         duration_s: float,
         solver: NgspiceSolverSettings,
         sample_step_s: float | None = None,
+        carrier_phase_s: float = 0.0,
     ) -> str: ...
 
     def provenance(self) -> dict[str, Any]: ...
@@ -73,6 +74,7 @@ class NativeBuckNetlistBuilder:
         duration_s: float,
         solver: NgspiceSolverSettings,
         sample_step_s: float | None = None,
+        carrier_phase_s: float = 0.0,
     ) -> str:
         return render_buck_netlist(
             parameters,
@@ -80,6 +82,7 @@ class NativeBuckNetlistBuilder:
             duration_s=duration_s,
             solver=solver,
             sample_step_s=sample_step_s,
+            carrier_phase_s=carrier_phase_s,
         )
 
     def provenance(self) -> dict[str, Any]:
@@ -135,6 +138,7 @@ class PyspiceBuckNetlistBuilder:
         duration_s: float,
         solver: NgspiceSolverSettings,
         sample_step_s: float | None = None,
+        carrier_phase_s: float = 0.0,
     ) -> str:
         _import_pyspice()
         from PySpice.Spice.Netlist import Circuit
@@ -146,13 +150,21 @@ class PyspiceBuckNetlistBuilder:
         duration = float(duration_s)
         if not duration > 0:
             raise NetlistBuilderError("duration_s must be positive")
+        phase = float(carrier_phase_s)
+        switching_period = parameters.switching_period_s
+        phase %= switching_period
+        if switching_period - phase <= 1e-12 * max(1.0, switching_period):
+            phase = 0.0
+        pulse_delay = (-phase) % switching_period
+        if switching_period - pulse_delay <= 1e-12 * max(1.0, switching_period):
+            pulse_delay = 0.0
         step = (
             default_sample_step_s(parameters, duration)
             if sample_step_s is None
             else float(sample_step_s)
         )
         step = min(step, duration / 10.0)
-        pulse_width = max(duty_value * parameters.switching_period_s, 1e-15)
+        pulse_width = max(duty_value * switching_period, 1e-15)
 
         circuit = Circuit("pe-sim pyspice buck reference")
         circuit.V("input", "vin", circuit.gnd, parameters.input_voltage_v @ u_V)
@@ -164,7 +176,7 @@ class PyspiceBuckNetlistBuilder:
             pulsed_value=1 @ u_V,
             pulse_width=pulse_width @ u_s,
             period=parameters.switching_period_s @ u_s,
-            delay_time=0 @ u_s,
+            delay_time=pulse_delay @ u_s,
             rise_time=1e-9 @ u_s,
             fall_time=1e-9 @ u_s,
         )

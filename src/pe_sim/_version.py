@@ -7,4 +7,4 @@ metadata read of ``pe_sim`` would import the package and its dependencies.
 
 from __future__ import annotations
 
-__version__ = "0.12.0"
+__version__ = "0.13.0"

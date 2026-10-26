@@ -27,11 +27,11 @@
 | S2 | 0.10.1 | —（已完成：路由声明与单一派生） | 声明 + 派生 | S1 | 已交付：全量测试只增不减，无已有断言被放宽 |
 | S3 | 0.11.0 | —（已完成：初始状态载荷） | `contract`（ADR 0006） | S2 | 已交付：载荷可验证；无载荷文档行为不变 |
 | S4 | 0.12.0 | —（已完成：派生指标） | `postprocess` | S0 | 已交付：父包链接、原包不变、体积上限 |
-| S5 | 0.13.0 | A4 D2 D3 | `kernel-impl` | S3 | **维护者 pin 复核**（§5）+ ADR 0004 步骤 2 的两条验收 |
+| S5 | 0.13.0 | —（已完成：相位连续与变更点） | `kernel-impl` | S3 | 已交付：pin 记录已更新；ADR 0004 两条验收通过 |
 | S6 | 0.13.1 | B2 B9 A7 | `controller` seam | S5（A7 依赖亚窗口变更点） | pi/pid 行为被现有测试钉死；JSON 可选新控制器；保护上限已登记 |
 | S7 | 0.14.0 | A10 C3 C9 | `study` seam | S1 | 聚合不自动继承 `comparable`；每点保留自己的证据 |
 | S8 | 0.15.0 | C4 C5 C6 | `capability` seam | S7 | 缺失能力 = 不可用（不是 `limited`）；AC/阻抗方法必须自报 |
-| S9 | 0.16.0 | A8 A9 A11 B7 B8 B3 | `adapter` 扩面 | S5 | T1 仍然成立：新能力是注册，不是内核分支 |
+| S9 | 0.16.0 | A8 A9 A11 B7 B8 B3 D3 | `adapter` 扩面 + 比较器事件 | S5 | T1 仍然成立：新能力是注册，不是内核分支 |
 | S10 | 0.17.0 | —（收口与发布） | 发布 | S1–S9 | `docs/60` 无 `kernel_gap` / `expressible` 残留 |
 
 ### 2.1 为什么是这个顺序
@@ -96,13 +96,14 @@
 - 验收：原始包字节不变；派生工件声明父 `package_digest` 与自身证据继承关系；
   超限时失败关闭而不是截断。
 
-**S5 — 相位连续与变更点边界（A4 D2 D3）**
+**S5 — 相位连续与变更点边界（A4 D2）**
 
-- 交付：载波相位参数化（`TD = window_start mod Tsw`）、求解段在下一个变更点结束、
+- 交付：载波相位参数化（PULSE 延迟 = `(-phase) mod Tsw`）、求解段在下一个变更点结束、
   删除整数倍限制与对应 `uncheckable_rules`；`ngspice-buck` 声明 `continuous`。
-- 验收：(a) `control_period_s = 1.5 × Tsw` 可构造并运行，窗口边界处 `vout` 与电感电流
-  无跳变；(b) 窗口中点 10 Ω → 5 Ω 负载阶跃的波形与单次直跑 ngspice 在声明容差内一致。
+- 验收：(a) `control_period_s = 1.5 × Tsw` 可构造并运行，且与单次直跑在声明容差内一致；
+  (b) 窗口中点 10 Ω → 5 Ω 负载阶跃与边界反事实、与单窗口分段均一致。
 - 门禁：改动落在被审 solve path 上，**必须先有维护者复核记录**（§5）。
+- 说明：D3 的比较器/器件级事件不属于本阶段，随 B3 在 S9 处理。
 
 **S6 — 控制器 seam（B2 B9 A7）**
 
@@ -128,11 +129,11 @@
 - 验收：未实现能力的植物报告"不可用"而非 `limited`；每个结果记录线性化方法与验证方式；
   实现方式（解析 vs 辨识）出现在工件里。
 
-**S9 — 适配器扩面（A8 A9 A11 B7 B8 B3）**
+**S9 — 适配器扩面（A8 A9 A11 B7 B8 B3 D3）**
 
 - 交付：死区/同步整流网表模板；开关级 whole-run 适配器；多相（共享 duty + 内部相位）
   模型；`control_location=model` 的两个适配器（各对应一个 `time_model`）；
-  开关级电流模式（比较器在模型内）。
+  开关级电流模式（比较器在模型内）；比较器/器件级事件时刻（D3 的剩余部分）。
 - 验收：每一行一个独立验收；T1 测试仍然通过（新能力零内核改动）。
 
 **S10 — 收口**
@@ -152,6 +153,7 @@
 | A7 | `limited` | `protection_latency_is_one_control_period`：内核侧保护在控制周期上动作 |
 | A11 | `limited` | 路线上限 `whole_run`（`post_hoc_validation_only`） |
 | B3 | `limited` | 比较器在模型内（`actuator_control_in_model`）；模型自报的逐周期行为未经内核拦截 |
+| D3 | `limited` | 与 B3 同一限制码；比较器/器件事件在模型内求解 |
 | B8 | `limited` | ADR 0004 派生表：`stepped/model` 与 `whole_run/model` 均为 `limited` |
 | B7 | `comparable`（仅共享 duty 共相）；逐相电流环不主张 | `per_phase_current_sharing_not_modelled` |
 | C3 | `per-point`；聚合为派生 | `pss_convergence_is_tolerance_based` |
@@ -215,8 +217,9 @@ S5 修改 `backends/netlist.py` 与 `backends/ngspice_plants.py`，二者在被�
    没有这次授权，S5 不得合并，S6 的 A7 与 S9 的 `continuous` 声明也不得开始。
 3. 该授权是一次性的、按提交记录的；它不构成对后续改动的预先批准。
 4. 如果维护者拒绝或要求拆分，S5 回到"S2/S3 已发布、S5 待定"状态，
-   S4/S7/S8 以及 S6 的 B2/B9 可以继续，但 A7 与 S9 阻塞。
-
+   S4/S7/S8 以及 S6 的 B2/B9 可以继续，但 A7 与 S9 阻塞。5. **执行记录（0.13.0）：**新摘要 `200a29788392d2b3b94a9401655e6faf79de95b060fbed8ca282bd1bb4dc7b4e`，
+   验收为 `tests/test_event_boundaries.py`（D2 1.5×Tsw 对照、A4 窗口中点阶跃、D3 非零差异、
+   路线声明），已写入 `reviewed_identities.json` 的 `acceptance_ids` 与 `review_note`。
 ## 6. 回退与失败处理
 
 - 每个阶段一个提交；失败即回退到上一提交，不在同一提交里"再试一次"。

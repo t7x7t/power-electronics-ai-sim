@@ -13,27 +13,27 @@
 | 后端 | 模型 | 时间归属 | ngspice 调用 | 证据上限 |
 | --- | --- | --- | --- | --- |
 | `buck` / `boost` | **理想平均**模型（Python RK4） | 内核步进 | 无 | `comparable`（需 `verified` + `formal_comparison`） |
-| `ngspice-buck` | **开关级**异步 Buck：`PULSE` 驱动 + `SW(Ron/Roff)` + Shockley 二极管 + L/C，`IC=` 携带状态 | 内核步进 | **每个控制窗口一次** `.tran` | `comparable`（同上） |
+| `ngspice-buck` | **开关级**异步 Buck：`PULSE` 驱动 + `SW(Ron/Roff)` + Shockley 二极管 + L/C，`IC=` 携带状态 | 内核步进 | **每个求解段一次** `.tran`（段在下一个输入变更点结束） | `comparable`（同上） |
 | `whole-run-buck` | 理想平均 + 引擎内 PI | 引擎自持整段 | 自行积分 | `limited`（post-hoc only） |
 
 **常见误判：** `ngspice-buck` **不是**理想平均模型。理想平均的是 `buck`/`boost`
 （纯 Python）与 `whole-run-buck`（引擎内 PI）。"理想"在 `ngspice-buck` 里指元件理想
 （R/L/C 无寄生、无器件与温度模型），指的不是平均化。
 
-## 3. 三个直接后果（是设计后果，不是缺陷）
+## 3. 直接后果（是设计后果，不是缺陷）
 
-1. **窗口内 duty 恒定。** Plant 契约是 `advance(action, duration)`，一次传入一个标量
-   执行器值；因此窗口内的占空比必须视为零阶保持。窗口内部的波形是被采样出来的旁产物，
-   不是被整段积分的对象。（`backends/ngspice_plants.py` 模块 docstring）
-2. **补偿器必须在内核侧。** 闭环由内核的 Controller 每个控制窗口给出 `duty`；网表里没有
-   控制器。Type III 也是 Controller——输入 `vout`/`vref`，输出 `duty`——但它是插件，
-   不是网表内容。
-3. **每个窗口重启 PWM 载波。** 为了相位连续，`control_period_s` 必须是开关周期的
-   **整数倍**；否则构造期直接报错（`control_period_s must be an integer multiple of the
-   switching period for phase-continuous window solves`）。这条限制写在声明的适用域里
-   （`switch_node` 相关的 `uncheckable_rules` / assumptions）。
-4. **输入变化只在窗口边界生效。** 允许的调度键是 `time_s`、`vref`、`vin_v`、
-   `input_voltage_v`、`load_ohm`、`load_resistance_ohm`；窗口内部没有阶跃通道。
+1. **段内 duty 恒定。** Plant 契约是 `advance(action, duration)`，一次传入一个标量
+   执行器值；因此一个求解段内的占空比必须视为零阶保持。段内部的高频波形是被采样出来
+   的旁产物，不是被整段积分的对象。（`backends/ngspice_plants.py` 模块 docstring）
+2. **补偿器必须在内核侧（`control_location=kernel`）。** 闭环由内核的 Controller
+   每个控制窗口给出 `duty`；网表里没有控制器。Type III 也是 Controller——输入
+   `vout`/`vref`，输出 `duty`——但它是插件，不是网表内容。
+3. **载波相位是求解段参数，不再需要整数倍。** 段起点相位由 `window_start mod Tsw`
+   给出，网表把 PULSE 延迟渲染为到下一个载波起始的时长 `(-phase) mod Tsw`，因此任意
+   `control_period_s` 都能保持相位连续；旧的整数倍限制已在 `docs/adr/0004` 步骤 2 删除。
+4. **输入变更点按声明时刻求解。** 允许的调度键是 `time_s`、`vref`、`vin_v`、
+   `input_voltage_v`、`load_ohm`、`load_resistance_ohm`；内核在下一个变更点结束当前
+   求解段，并在新段起点重新解析输入。控制器的观测与动作仍然只发生在窗口边界。
 
 **为什么这样设计：** 不变量 I1——约束必须在运行**期间**强制执行，而不是事后重建。
 只有能逐窗口拦截的路线才配 `comparable`；一次性整段求解无法在飞行中拦截，因此
@@ -44,8 +44,8 @@
 
 | 任务形态 | 为什么不适合 | 应当怎么做 |
 | --- | --- | --- |
-| 网表内闭环（Type III 等） | 控制器不在网表里；每个窗口只有一次求解 | 把补偿器写成 Controller 插件；或另写 Adapter |
-| 贯穿整个运行的连续瞬态（软启动全程、密集开关波形） | 窗口化求解 + 每窗口重启载波 | 直接用 ngspice 生成并运行网表 |
+| 网表内闭环（Type III 等） | 控制器不在网表里；每个求解段只有一次求解 | 把补偿器写成 Controller 插件；或另写 `control_location=model` 的 Adapter（ADR 0004 步骤 3） |
+| 需要单次不可分割的整段开关级积分 | 求解段仍按窗口与变更点切分，每段重启一次 ngspice | 使用开关级 whole-run 适配器（ADR 0004 步骤 3 / `docs/61` S9），或直接用 ngspice |
 | 微秒级全波形长时导出 | 采样分辨率有界，且成本随窗口数线性增长（每窗口一个子进程） | 直接 ngspice，或降低时长/提高采样步长后接受证据降级 |
 | 器件级、电热、磁饱和、EMI | 非本仓库范围 | 走外部工具链 |
 
@@ -72,6 +72,7 @@
 - `docs/31_ngspice_backend_scope_v1.md` —— ngspice 后端范围
 - `docs/40_validity_and_authenticity_v1.md` —— 适用域声明与检查阶段
 - `docs/43_kernel_roadmap_v1.md` —— I1 不变量、T1、证据等级
+- `docs/adr/0004-solve-route-capabilities.md` —— 路线声明、载波相位与变更点分段
 - `docs/60_simulation_coverage_matrix_v1.md` —— 工况级覆盖矩阵与已登记缺口
 - `src/pe_sim/backends/ngspice_plants.py` —— 窗口化实现与适用域原文
 - `src/pe_sim/backends/whole_run_engine.py` —— 整段路线的自我降级声明

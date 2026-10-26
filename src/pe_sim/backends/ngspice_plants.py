@@ -2,9 +2,10 @@
 
 The public Plant contract advances time in small segments.  Re-running an
 external simulator for every segment would be unusable, so this adapter solves
-one zero-order-hold control window per ngspice invocation and serves the
-interior segment endpoints by interpolation.  The semantics remain those of the
-Runner: the duty ratio is constant for the whole control window.
+one zero-order-hold solve segment per ngspice invocation and serves the
+interior segment endpoints by interpolation.  The Runner ends a solve segment
+at the next change point of the external inputs, so the duty ratio is constant
+for the whole segment and the carrier phase is continuous across segments.
 
 This is a switching-level reference adapter, not a device, thermal, or product
 model.  It must be reviewed and accepted on its own evidence boundary.
@@ -80,7 +81,7 @@ def _first_signal(table: TraceTable, candidates: tuple[str, ...], description: s
 
 @dataclass(frozen=True)
 class _WindowCache:
-    """One solved zero-order-hold window expressed in absolute time."""
+    """One solved zero-order-hold solve segment expressed in absolute time."""
 
     start_s: float
     end_s: float
@@ -149,18 +150,10 @@ class NgspiceBuckPlant:
         self.load_resistance_ohm = _positive("load_resistance_ohm", load_resistance_ohm)
         self.switching_frequency_hz = _positive("switching_frequency_hz", switching_frequency_hz)
         self.control_period_s = _positive("control_period_s", control_period_s)
-        # The generated window restarts the PWM carrier at its own t=0.  That
-        # is only phase-continuous when the control window is an integer
-        # number of switching periods; otherwise the effective duty/ripple
-        # would silently change at every window boundary.
-        periods_per_window = self.control_period_s * self.switching_frequency_hz
-        nearest = round(periods_per_window)
-        ratio_tolerance = 1e-9 * max(1.0, abs(periods_per_window))
-        if nearest < 1 or abs(periods_per_window - nearest) > ratio_tolerance:
-            raise ValueError(
-                "control_period_s must be an integer multiple of the switching "
-                f"period for phase-continuous window solves; got {periods_per_window:g} periods"
-            )
+        # The carrier phase is a parameter of each solve segment, so the control
+        # period no longer has to be an integer multiple of the switching
+        # period.  The Runner splits a window at every external-input change
+        # point and passes the segment start phase to the netlist builder.
         self.switch_on_resistance_ohm = _positive("switch_on_resistance_ohm", switch_on_resistance_ohm)
         self.switch_off_resistance_ohm = _positive("switch_off_resistance_ohm", switch_off_resistance_ohm)
         self.diode_saturation_current_a = _positive("diode_saturation_current_a", diode_saturation_current_a)
@@ -349,9 +342,10 @@ class NgspiceBuckPlant:
         """Declare the reviewed switching-reference model limits.
 
         The netlist represents the switch and diode explicitly, so CCM/DCM is
-        a reported regime rather than a validity requirement.  The hard limit
-        is the carrier-restart rule: one control window must contain an
-        integer number of switching periods.
+        a reported regime rather than a validity requirement.  The carrier
+        phase is a parameter of each solve segment, so the control period may
+        be any positive duration, not an integer multiple of the switching
+        period.
         """
 
         parameters = self._parameters()
@@ -373,7 +367,8 @@ class NgspiceBuckPlant:
                 "Shockley diode with the declared saturation current and emission coefficient",
                 "linear inductor and capacitor (no saturation, ESR, or ESL)",
                 "no thermal state or temperature-dependent device parameters",
-                "constant duty ratio within each solved control window",
+                "constant duty ratio within each solved segment; external inputs "
+                "may change only at declared change points",
             ),
             operating_ranges=(
                 OperatingRange(
@@ -399,14 +394,6 @@ class NgspiceBuckPlant:
                 ),
             ),
             numerical_limits=(
-                NumericalLimit(
-                    "control_period.min_switching_periods",
-                    1.0,
-                    "1",
-                    strength="hard",
-                    basis="structural",
-                    note="the window netlist restarts the PWM carrier",
-                ),
                 NumericalLimit(
                     "samples_per_switching_period.min",
                     20.0,
@@ -620,12 +607,14 @@ class NgspiceBuckPlant:
         horizon = self.control_period_s if duration_s is None else float(duration_s)
         if not math.isfinite(horizon) or horizon <= 0:
             raise ValueError("duration_s must be finite and positive")
+        switching_period_s = 1.0 / self.switching_frequency_hz
         return self._netlist_builder.render(
             self._parameters(),
             duty=float(duty),
             duration_s=horizon,
             solver=self.solver,
             sample_step_s=self.sample_step_s,
+            carrier_phase_s=self.time_s % switching_period_s,
         )
 
     def topology_descriptor(self):
@@ -653,7 +642,19 @@ class NgspiceBuckPlant:
 
     def _solve_window(self, duty: float, duration_s: float) -> _WindowCache:
         window_start = self.time_s
-        horizon = max(float(duration_s), self.control_period_s)
+        # Solve to the end of the current control window, never past it.  A
+        # sub-segment call can therefore reuse the cached table, while a change
+        # point inside the window forces a new solve because the inputs no
+        # longer match.  ``max(duration, control_period_s)`` used to overrun
+        # the window end on a short final segment; this bound cannot.
+        period = self.control_period_s
+        cycles = math.floor(window_start / period + 1e-9)
+        window_end = (cycles + 1) * period
+        if window_end - window_start <= 1e-12:
+            window_end += period
+        horizon = max(float(duration_s), window_end - window_start)
+        switching_period_s = 1.0 / self.switching_frequency_hz
+        carrier_phase_s = window_start % switching_period_s
         parameters = self._parameters()
         netlist = self._netlist_builder.render(
             parameters,
@@ -661,6 +662,7 @@ class NgspiceBuckPlant:
             duration_s=horizon,
             solver=self.solver,
             sample_step_s=self.sample_step_s,
+            carrier_phase_s=carrier_phase_s,
         )
         result = self._run_netlist(netlist)
         table = result.table

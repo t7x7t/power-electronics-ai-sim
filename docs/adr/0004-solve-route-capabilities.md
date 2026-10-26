@@ -3,10 +3,9 @@
 ## Status
 
 Accepted, 2026-10-26. Step 1 (declarations, derived cap, manifest reporting) is
-implemented in 0.10.1 and behaviour-neutral; steps 2–3 are sequenced by
-`docs/61_gap_closure_plan_v1.md` as S4 and S9. Nothing here changes behaviour
-until step 2 lands, and step 2 requires a maintainer review record for the
-reviewed solve path.
+implemented in 0.10.1; step 2 (carrier phase and change-point solve segments) is
+implemented in 0.13.0 with a maintainer review record for the reviewed solve
+path; step 3 is sequenced by `docs/61_gap_closure_plan_v1.md` as S9.
 
 ## Context
 
@@ -76,10 +75,13 @@ record. An adapter still may not certify its own level (invariant I2).
 
 ### 3. Remove the two over-constraints by making the assumption a parameter
 
-- **Carrier phase.** The window netlist takes the window start phase,
-  `TD = window_start mod Tsw`. The integer-multiple restriction and the
-  `uncheckable_rules` entry that states it are deleted, because the assumption
-  is no longer implicit.
+- **Carrier phase.** The window netlist takes the segment-start carrier phase,
+  `phase = segment_start mod Tsw`, and renders the PULSE delay as
+  `(-phase) mod Tsw`.  The delay is the time to the **next** absolute carrier
+  start, not the phase itself; using the phase directly only happens to be
+  correct when the segment starts at 0 or half a period.  The integer-multiple
+  restriction and the `uncheckable_rules` entry that states it are deleted,
+  because the assumption is no longer implicit.
 - **Solve-segment boundary.** A solve segment ends at the next *change point* of
   `(duty, vin, load, vref)`, not at `max(duration, control_period_s)`.
   `_advance_segments` resolves the external input per segment instead of once
@@ -131,17 +133,9 @@ These are the operative part of this ADR:
 
 Each step is independently verifiable and each leaves the suite green.
 
-1. **Declarations and derivation, no behaviour change.** Add the two fields with
-   defaults, the derived cap/limitation table, and manifest reporting. All
-   built-in plants declare what they can do *today*
-   (`stepped/kernel/window` for `buck`, `boost`, `ngspice-buck`;
-   `whole_run/model/window` for `whole-run-buck`). Acceptance: the full suite is
-   unchanged, and a test asserts that no consumer derives a cap locally.
-2. **Remove the over-constraints.** Carrier phase, change-point segment
-   boundaries, `ngspice-buck` declares `continuous`. Acceptance: (a)
-   `control_period_s = 1.5 × Tsw` constructs and runs with no jump in `vout` or
-   inductor current across window boundaries; (b) a mid-window 10 Ω → 5 Ω load
-   step produces a phase-continuous waveform that matches a single direct
-   ngspice run within the declared tolerance. Requires the pin review record.
+1. **Declarations and derivation, no behaviour change.** Implemented in 0.10.1.
+2. **Remove the over-constraints.** Implemented in 0.13.0; the reviewed
+   `ngspice-buck` pin carries the review record.  D3's comparator/device events
+   remain outside this step and are handled with B3.
 3. **New adapters for `control_location = model`**, one per time model, both
    capped at `limited`. Zero kernel edits, per T1.

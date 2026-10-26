@@ -56,6 +56,7 @@ from .runtime import FakeLoadPlant, FakePlant
 from .time_model import (
     CONTROL_LOCATION_KERNEL,
     CONTROL_LOCATION_MODEL,
+    EVENT_GRANULARITY_CONTINUOUS,
     EVENT_GRANULARITY_WINDOW,
     TIME_MODEL_WHOLE_RUN,
 )
@@ -379,7 +380,10 @@ _BUILTIN_REGISTRATIONS: tuple[PlantRegistration, ...] = (
         trust_level="reference",
         export_eligible=True,
         control_location=CONTROL_LOCATION_KERNEL,
-        event_granularity=EVENT_GRANULARITY_WINDOW,
+        # The Runner splits a solve segment at every declared input change and
+        # the netlist carries the segment-start carrier phase, so a change
+        # inside a control window is solved where it is declared.
+        event_granularity=EVENT_GRANULARITY_CONTINUOUS,
         topology_exporter=_export_ngspice_buck_topology,
     ),
     PlantRegistration(

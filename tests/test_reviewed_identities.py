@@ -56,9 +56,14 @@ def test_plant_identity_reports_the_same_review_status():
     assert implementation["review"]["status"] == "reviewed"
 
 
-def test_control_period_must_be_an_integer_multiple_of_the_switching_period():
-    with pytest.raises(ValueError, match="integer multiple"):
-        _plant(control_period_s=25e-6, switching_frequency_hz=100e3)
+def test_a_non_integer_control_ratio_is_accepted_after_the_phase_parameter():
+    # ADR 0004 step 2: the carrier phase is a solve-segment parameter, so the
+    # old integer-multiple restriction is gone.  The period is still validated.
+    plant = _plant(control_period_s=25e-6, switching_frequency_hz=100e3)
+    assert plant.control_period_s == pytest.approx(25e-6)
+
+    with pytest.raises(ValueError, match="positive"):
+        _plant(control_period_s=0.0, switching_frequency_hz=100e3)
 
 
 def test_preview_netlist_does_not_invoke_the_solver():

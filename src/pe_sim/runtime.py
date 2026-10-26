@@ -497,7 +497,17 @@ class Runner:
         # route's own default": a stepped route closes the loop in the kernel,
         # while a whole-run engine necessarily holds the compensator itself.  An
         # explicit ``kernel`` with ``whole_run`` is contradictory and is refused
-        # by the record before anything touches the filesystem.
+        # by the record before anything touches the filesystem.  When a
+        # registered plant is used, its own declarations win over the generic
+        # default, so the manifest cannot understate a capability the reviewed
+        # registration already declares.
+        if control_location is None or event_granularity is None:
+            declared = _registration_route_defaults(spec, time_model)
+            if declared is not None:
+                if control_location is None:
+                    control_location = declared[0]
+                if event_granularity is None:
+                    event_granularity = declared[1]
         route = _route_capabilities(time_model, control_location, event_granularity)
         # A plant that publishes ``manifest_identity`` claims to be a specific
         # registered model.  The CLI cross-checks that claim against the
@@ -852,7 +862,8 @@ class Runner:
                         plant,
                         last_action,
                         offset,
-                        _command_at(spec.input_schedule, cycle_start),
+                        spec.input_schedule,
+                        cycle_start,
                         spec.timebase.plant_step_s,
                         audit,
                         index,
@@ -946,7 +957,8 @@ class Runner:
                         plant,
                         last_action,
                         hold,
-                        command,
+                        spec.input_schedule,
+                        current_time,
                         spec.timebase.plant_step_s,
                         audit,
                         index,
@@ -960,7 +972,8 @@ class Runner:
                     plant,
                     action,
                     remaining,
-                    command,
+                    spec.input_schedule,
+                    current_time,
                     spec.timebase.plant_step_s,
                     audit,
                     index,
@@ -1294,17 +1307,51 @@ def _verify_initial_state_echo(initial_state: InitialState, applied: Any, plant:
         )
 
 
-def _advance_segments(plant: Any, action: float, duration: float, external: Mapping[str, Any], plant_step: float | None, audit: _Audit, step_index: int, *, expected_end_s: float | None = None, tolerance_s: float = 1e-12) -> PlantObservation | None:
+def _next_change_point(schedule: tuple[Mapping[str, Any], ...], after_s: float, until_s: float) -> float | None:
+    """Return the first scheduled change in ``(after_s, until_s]``, if any.
+
+    A change exactly at ``after_s`` is not a boundary: the command resolved at
+    ``after_s`` already contains it.  A change exactly at ``until_s`` needs no
+    split because the segment ends there anyway.
+    """
+
+    change: float | None = None
+    for item in schedule:
+        start = float(item.get("time_s", 0.0))
+        if start > after_s + 1e-12 and start <= until_s - 1e-12:
+            if change is None or start < change:
+                change = start
+    return change
+
+
+def _advance_segments(plant: Any, action: float, duration: float, schedule: tuple[Mapping[str, Any], ...], start_time_s: float, plant_step: float | None, audit: _Audit, step_index: int, *, expected_end_s: float | None = None, tolerance_s: float = 1e-12) -> PlantObservation | None:
+    """Advance one action over ``duration``, split at input change points.
+
+    The external input is resolved at each solve-segment start instead of once
+    per control window, so a load, line, or reference change inside a window is
+    applied where it is declared rather than at the next boundary.  The action
+    itself is still constant for the whole call: control updates remain a
+    window-boundary event.
+    """
+
     if duration <= 1e-15:
         return None
-    quantum, remaining = float(plant_step or duration), float(duration)
+    end_time = start_time_s + float(duration)
+    segment_start = float(start_time_s)
+    quantum = float(plant_step) if plant_step else None
     last_observation: PlantObservation | None = None
-    while remaining > 1e-15:
-        segment = min(quantum, remaining)
-        value = audit.call("plant", "advance", lambda segment=segment: plant.advance(action, segment, external_input=external), step_index=step_index)
-        if isinstance(value, PlantObservation):
-            last_observation = value
-        remaining -= segment
+    while segment_start < end_time - 1e-15:
+        change = _next_change_point(schedule, segment_start, end_time)
+        segment_end = end_time if change is None else change
+        external = _command_at(schedule, segment_start)
+        remaining = segment_end - segment_start
+        while remaining > 1e-15:
+            segment = remaining if quantum is None else min(quantum, remaining)
+            value = audit.call("plant", "advance", lambda segment=segment: plant.advance(action, segment, external_input=external), step_index=step_index)
+            if isinstance(value, PlantObservation):
+                last_observation = value
+            remaining -= segment
+        segment_start = segment_end
     if expected_end_s is not None and isinstance(last_observation, PlantObservation):
         if not math.isfinite(float(last_observation.time_s)) or abs(float(last_observation.time_s) - float(expected_end_s)) > float(tolerance_s):
             raise ValueError("plant did not reach the requested time window endpoint")
@@ -1446,6 +1493,40 @@ def _preflight_document(
         "gates": gates,
         "applicability": applicability,
     }
+
+
+def _registration_route_defaults(
+    spec: ExperimentSpec,
+    time_model: str,
+) -> tuple[str, str] | None:
+    """Return a registered plant's declared route, or ``None`` when unknown.
+
+    The CLI always passes the registration's declarations explicitly.  A Python
+    caller that constructs the registered adapter itself may omit them; in that
+    case the reviewed registration is the better default than the generic
+    ``kernel``/``window`` pair.  The declaration only applies when the
+    registration declares the same ``time_model`` the caller selected: a
+    registration for a stepped plant says nothing about a whole-run dispatch.
+    An id that resolves to nothing keeps the generic defaults, so ad-hoc
+    adapters are unaffected.
+    """
+
+    try:
+        registration = resolve(spec.plant_id)
+    except KeyError:
+        from .builtin_plants import load_builtin_plants
+
+        try:
+            load_builtin_plants()
+        except ValueError:
+            pass
+        try:
+            registration = resolve(spec.plant_id)
+        except KeyError:
+            return None
+    if registration.time_model != time_model:
+        return None
+    return (registration.control_location, registration.event_granularity)
 
 
 def _route_capabilities(
