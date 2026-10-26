@@ -40,6 +40,38 @@ inventory, the `pe-sim.release-record.v1` approval record, and the
 [docs/53_release_governance_v1.md](docs/53_release_governance_v1.md). Nothing in
 that procedure signs an artifact or tag, and CI never approves or publishes.
 
+## Capability boundary: what this kernel does not solve
+
+The kernel drives a **stepped** closed loop: one solve per control window, one
+scalar actuator (`duty`), and constraints evaluated at every window boundary so
+they can block a run in flight. That is invariant I1, and it is also why the
+adapters have the shape they have. Before choosing this tool, check the four
+consequences:
+
+- **Duty is constant inside a control window.** `ngspice-buck` runs one
+  switching-level `.tran` per window and carries state through `IC=`; the
+  waveform inside a window is sampled, not integrated across the run.
+  `ngspice-buck` is *not* an averaged model — the averaged ones are `buck` /
+  `boost` (pure Python RK4) and `whole-run-buck`.
+- **The compensator lives in the kernel, not in the netlist.** A Type III
+  compensator is a `Controller` plugin (in `vout`/`vref`, out `duty`), and the
+  closed loop closes through the Runner.
+- **`control_period_s` must be an integer multiple of the switching period**,
+  because each window restarts the PWM carrier.
+- **Schedules change only at window boundaries** (`time_s`, `vref`, `vin_v`,
+  `input_voltage_v`, `load_ohm`, `load_resistance_ohm`).
+
+If a task needs an in-netlist controller, a continuous transient across the
+whole run, or device/thermal models, the honest answer is to drive ngspice
+directly — and to accept losing constraint enforcement, qualification, evidence
+levels, the auditable package, and L1 attestation. Two supported ways to stay
+inside the framework are writing a `Controller` (Type III included) and writing
+an `Adapter` (T1 requires zero kernel edits; the route then declares its own
+evidence cap, as `whole-run-buck` does at `limited`).
+
+Full statement, including the three-backend comparison and the bypass criteria:
+[docs/58_capability_boundary_v1.md](docs/58_capability_boundary_v1.md).
+
 ## Quick start (installed package)
 
 A user who does not read source can run, view, and verify with three documented
