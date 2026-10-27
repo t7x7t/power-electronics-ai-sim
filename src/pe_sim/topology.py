@@ -297,6 +297,111 @@ def boost_topology_descriptor(plant: Any | None = None) -> TopologyDescriptor:
     return TopologyDescriptor("boost", components, nets, metadata={"model_level": "L1", "model_kind": "ideal_averaged_reference"})
 
 
+def multiphase_buck_topology_descriptor(plant: Any | None = None) -> TopologyDescriptor:
+    """Build the semantic graph for the averaged multiphase Buck reference.
+
+    The graph declares one averaged switch and one inductor per phase, all
+    sharing the same duty-control net, input source, output capacitor, and
+    load.  The per-phase current-sharing loop is not a component because the
+    model does not represent it.
+    """
+
+    params = _plant_parameters(plant)
+    raw_phases = getattr(plant, "phases", None)
+    if isinstance(raw_phases, bool) or not isinstance(raw_phases, (int, float)):
+        raise ValueError("multiphase_buck topology requires an integer phase count")
+    phases = int(raw_phases)
+    if phases != raw_phases or not 2 <= phases <= 8:
+        raise ValueError("multiphase_buck topology requires phases in [2, 8]")
+    per_phase_inductance = params.get("inductance_h")
+    if per_phase_inductance is None:
+        raise ValueError("multiphase_buck topology requires inductance_h")
+
+    nets = tuple(
+        TopologyNet(net_id, label=label, kind=kind)
+        for net_id, label, kind in (
+            ("vin", "Vin", "electrical"),
+            ("vout", "Vout", "electrical"),
+            ("gnd", "GND", "reference"),
+            ("duty", "Shared duty", "control"),
+        )
+    ) + tuple(
+        TopologyNet(f"sw_{index}", f"Switch node {index}", "electrical")
+        for index in range(phases)
+    )
+
+    components: list[TopologyComponent] = [
+        _component(
+            "vin_source",
+            "voltage_source",
+            (("positive", "vin", "output"), ("negative", "gnd", "passive")),
+            parameters={"voltage_v": params.get("input_voltage_v")},
+            symbol_id="source.dc",
+        )
+    ]
+    for index in range(phases):
+        components.append(
+            _component(
+                f"switch_{index}",
+                "averaged_switch",
+                (
+                    ("input", "vin", "input"),
+                    ("output", f"sw_{index}", "output"),
+                    ("control", "duty", "control"),
+                ),
+                parameters={"phase_index": index},
+                symbol_id="switch.averaged",
+            )
+        )
+        components.append(
+            _component(
+                f"inductor_{index}",
+                "inductor",
+                (
+                    ("input", f"sw_{index}", "passive"),
+                    ("output", "vout", "passive"),
+                ),
+                parameters={
+                    "phase_index": index,
+                    "inductance_h": per_phase_inductance,
+                },
+                symbol_id="inductor",
+            )
+        )
+    components.extend(
+        (
+            _component(
+                "capacitor",
+                "capacitor",
+                (("positive", "vout", "passive"), ("negative", "gnd", "passive")),
+                parameters={"capacitance_f": params.get("capacitance_f")},
+                symbol_id="capacitor",
+            ),
+            _component(
+                "load",
+                "resistor_load",
+                (("positive", "vout", "passive"), ("negative", "gnd", "passive")),
+                parameters={"resistance_ohm": params.get("load_resistance_ohm")},
+                symbol_id="resistor",
+            ),
+        )
+    )
+    return TopologyDescriptor(
+        "multiphase_buck",
+        tuple(components),
+        nets,
+        metadata={
+            "model_level": "L1",
+            "model_kind": "ideal_averaged_multiphase_reference",
+            "phases": phases,
+            "effective_inductance_h": per_phase_inductance / phases,
+            "switching_frequency_hz": params.get("switching_frequency_hz"),
+            "phase_offsets_deg": tuple(360.0 * index / phases for index in range(phases)),
+            "per_phase_current_sharing": "equal_share_declared_not_modelled",
+        },
+    )
+
+
 def ngspice_buck_topology_descriptor(plant: Any | None = None) -> TopologyDescriptor:
     """Build the semantic graph for the switching-level ngspice Buck reference.
 
@@ -334,14 +439,57 @@ def ngspice_buck_topology_descriptor(plant: Any | None = None) -> TopologyDescri
     )
 
 
+def ngspice_sync_buck_topology_descriptor(plant: Any | None = None) -> TopologyDescriptor:
+    """Build the semantic graph for the synchronous-Buck switching reference.
+
+    The graph has a high-side and a low-side controlled switch, two separate
+    gate-drive nets, and no freewheeling diode.  It is a display/contract
+    identity, not a netlist or an electrical truth claim.
+    """
+
+    params = _plant_parameters(plant)
+    nets = tuple(TopologyNet(net_id, label=label, kind=kind) for net_id, label, kind in (
+        ("vin", "Vin", "electrical"), ("sw", "Switch node", "electrical"),
+        ("vout", "Vout", "electrical"), ("gnd", "GND", "reference"),
+        ("pwm_hs", "High-side PWM", "control"), ("pwm_ls", "Low-side PWM", "control"),
+    ))
+    components = (
+        _component("vin_source", "voltage_source", (("positive", "vin", "output"), ("negative", "gnd", "passive")), parameters={"voltage_v": params.get("input_voltage_v")}, symbol_id="source.dc"),
+        _component("pwm_hs_source", "pulse_source", (("positive", "pwm_hs", "output"), ("negative", "gnd", "passive")), parameters={"switching_frequency_hz": params.get("switching_frequency_hz"), "dead_time_s": params.get("dead_time_s")}, symbol_id="source.pulse"),
+        _component("pwm_ls_source", "pulse_source", (("positive", "pwm_ls", "output"), ("negative", "gnd", "passive")), parameters={"switching_frequency_hz": params.get("switching_frequency_hz"), "dead_time_s": params.get("dead_time_s")}, symbol_id="source.pulse"),
+        _component("high_side_switch", "voltage_controlled_switch", (("input", "vin", "input"), ("output", "sw", "output"), ("control", "pwm_hs", "control")), parameters={}, symbol_id="switch.ideal"),
+        _component("low_side_switch", "voltage_controlled_switch", (("input", "sw", "input"), ("output", "gnd", "passive"), ("control", "pwm_ls", "control")), parameters={}, symbol_id="switch.ideal"),
+        _component("inductor", "inductor", (("input", "sw", "passive"), ("output", "vout", "passive")), parameters={"inductance_h": params.get("inductance_h")}, symbol_id="inductor"),
+        _component("capacitor", "capacitor", (("positive", "vout", "passive"), ("negative", "gnd", "passive")), parameters={"capacitance_f": params.get("capacitance_f")}, symbol_id="capacitor"),
+        _component("load", "resistor_load", (("positive", "vout", "passive"), ("negative", "gnd", "passive")), parameters={"resistance_ohm": params.get("load_resistance_ohm")}, symbol_id="resistor"),
+    )
+    return TopologyDescriptor(
+        "buck",
+        components,
+        nets,
+        metadata={
+            "model_level": "L2",
+            "model_kind": "ngspice_sync_buck_reference",
+            "backend": "ngspice-sync-buck",
+            "dead_time_s": params.get("dead_time_s"),
+            "control_period_s": params.get("control_period_s"),
+            "freewheeling_diode": False,
+        },
+    )
+
+
 def export_topology_descriptor(plant: Any) -> TopologyDescriptor:
     """Export a known reference topology; unknown custom plants fail closed."""
 
     topology = str(getattr(plant, "topology", ""))
     model_kind = str(getattr(plant, "model_kind", "ideal_averaged_reference"))
+    if topology == "multiphase_buck":
+        return multiphase_buck_topology_descriptor(plant)
     if topology == "buck":
         if model_kind == "ngspice_switching_reference":
             return ngspice_buck_topology_descriptor(plant)
+        if model_kind == "ngspice_sync_buck_reference":
+            return ngspice_sync_buck_topology_descriptor(plant)
         return buck_topology_descriptor(plant)
     if topology == "boost":
         return boost_topology_descriptor(plant)
@@ -393,5 +541,6 @@ def _plant_parameters(plant: Any | None) -> dict[str, Any]:
             "load_resistance_ohm",
             "switching_frequency_hz",
             "control_period_s",
+            "dead_time_s",
         )
     }

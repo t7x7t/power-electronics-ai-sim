@@ -44,12 +44,14 @@ from .backends import (
     BackendNotFoundError,
     NativeBuckNetlistBuilder,
     NgspiceBuckPlant,
+    NgspiceSyncBuckPlant,
     PyspiceBuckNetlistBuilder,
     PyspiceUnavailableError,
     WholeRunBuckPlant,
     resolve_ngspice_executable,
 )
 from .contracts import Timebase
+from .multiphase_plants import MultiphaseBuckPlant
 from .plant_registry import PlantRegistration, register_plant, registered_plants
 from .reference_plants import BuckPlant, BoostPlant
 from .runtime import FakeLoadPlant, FakePlant
@@ -64,7 +66,9 @@ from .topology import (
     TopologyDescriptor,
     buck_topology_descriptor,
     export_topology_descriptor,
+    multiphase_buck_topology_descriptor,
     ngspice_buck_topology_descriptor,
+    ngspice_sync_buck_topology_descriptor,
 )
 
 
@@ -94,6 +98,17 @@ _REFERENCE_PLANT_DEFAULTS: dict[str, object] = {
 }
 _REFERENCE_PLANT_CONFIG_KEYS = frozenset(_REFERENCE_PLANT_DEFAULTS)
 
+_MULTIPHASE_BUCK_DEFAULTS: dict[str, object] = {
+    "input_voltage_v": 12.0,
+    "inductance_h": 100e-6,
+    "capacitance_f": 470e-6,
+    "load_resistance_ohm": 10.0,
+    "phases": 4,
+    "switching_frequency_hz": 100e3,
+    "integration_step_s": 1e-6,
+}
+_MULTIPHASE_BUCK_CONFIG_KEYS = frozenset(_MULTIPHASE_BUCK_DEFAULTS)
+
 _NGSPICE_BUCK_DEFAULTS: dict[str, object] = {
     "input_voltage_v": 12.0,
     "inductance_h": 100e-6,
@@ -108,6 +123,15 @@ _NGSPICE_BUCK_DEFAULTS: dict[str, object] = {
     "timeout_s": 30.0,
     "sample_step_s": None,
     "keep_artifacts": False,
+}
+
+# The synchronous reference keeps the same electrical defaults and adds the
+# dead time that separates the two gate signals.  The diode fields are retained
+# only because the shared factory vocabulary is interface parity; the
+# synchronous netlist does not render a diode.
+_NGSPICE_SYNC_BUCK_DEFAULTS: dict[str, object] = {
+    **_NGSPICE_BUCK_DEFAULTS,
+    "dead_time_s": 100e-9,
 }
 
 # The whole-run engine owns its own PI loop, so the gains below are engine
@@ -145,6 +169,10 @@ _SWITCHING_TOPOLOGY_PARAMETERS: tuple[str, ...] = (
     "switching_frequency_hz",
     "control_period_s",
 )
+_SYNC_SWITCHING_TOPOLOGY_PARAMETERS: tuple[str, ...] = (
+    *_SWITCHING_TOPOLOGY_PARAMETERS,
+    "dead_time_s",
+)
 
 
 def _reject_unknown_keys(plant_id: str, config: Mapping[str, Any], allowed: frozenset[str]) -> None:
@@ -177,6 +205,15 @@ def _build_boost(config: Mapping[str, Any], context: PlantBuildContext) -> Boost
     return BoostPlant(**values)
 
 
+def _build_multiphase_buck(
+    config: Mapping[str, Any], context: PlantBuildContext
+) -> MultiphaseBuckPlant:
+    _reject_unknown_keys("multiphase-buck", config, _MULTIPHASE_BUCK_CONFIG_KEYS)
+    values = dict(_MULTIPHASE_BUCK_DEFAULTS)
+    values.update(config)
+    return MultiphaseBuckPlant(**values)
+
+
 def _build_whole_run_buck(
     config: Mapping[str, Any], context: PlantBuildContext
 ) -> WholeRunBuckPlant:
@@ -199,6 +236,40 @@ def _build_whole_run_buck(
             )
         cadence = context.timebase.control_period_s
     return WholeRunBuckPlant(cadence_s=cadence, **values)
+
+
+def _build_ngspice_sync_buck(
+    config: Mapping[str, Any], context: PlantBuildContext
+) -> NgspiceSyncBuckPlant:
+    """Build the synchronous-Buck switching reference with explicit dead time."""
+
+    _reject_unknown_keys("ngspice-sync-buck", config, frozenset(_NGSPICE_SYNC_BUCK_DEFAULTS))
+    values = dict(_NGSPICE_SYNC_BUCK_DEFAULTS)
+    values.update(config)
+    control_period = values.pop("control_period_s")
+    if control_period is None:
+        if context.timebase is None:
+            raise ValueError(
+                "ngspice-sync-buck requires control_period_s in plant_config or timebase"
+            )
+        control_period = context.timebase.control_period_s
+    if context.model_builder == "pyspice":
+        raise ValueError(
+            "ngspice-sync-buck supports only the native synchronous netlist builder"
+        )
+    if context.require_executable:
+        try:
+            resolution = resolve_ngspice_executable(context.ngspice_executable)
+        except (BackendNotFoundError, BackendConfigError) as exc:
+            raise ValueError(str(exc)) from exc
+        executable = resolution.executable
+    else:
+        executable = str(context.ngspice_executable or "ngspice")
+    return NgspiceSyncBuckPlant(
+        control_period_s=float(control_period),
+        ngspice_executable=executable,
+        **values,
+    )
 
 
 def _build_ngspice_buck(config: Mapping[str, Any], context: PlantBuildContext) -> NgspiceBuckPlant:
@@ -289,6 +360,30 @@ def _export_boost_topology(parameters: Mapping[str, Any]) -> TopologyDescriptor:
     return _export_averaged_topology(BoostPlant, parameters)
 
 
+def _export_multiphase_buck_topology(
+    parameters: Mapping[str, Any]
+) -> TopologyDescriptor:
+    """Display the multiphase Buck graph from recorded parameters."""
+
+    values: dict[str, Any] = dict(
+        _recorded_parameters(parameters, tuple(_MULTIPHASE_BUCK_DEFAULTS))
+    )
+    phases = values["phases"]
+    if not float(phases).is_integer():
+        raise ValueError("recorded phases must be an integer")
+    values["phases"] = int(phases)
+    return multiphase_buck_topology_descriptor(MultiphaseBuckPlant(**values))
+
+
+def _export_ngspice_sync_buck_topology(
+    parameters: Mapping[str, Any]
+) -> TopologyDescriptor:
+    """Display the synchronous-Buck graph from recorded parameters."""
+
+    values = _recorded_parameters(parameters, _SYNC_SWITCHING_TOPOLOGY_PARAMETERS)
+    return ngspice_sync_buck_topology_descriptor(SimpleNamespace(**values))
+
+
 def _export_ngspice_buck_topology(parameters: Mapping[str, Any]) -> TopologyDescriptor:
     """Display the reviewed switching-level Buck graph from recorded parameters.
 
@@ -371,6 +466,19 @@ _BUILTIN_REGISTRATIONS: tuple[PlantRegistration, ...] = (
         topology_exporter=_export_boost_topology,
     ),
     PlantRegistration(
+        plant_id="multiphase-buck",
+        backend_id="multiphase-buck",
+        factory=_build_multiphase_buck,
+        class_name="MultiphaseBuckPlant",
+        schedule_keys=_BASE_SCHEDULE_KEYS | _EXTERNAL_INPUT_SCHEDULE_KEYS,
+        config_keys=_MULTIPHASE_BUCK_CONFIG_KEYS,
+        trust_level="reference",
+        export_eligible=True,
+        control_location=CONTROL_LOCATION_KERNEL,
+        event_granularity=EVENT_GRANULARITY_WINDOW,
+        topology_exporter=_export_multiphase_buck_topology,
+    ),
+    PlantRegistration(
         plant_id="ngspice-buck",
         backend_id="ngspice-buck",
         factory=_build_ngspice_buck,
@@ -385,6 +493,19 @@ _BUILTIN_REGISTRATIONS: tuple[PlantRegistration, ...] = (
         # inside a control window is solved where it is declared.
         event_granularity=EVENT_GRANULARITY_CONTINUOUS,
         topology_exporter=_export_ngspice_buck_topology,
+    ),
+    PlantRegistration(
+        plant_id="ngspice-sync-buck",
+        backend_id="ngspice-sync-buck",
+        factory=_build_ngspice_sync_buck,
+        class_name="NgspiceSyncBuckPlant",
+        schedule_keys=_BASE_SCHEDULE_KEYS | _EXTERNAL_INPUT_SCHEDULE_KEYS,
+        config_keys=None,
+        trust_level="reference",
+        export_eligible=True,
+        control_location=CONTROL_LOCATION_KERNEL,
+        event_granularity=EVENT_GRANULARITY_CONTINUOUS,
+        topology_exporter=_export_ngspice_sync_buck_topology,
     ),
     PlantRegistration(
         plant_id="whole-run-buck",

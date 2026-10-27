@@ -31,7 +31,7 @@
 | S6 | 0.14.1 | —（已完成：控制器 seam） | `controller` seam | S5 | 已交付：B2 注册表/Type II-III（0.14.0）；B9/A7 保护与短路恢复（0.14.1） |
 | S7 | 0.15.0 | —（已完成：study 计划层） | `study` seam | S1 | 已交付：A10 C3 C9 闭合；聚合恒为 `per-point`，不自动继承 `comparable` |
 | S8 | 0.16.0 | —（已完成：capability 入口） | `capability` seam | S7 | 已交付：C4 C5 C6 闭合；缺失能力 = 不可用（不是 `limited`）；AC/阻抗方法必须自报 |
-| S9 | 0.17.0 | A8 A9 A11 B7 B8 B3 D3 | `adapter` 扩面 + 比较器事件 | S5 | T1 仍然成立：新能力是注册，不是内核分支 |
+| S9 | 0.17.0 | A11 B8 B3 D3 | `adapter` 扩面 + 比较器事件 | S5 | T1 仍然成立：新能力是注册，不是内核分支；A8/A9/B7 已交付 |
 | S10 | 0.18.0 | —（收口与发布） | 发布 | S1–S9 | `docs/60` 无 `kernel_gap` / `expressible` 残留 |
 
 ### 2.1 为什么是这个顺序
@@ -208,12 +208,21 @@
   （48 V→12 V/5 A；AC、输入阻抗、损耗三种 kind 同点串联）与写失败回归后，
   `tests/test_capability_cli.py` **11 passed**。
 
-**S9 — 适配器扩面（A8 A9 A11 B7 B8 B3 D3）**
+**S9 — 适配器扩面（A11 B8 B3 D3；A8/A9/B7 已交付）**
 
 - 交付：死区/同步整流网表模板；开关级 whole-run 适配器；多相（共享 duty + 内部相位）
   模型；`control_location=model` 的两个适配器（各对应一个 `time_model`）；
   开关级电流模式（比较器在模型内）；比较器/器件级事件时刻（D3 的剩余部分）。
 - 验收：每一行一个独立验收；T1 测试仍然通过（新能力零内核改动）。
+- 已交付（第一片，未提升版本）：A9 `ngspice-sync-buck`（`backends/sync_buck.py`，
+  模板 `ngspice-sync-buck-v1`：高/低边双开关、两侧死区、PWL 任意载波相位、无二极管）与
+  A8 导通模式检测（`classify_conduction_regime`：`ccm`/`dcm`/`forced_ccm`/`idle`/`burst`）；
+  B7 `multiphase-buck`（`multiphase_plants.py`：2–8 相共享 duty、内部相位偏移、总电流平均
+  模型、`L/N` 等效电感；逐相均流/增减相不建模）。测试：
+  `tests/test_sync_buck_plant.py` **15 passed**（含真实 ngspice 窗口）、
+  `tests/test_multiphase_plant.py` **14 passed**；全量 **1705 passed / 2 skipped**。
+  `docs/60` 的 A8/A9/B7 已置 `covered`。新 solve path 尚未获得维护者 review pin，
+  正式比较仍封顶 `limited`；A11/B8/B3/D3 尚未开始。
 
 **S10 — 收口**
 

@@ -22,8 +22,9 @@ used only as the reference circuit-construction frontend.
 | Area | Level | Scope | Boundary |
 | --- | --- | --- | --- |
 | `NgspiceBuckPlant` | Supported locally | Ideal switching asynchronous Buck with a voltage-controlled switch, freewheeling diode, inductor, capacitor, and resistive load, solved by a separately installed ngspice executable. | One reviewed circuit; ideal elements only. No device, magnetic, thermal, or loss model. |
+| `NgspiceSyncBuckPlant` | Supported locally | Ideal switching synchronous Buck with high-side and low-side voltage-controlled switches, explicit dead time on both transitions, and no freewheeling diode; solved by ngspice. | Separate template `ngspice-sync-buck-v1`; ideal elements; dead-time is a timing parameter; no body-diode, gate-drive, thermal, or loss model. |
 | PySpice construction (reference path) | Verified local reference (opt-in) | `--model-builder pyspice` builds the reference Buck through the PySpice object API and executes the generated netlist with the reviewed ngspice adapter. | Requires a separate PySpice 1.5 installation. PySpice native execution is not supported against ngspice 41; see `docs/34`. |
-| Native netlist generation (fallback) | Deterministic test/CI path | Fixed template `ngspice-buck-v1`, fixed numeric formatting, SHA-256 identity. | Available for offline tests and CI; it is not the reference construction path. No user-authored netlist, no arbitrary SPICE pass-through. |
+| Native netlist generation (fallback) | Deterministic test/CI path | Fixed templates `ngspice-buck-v2` and `ngspice-sync-buck-v1`, fixed numeric formatting, SHA-256 identity. | Available for offline tests and CI; they are not the reference construction path. No user-authored netlist, no arbitrary SPICE pass-through. |
 | Window execution | Deterministic | One zero-order-hold control window per ngspice invocation; segment endpoints are linearly interpolated inside the solved window. | Linear interpolation of a solved waveform is not a substitute for a solver step; see the timing note below. |
 | Provenance | Supported | Executable name, SHA-256, parsed version, solver settings, netlist/output/log digests, exit code, duration. | No claim of cross-machine numerical equivalence. |
 | Stage 10 metrics | Restricted | The published ngspice package may be read by the restricted metric registry. | Only the reference metric set and declared signal names, and only after the same clean-worktree, `PUBLISHED`, hash-complete, and `QUALIFIED` gates as every other family. |
@@ -45,6 +46,28 @@ contains exactly these elements:
 The model is deliberately ideal. It does not include switch capacitance, diode
 reverse recovery, inductor resistance or saturation, capacitor ESR/ESL,
 dead time, gate drive, or thermal behavior.
+
+## Synchronous Buck template
+
+`ngspice-sync-buck-v1` is a separate template and a separate registration
+(`ngspice-sync-buck`); it is not a flag on the asynchronous reference. It
+contains exactly:
+
+- `V1`: ideal DC input source;
+- `Vghs`, `Vgls`: explicit absolute-time PWL gate sources with 1 ns linear
+  edges; the high-side on-width is `max(0, D*Tsw - dead_time)` and the low-side
+  on-width is `max(0, Tsw - 2*dead_time - high_side_width)`;
+- `S1`: high-side voltage-controlled switch with explicit `Ron`/`Roff`;
+- `S2`: low-side voltage-controlled switch with explicit `Ron`/`Roff`;
+- `L1`, `C1`: ideal inductor and capacitor with initial conditions;
+- `R1`: ideal resistive load.
+
+There is no freewheeling diode. Both gates are low during
+`[high_side_width, high_side_width + dead_time)` and
+`[Tsw - dead_time, Tsw)`. The PWL sources carry the segment-start carrier
+phase, so a solve segment may start at any phase and the remaining on-time is
+not lost. The model does not include body diodes, gate resistance/charge,
+device capacitance, reverse recovery, thermal behavior, or losses.
 
 ## Solver settings
 
@@ -77,12 +100,13 @@ interpolates the remaining segment endpoints. The cache key is
 external input invalidates the cache and starts a new solve from the current
 state.
 
-The generated window restarts the PWM carrier at its own `t = 0`. The adapter
-therefore requires `control_period_s` to be an integer multiple of the
-switching period. A non-integer ratio is rejected before the run rather than
-silently changing the effective duty and ripple at each window boundary. A
-phase-continuous implementation for arbitrary ratios is future work
-(`docs/37` UD-05).
+The window netlist renders the **segment-start carrier phase**. The PULSE
+delay is the time to the next absolute carrier start, `(-phase) mod Tsw`, so
+`control_period_s` need not be an integer multiple of the switching period. A
+segment that starts inside an on-pulse renders the remaining on-time as a
+finite PWL tail and sums it with the periodic source, so the delivered energy
+is not lost. The synchronous template uses explicit absolute-time PWL gate
+sources for the same reason.
 
 Consequences that reviewers must keep in mind:
 

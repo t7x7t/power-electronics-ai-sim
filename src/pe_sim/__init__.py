@@ -38,6 +38,7 @@ from .contracts import (
 from .runtime import Runner, RunResult, FakePlant, FakeLoadPlant, FakePIController
 from .runner import ActionPolicy, AuditPolicy, BoundedActionPolicy, FiniteActionPolicy, LifecycleTransitionError, RecoveryPolicy, RunOptions, TimingPolicy, run_experiment
 from .reference_plants import BuckPlant, BoostPlant
+from .multiphase_plants import MultiphaseBuckPlant, phase_currents, phase_offsets_deg
 from .applicability import (
     ApplicabilityError,
     ApplicabilityPolicy,
@@ -194,7 +195,7 @@ from .postprocess import (
     write_evidence_report,
 )
 from .evidence import EvidenceClassificationError, classify_report, classify_stage10, classify_summary
-from .topology import TOPOLOGY_SCHEMA, TopologyNet, TopologyPort, TopologyComponent, TopologyDescriptor, buck_topology_descriptor, boost_topology_descriptor, ngspice_buck_topology_descriptor, export_topology_descriptor, topology_to_dot, topology_to_adjacency
+from .topology import TOPOLOGY_SCHEMA, TopologyNet, TopologyPort, TopologyComponent, TopologyDescriptor, buck_topology_descriptor, boost_topology_descriptor, multiphase_buck_topology_descriptor, ngspice_buck_topology_descriptor, ngspice_sync_buck_topology_descriptor, export_topology_descriptor, topology_to_dot, topology_to_adjacency
 from .traces import (
     TRACE_SCHEMA_VERSION,
     SignalDefinition,
@@ -221,9 +222,16 @@ from .outputs import (
 from .visualization_service import SERVICE_SCHEMA, VisualizationServiceError, create_server, serve
 from .backends import (
     NETLIST_TEMPLATE_VERSION,
+    SYNC_NETLIST_TEMPLATE_VERSION,
     BuckNetlistParameters,
+    SyncBuckNetlistParameters,
     NativeBuckNetlistBuilder,
+    NativeSyncBuckNetlistBuilder,
     NgspiceBuckPlant,
+    NgspiceSyncBuckPlant,
+    classify_conduction_regime,
+    export_sync_buck_topology_descriptor,
+    render_sync_buck_netlist,
     NgspiceExecutableAdapter,
     NgspiceProcess,
     NgspiceRunResult,

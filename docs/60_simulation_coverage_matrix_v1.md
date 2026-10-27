@@ -32,8 +32,8 @@
 | A5 | 软启动（vref 斜坡） | very-common | yes | covered | controller/adapter | `tests/test_stage16_expressible_scenarios.py`（逐窗口 vref 序列与 duty 单调） |
 | A6 | 预偏置启动（输出已预充） | very-common | partial | covered | adapter | `tests/test_initial_state_payload.py`（首个采样为预充值并向目标收敛；未接受键在首次 advance 前失败）；ADR 0006 |
 | A7 | 短路/逐周期限流/打嗝恢复 | very-common | partial | covered | controller/adapter | `tests/test_protection.py`（0.2 Ω 短路落在窗口中点；越界后一个控制周期内 trip；打嗝重试）；上限 `protection_latency_is_one_control_period` |
-| A8 | 轻载 / DCM / burst | very-common | partial | expressible | adapter | 开关级网表物理上可表现 DCM；平均模型声明 CCM 假设（`uncheckable_rules`）；无检测 |
-| A9 | 死区与同步整流时序 | common | yes | expressible | adapter | 当前模板无死区/SR/栅驱动（`docs/31`）；需新网表模板，零内核改动 |
+| A8 | 轻载 / DCM / burst | very-common | partial | covered | adapter | `tests/test_sync_buck_plant.py`（`ngspice-sync-buck` 按开关周期从 `i(L1)` 检测 `ccm`/`dcm`/`forced_ccm`/`idle`/`burst`，阈值显式且仅为检测设置）；平均模型仍声明 CCM 假设；burst 是观察标签，不是 burst-mode 控制 |
+| A9 | 死区与同步整流时序 | common | yes | covered | adapter | `tests/test_sync_buck_plant.py`（`ngspice-sync-buck`：高/低边双开关、两侧 100 ns 死区、PWL 栅极支持任意载波相位、无续流二极管；含真实 ngspice 窗口测试）；未建模栅极电阻/电荷与体二极管 |
 | A10 | 输入/负载/duty 参数扫掠 | very-common | yes | covered | kernel | `tests/test_study_plan.py`（笛卡尔展开、路径白名单、单点文档仍是合法实验文档）、`tests/test_study_cli.py`（端到端扫掠 `controller_config.kp` 与 `plant_config.load_resistance_ohm`，任意数值叶子可为轴）；上限 `per-point`，聚合为派生（`aggregate_does_not_inherit_comparable`） |
 | A11 | 长时程高分辨率连续波形（放弃窗口拦截） | common | partial | expressible | adapter | `whole_run` 路线已有（`limited`）；缺开关级整段适配器，见 ADR 0004 §Implementation 3 |
 
@@ -47,7 +47,7 @@
 | B4 | 数字环路的采样/ZOH/计算延迟 | very-common | yes | covered | controller | `tests/test_stage16_expressible_scenarios.py`（`sample_offset_s`/`control_period_s`/观测时刻一致） |
 | B5 | 前馈（line/load） | common | yes | covered | controller | `tests/test_stage16_expressible_scenarios.py`（零误差时 duty 仅由 `kff_v` 决定，含零前馈对照） |
 | B6 | 多环级联（电压外环+电流内环） | very-common | yes | covered | controller | `tests/test_stage16_expressible_scenarios.py`（`state_update` 在下一步可见） |
-| B7 | 多相/均流/相位增减 | common | partial | expressible | adapter | 无多相模型；共享 duty + 相位内部管理可覆盖常见共相；逐相电流环属 specialized（ADR 0005） |
+| B7 | 多相/均流/相位增减 | common | partial | covered | adapter | `tests/test_multiphase_plant.py`（`multiphase-buck`：2–8 相共享 duty、内部相位偏移、总电流平均模型、`L/N` 等效电感）；逐相均流/增减相与纹波抵消未建模，限制码 `per_phase_current_sharing_not_modelled` |
 | B8 | 控制器放进网表 | common | no | kernel_gap | kernel | ADR 0004（`control_location=model`，上限 `limited`） |
 | B9 | 保护状态机（OCP/OVP/UVLO/hiccup/latch） | very-common | yes | covered | controller | `tests/test_protection.py`（OVP/OCP/UVLO、启动掩码、hiccup/latch、快照恢复） |
 
