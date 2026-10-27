@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from pe_sim.artifacts import manifest_digest
 from pe_sim.study import (
     STUDY_SCHEMA,
     StudyPlan,
@@ -71,16 +72,26 @@ def _manifest(
     run_mode: str = "stepped-kernel",
     plant_id: str = "buck",
     route: dict | None = None,
+    run_id: str | None = None,
+    manifest_sha256: str | None = None,
 ) -> dict:
     manifest = {
         "status": status,
         "run_mode": run_mode,
         "plant": {"id": plant_id},
         "route": dict(_ROUTE if route is None else route),
-        "manifest_sha256": "a" * 64,
     }
     if evidence_level is not None:
         manifest["evidence_level"] = evidence_level
+    if run_id is not None:
+        manifest["run_id"] = run_id
+    if manifest_sha256 is not None:
+        manifest["manifest_sha256"] = manifest_sha256
+    elif run_id is not None:
+        # A real published package owns a digest of its own contents.  Fake
+        # packages that omit run_id are completed by _FakeExecutor, which knows
+        # the point's run_id.
+        manifest["manifest_sha256"] = manifest_digest(manifest)
     return manifest
 
 
@@ -131,8 +142,13 @@ class _FakeExecutor:
             return exit_code, payload
         run_dir = self.runs_root / point.run_id
         run_dir.mkdir(parents=True, exist_ok=True)
+        manifest = dict(self.manifests.get(point.index, _manifest()))
+        if "run_id" not in manifest:
+            manifest["run_id"] = point.run_id
+        if "manifest_sha256" not in manifest:
+            manifest["manifest_sha256"] = manifest_digest(manifest)
         (run_dir / "manifest.json").write_text(
-            json.dumps(self.manifests.get(point.index, _manifest())),
+            json.dumps(manifest),
             encoding="utf-8",
         )
         (run_dir / "samples.json").write_text(
@@ -226,7 +242,11 @@ def test_nonzero_point_exit_code_fails_study_but_runs_every_point(tmp_path):
 
     assert executor.calls == [0, 1, 2]
     assert result.exit_code == 1
-    assert result.report["points"][1]["status"] == "QUALIFIED"
+    failed = result.report["points"][1]
+    assert failed["status"] == "FAILED"
+    assert failed["manifest_status"] == "QUALIFIED"
+    assert failed["execution_ok"] is False
+    assert failed["failure_reason"] == "executor_exit_code_nonzero"
     assert result.report_path.is_file()
 
 
@@ -249,6 +269,104 @@ def test_missing_run_dir_is_recorded_and_other_points_continue(tmp_path):
     assert first["manifest_sha256"] is None
     assert first["statistics"] is None
     assert result.report["points"][1]["status"] == "QUALIFIED"
+
+
+def test_failed_execution_cannot_claim_comparability_from_stale_manifests(
+    tmp_path,
+):
+    plan = _plan(tmp_path)
+    manifests = {
+        0: _manifest(evidence_level="comparable"),
+        1: _manifest(evidence_level="comparable"),
+    }
+    executor = _FakeExecutor(
+        Path(plan.output_dir) / "runs",
+        manifests=manifests,
+        exit_codes={0: 1, 1: 1},
+    )
+
+    result = _run(plan, executor)
+
+    assert result.exit_code == 1
+    points = result.report["points"]
+    assert [point["status"] for point in points] == ["FAILED", "FAILED"]
+    assert [point["manifest_status"] for point in points] == [
+        "QUALIFIED",
+        "QUALIFIED",
+    ]
+    assert [point["execution_ok"] for point in points] == [False, False]
+    aggregate = result.report["aggregate"]
+    assert aggregate["cross_point_comparability"] == "not_claimed"
+    assert "point_execution_failed" in aggregate["comparability_reasons"]
+
+
+def test_periodicity_error_cannot_be_erased_by_a_later_converged_point(
+    tmp_path,
+):
+    plan = _periodicity_plan(tmp_path, max_runs=4)
+    executor = _FakeExecutor(
+        Path(plan.output_dir) / "runs",
+        samples={
+            0: _samples([1.0, 2.0]),
+            1: _samples([5.0, 5.0, 5.0, 5.0, 5.0, 5.0]),
+        },
+    )
+
+    result = _run(plan, executor)
+
+    assert result.exit_code == 1
+    assert result.report["kind_result"]["converged"] is False
+    first = result.report["points"][0]
+    assert first["analysis_ok"] is False
+    assert first["failure_reason"] == "periodicity_error"
+
+
+def test_manifest_run_id_must_match_the_point(tmp_path):
+    plan = _plan(tmp_path)
+    executor = _FakeExecutor(
+        Path(plan.output_dir) / "runs",
+        manifests={0: _manifest(run_id="another-run"), 1: _manifest()},
+    )
+
+    result = _run(plan, executor)
+
+    assert result.exit_code == 1
+    first = result.report["points"][0]
+    assert first["analysis_ok"] is False
+    assert first["failure_reason"] == "manifest_run_id_mismatch"
+    assert result.report["aggregate"]["cross_point_comparability"] == (
+        "not_claimed"
+    )
+
+
+def test_manifest_digest_must_match_its_contents(tmp_path):
+    plan = _plan(tmp_path)
+    executor = _FakeExecutor(
+        Path(plan.output_dir) / "runs",
+        manifests={0: _manifest(manifest_sha256="0" * 64), 1: _manifest()},
+    )
+
+    result = _run(plan, executor)
+
+    assert result.exit_code == 1
+    first = result.report["points"][0]
+    assert first["analysis_ok"] is False
+    assert first["failure_reason"] == "manifest_sha256_mismatch"
+
+
+def test_manifest_plant_id_must_match_the_planned_plant(tmp_path):
+    plan = _plan(tmp_path)
+    executor = _FakeExecutor(
+        Path(plan.output_dir) / "runs",
+        manifests={0: _manifest(plant_id="boost"), 1: _manifest()},
+    )
+
+    result = _run(plan, executor)
+
+    assert result.exit_code == 1
+    first = result.report["points"][0]
+    assert first["analysis_ok"] is False
+    assert first["failure_reason"] == "manifest_plant_id_mismatch"
 
 
 # ---------------------------------------------------------------------------
@@ -486,7 +604,9 @@ def test_unreadable_manifest_fails_the_study_but_keeps_the_point(
             )
         else:
             _write_run_package(
-                run_dir, manifest=_manifest(), samples=_samples()
+                run_dir,
+                manifest=_manifest(run_id=point.run_id),
+                samples=_samples(),
             )
         return 0, {"run_dir": str(run_dir)}
 
@@ -501,7 +621,8 @@ def test_unreadable_manifest_fails_the_study_but_keeps_the_point(
         first["details"]["manifest_error"]
         == "manifest.json is missing or not a JSON object"
     )
-    assert first["status"] is None
+    assert first["status"] == "FAILED"
+    assert first["analysis_ok"] is False
     assert result.report["points"][1]["status"] == "QUALIFIED"
 
 
@@ -545,7 +666,9 @@ def test_declared_statistics_without_readable_samples_fail_the_study(
         calls.append(point.index)
         run_dir = runs_root / point.run_id
         _write_run_package(
-            run_dir, manifest=_manifest(), samples_text=samples_text
+            run_dir,
+            manifest=_manifest(run_id=point.run_id),
+            samples_text=samples_text,
         )
         return 0, {"run_dir": str(run_dir)}
 
@@ -580,7 +703,11 @@ def test_executor_exception_fails_the_study_but_later_points_still_run(tmp_path)
         if point.index == 0:
             raise RuntimeError("executor exploded")
         run_dir = runs_root / point.run_id
-        _write_run_package(run_dir, manifest=_manifest(), samples=_samples())
+        _write_run_package(
+            run_dir,
+            manifest=_manifest(run_id=point.run_id),
+            samples=_samples(),
+        )
         return 0, {"run_dir": str(run_dir)}
 
     result = run_study(plan, execute_point=executor)

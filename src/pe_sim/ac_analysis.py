@@ -37,7 +37,10 @@ Three boundaries are load-bearing:
 ``phase_deg`` is unwrapped across the sweep and uses ``atan2(Im, Re)`` with
 degrees increasing counter-clockwise.  With this convention a first-order
 integrator loop crosses 0 dB at ``-90 deg`` and therefore reports a phase
-margin of ``+90 deg``.
+margin of ``+90 deg``.  ``+180`` and ``-180`` are the same direction: phase
+crossings are found on the angle relative to ``-180``, and a sweep whose phase
+stays flat at that direction reports ``gain_margin_db = None`` plus
+``phase_flat_at_minus_180`` rather than inventing a margin.
 
 Only the Python standard library is used.  The frequency grid is uniform in
 ``log10(f)``; every reported value is finite, and a zero or non-finite
@@ -53,6 +56,9 @@ from typing import Any, Mapping, Sequence
 from .model_capabilities import (
     CapabilityUnavailable,
     SmallSignalModel,
+    _validate_assumptions,
+    _validate_method,
+    _validate_verified_by,
     capability_provenance,
 )
 from .frequency_domain import (
@@ -77,6 +83,10 @@ _FREQUENCY_RESPONSE_VERIFIED_BY = (
 )
 _LOOP_GAIN_VERIFIED_BY = (
     "tests/test_ac_analysis.py::test_loop_gain_provenance_is_self_contained",
+)
+_STABILITY_MARGINS_VERIFIED_BY = (
+    "tests/test_ac_analysis.py::"
+    "test_stability_margins_declares_its_own_verified_by",
 )
 
 
@@ -484,6 +494,26 @@ def _interpolate_at(values: Sequence[float], index: int, fraction: float) -> flo
     return values[index] + fraction * (values[index + 1] - values[index])
 
 
+def _phase_offset_deg(phase: float) -> float:
+    """Return the signed angle away from ``-180`` in ``(-180, 180]``.
+
+    ``+180`` and ``-180`` describe the same direction, so both map to ``0``.
+    """
+
+    return (phase + 360.0) % 360.0 - 180.0
+
+
+def _normalize_phase_deg(value: float) -> float:
+    """Normalize an angle to ``(-180, 180]`` (so ``360`` becomes ``0``)."""
+
+    normalized = math.fmod(value, 360.0)
+    if normalized <= -180.0:
+        normalized += 360.0
+    elif normalized > 180.0:
+        normalized -= 360.0
+    return normalized
+
+
 def _first_crossing(
     frequencies: Sequence[float], values: Sequence[float], target: float
 ) -> tuple[float, float, int] | None:
@@ -535,13 +565,26 @@ def stability_margins(response: Mapping[str, Any]) -> dict[str, Any]:
 
     ``phase_margin_deg = 180 + phase_deg`` at the gain crossover and
     ``gain_margin_db = -magnitude_db`` at the ``-180 deg`` phase crossover,
-    using the unwrapped phase produced by :func:`loop_gain_response`.
+    using the unwrapped phase produced by :func:`loop_gain_response`.  Phase
+    margins are normalized to ``(-180, 180]`` so a phase of ``+180 deg`` gives
+    a zero margin rather than ``360 deg``.  ``+180`` and ``-180`` are treated
+    as the same angle; when every sampled phase lies on that direction, the
+    phase crossover search is skipped, ``gain_margin_db`` and
+    ``phase_crossover_hz`` are ``None``, and ``phase_flat_at_minus_180`` is
+    added to ``notes``.
 
     ``margin_positive`` is a three-state sign, not a stability verdict: see the
     module docstring.  Missing crossings set the corresponding fields to
     ``None`` and add ``"no_gain_crossover"`` / ``"no_phase_crossover"`` to
     ``notes``.  A sweep with fewer than 32 points also adds
     ``"phase_unwrap_may_alias_when_sweep_is_coarse"``.
+
+    Inputs are checked before any arithmetic: a declared ``schema`` must equal
+    :data:`AC_RESULT_SCHEMA`, a declared ``status`` must be ``"available"``,
+    ``method`` and ``assumptions`` go through the capability validators, and a
+    declared ``sweep`` must agree with ``frequencies_hz``.  A declared
+    ``provenance`` must use a sequence of test identifiers in ``verified_by``;
+    missing provenance fields are tolerated rather than raising ``KeyError``.
 
     ``provenance`` is inherited from the input response, including its
     ``sweep``; ``interpolation`` records the convention used to locate
@@ -571,29 +614,56 @@ def stability_margins(response: Mapping[str, Any]) -> dict[str, Any]:
         if not upper > lower:
             raise ValueError("frequencies_hz must be strictly increasing")
 
-    method = response.get("method")
-    if not isinstance(method, str) or not method:
-        raise ValueError("response['method'] must be a non-empty string")
-    raw_assumptions = response.get("assumptions")
-    if isinstance(raw_assumptions, (str, bytes)) or not isinstance(
-        raw_assumptions, (list, tuple)
-    ):
-        raise ValueError("response['assumptions'] must be a sequence of strings")
-    if any(not isinstance(item, str) for item in raw_assumptions):
-        raise ValueError("response['assumptions'] must contain only strings")
-    assumptions = list(raw_assumptions)
+    if "schema" in response and response["schema"] != AC_RESULT_SCHEMA:
+        raise ValueError(
+            "response['schema'] must equal "
+            f"{AC_RESULT_SCHEMA!r}, got {response['schema']!r}"
+        )
+    if "status" in response and response["status"] != "available":
+        raise ValueError(
+            "response['status'] must be 'available', got "
+            f"{response['status']!r}"
+        )
+
+    method = _validate_method(response.get("method"), "response['method']")
+    assumptions = list(
+        _validate_assumptions(
+            response.get("assumptions"), "response['assumptions']"
+        )
+    )
 
     notes: list[str] = []
 
     sweep = response.get("sweep")
-    declared_points = (
-        sweep.get("points") if isinstance(sweep, Mapping) else None
-    )
-    if (
-        isinstance(declared_points, bool)
-        or not isinstance(declared_points, int)
-    ):
-        declared_points = len(frequencies)
+    declared_points = len(frequencies)
+    if sweep is not None:
+        if not isinstance(sweep, Mapping):
+            raise ValueError("response['sweep'] must be a mapping")
+        points = sweep.get("points")
+        if isinstance(points, bool) or not isinstance(points, int):
+            raise ValueError("response['sweep']['points'] must be an integer")
+        if points != len(frequencies):
+            raise ValueError(
+                "response['sweep']['points'] must equal "
+                f"len(frequencies_hz); got {points} and {len(frequencies)}"
+            )
+        declared_points = points
+        for key, expected in (
+            ("start_hz", frequencies[0]),
+            ("stop_hz", frequencies[-1]),
+        ):
+            if key not in sweep:
+                raise ValueError(f"response['sweep'] is missing {key!r}")
+            actual = _finite_number(
+                sweep[key], f"response['sweep'][{key!r}]"
+            )
+            if not math.isclose(
+                actual, expected, rel_tol=1e-12, abs_tol=0.0
+            ):
+                raise ValueError(
+                    f"response['sweep'][{key!r}] must match the measured "
+                    f"frequency axis; got {actual!r}, expected {expected!r}"
+                )
     if declared_points < _COARSE_SWEEP_POINTS:
         notes.append("phase_unwrap_may_alias_when_sweep_is_coarse")
 
@@ -605,21 +675,29 @@ def stability_margins(response: Mapping[str, Any]) -> dict[str, Any]:
     else:
         gain_crossover_hz, fraction, index = gain_crossing
         phase_at_crossover = _interpolate_at(phases, index, fraction)
-        phase_margin_deg = 180.0 + phase_at_crossover
+        phase_margin_deg = _normalize_phase_deg(180.0 + phase_at_crossover)
         if _count_crossings(magnitude_db, 0.0) > 1:
             notes.append("multiple_gain_crossovers_first_reported")
 
-    phase_crossing = _first_crossing(frequencies, phases, -180.0)
-    if phase_crossing is None:
+    phase_offsets = [_phase_offset_deg(phase) for phase in phases]
+    if all(abs(offset) <= 1e-9 for offset in phase_offsets):
         phase_crossover_hz = None
         gain_margin_db = None
-        notes.append("no_phase_crossover")
+        notes.append("phase_flat_at_minus_180")
     else:
-        phase_crossover_hz, fraction, index = phase_crossing
-        magnitude_at_crossover = _interpolate_at(magnitude_db, index, fraction)
-        gain_margin_db = -magnitude_at_crossover
-        if _count_crossings(phases, -180.0) > 1:
-            notes.append("multiple_phase_crossovers_first_reported")
+        phase_crossing = _first_crossing(frequencies, phase_offsets, 0.0)
+        if phase_crossing is None:
+            phase_crossover_hz = None
+            gain_margin_db = None
+            notes.append("no_phase_crossover")
+        else:
+            phase_crossover_hz, fraction, index = phase_crossing
+            magnitude_at_crossover = _interpolate_at(
+                magnitude_db, index, fraction
+            )
+            gain_margin_db = -magnitude_at_crossover
+            if _count_crossings(phase_offsets, 0.0) > 1:
+                notes.append("multiple_phase_crossovers_first_reported")
 
     if phase_margin_deg is None or gain_margin_db is None:
         margin_positive: bool | None = None
@@ -631,10 +709,50 @@ def stability_margins(response: Mapping[str, Any]) -> dict[str, Any]:
             raise ValueError("stability margin interpolation produced a non-finite value")
 
     inherited = response.get("provenance")
-    if isinstance(inherited, Mapping):
+    inherited_verified_by: list[str] = []
+    plant_verified_by: str | None = None
+    if inherited is not None:
+        if not isinstance(inherited, Mapping):
+            raise ValueError("response['provenance'] must be a mapping")
+        if "verified_by" in inherited:
+            raw_verified_by = inherited.get("verified_by")
+            if isinstance(raw_verified_by, (str, bytes)) or not isinstance(
+                raw_verified_by, (list, tuple)
+            ):
+                raise ValueError(
+                    "response['provenance']['verified_by'] must be a "
+                    "sequence of 'tests/<file>.py::<test_name>' identifiers"
+                )
+            inherited_verified_by = [
+                _validate_verified_by(
+                    item,
+                    f"response['provenance']['verified_by'][{index}]",
+                )
+                for index, item in enumerate(raw_verified_by)
+            ]
+        if "plant_verified_by" in inherited:
+            raw_plant_verified_by = inherited.get("plant_verified_by")
+            if raw_plant_verified_by is not None and not isinstance(
+                raw_plant_verified_by, str
+            ):
+                raise ValueError(
+                    "response['provenance']['plant_verified_by'] must be "
+                    f"a string or None, got {raw_plant_verified_by!r}"
+                )
+            plant_verified_by = raw_plant_verified_by
         provenance: dict[str, Any] | None = _copy_json_like(inherited)
     else:
         provenance = None
+
+    # A margin result is verified by the tests that verified the loop-gain
+    # input *and* by the margin tests themselves; inheriting only the input
+    # list would let this result borrow another function's verification.
+    verified_by = list(inherited_verified_by)
+    for identifier in _STABILITY_MARGINS_VERIFIED_BY:
+        if identifier not in verified_by:
+            verified_by.append(identifier)
+    if provenance is not None:
+        provenance["verified_by"] = list(verified_by)
 
     return {
         "schema": AC_RESULT_SCHEMA,
@@ -652,8 +770,8 @@ def stability_margins(response: Mapping[str, Any]) -> dict[str, Any]:
         # the tests that verify *this* result, ``plant_verified_by`` names the
         # model's own declaration.  A synthetic response without provenance
         # yields empty/None rather than an invented chain.
-        "verified_by": list(provenance["verified_by"]) if provenance else [],
-        "plant_verified_by": provenance["plant_verified_by"] if provenance else None,
+        "verified_by": verified_by,
+        "plant_verified_by": plant_verified_by,
         "provenance": provenance,
         "interpolation": _INTERPOLATION_DESCRIPTION,
     }

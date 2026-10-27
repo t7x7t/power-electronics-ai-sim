@@ -44,6 +44,7 @@ from .backends import (
 from .dirty import FormalComparisonError, analyze_git_worktree
 from .environment import check_recommended_environment
 from .inspection import RunInspectionError, inspect_run
+from .model_capabilities import CapabilityUnavailable
 from .parameter_confirmation import (
     ParameterConfirmationError,
     build_confirmation,
@@ -668,6 +669,17 @@ def main(argv: list[str] | None = None) -> int:
             "formal_comparison_rejected",
             str(exc),
             worktree_analysis=exc.analysis.to_dict(),
+        )
+        return 2
+    except CapabilityUnavailable as exc:
+        # A missing or self-certified capability is a rejected request, not a
+        # traceback.  The closed reason vocabulary travels in ``extra`` so a
+        # client can branch without a new rejection code.
+        _emit_rejection(
+            "CONFIG_REJECTED",
+            "invalid_request",
+            str(exc),
+            reason=exc.reason,
         )
         return 2
     except (OSError, RuntimeError, ValueError, TypeError) as exc:

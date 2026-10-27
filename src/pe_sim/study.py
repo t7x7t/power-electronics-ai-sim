@@ -83,6 +83,8 @@ STUDY_COMPARABILITY_REASONS = frozenset(
         "empty_study",
         "duplicate_points",
         "point_identity_incomplete",
+        "point_execution_failed",
+        "point_analysis_failed",
     }
 )
 
@@ -1337,6 +1339,16 @@ class StudyPointRecord:
     manifest: Mapping[str, Any]
     statistics: Mapping[str, float] | None = None
     details: Mapping[str, Any] | None = None
+    #: Whether the executor actually produced a package for this point.  A
+    #: non-zero exit code, a config-write failure, or an executor exception is
+    #: an execution failure even when a manifest happens to exist on disk.
+    execution_ok: bool = True
+    #: Whether the published package is usable evidence for this point.  A
+    #: missing/mismatched manifest, bad digest, failed statistic, or failed
+    #: periodicity comparison is an analysis failure.
+    analysis_ok: bool = True
+    failure_reason: str | None = None
+    exit_code: int | None = None
 
 
 def _identity(value: Any) -> Any:
@@ -1485,9 +1497,13 @@ def aggregate_study(
         or len({_identity(run_id) for run_id in run_ids}) != len(run_ids)
         or len({_identity(index) for index in indices}) != len(indices)
     )
+    execution_failed = any(not record.execution_ok for record in record_list)
+    analysis_failed = any(not record.analysis_ok for record in record_list)
 
     claimed = (
         len(record_list) >= 2
+        and not execution_failed
+        and not analysis_failed
         and not duplicate_points
         and not identity_incomplete
         and all(status == "QUALIFIED" for status in statuses)
@@ -1509,6 +1525,10 @@ def aggregate_study(
         reasons.add("duplicate_points")
     if identity_incomplete:
         reasons.add("point_identity_incomplete")
+    if execution_failed:
+        reasons.add("point_execution_failed")
+    if analysis_failed:
+        reasons.add("point_analysis_failed")
     if any(status != "QUALIFIED" for status in statuses):
         reasons.add("point_not_qualified")
     if any(level != "comparable" for level in levels):
@@ -1630,6 +1650,7 @@ def build_study_report(
                 "invalid_report",
                 f"point {record.index} record is not canonical JSON: {exc}",
             ) from exc
+        point_ok = record.execution_ok and record.analysis_ok
         points.append(
             {
                 "index": record.index,
@@ -1640,8 +1661,17 @@ def build_study_report(
                 # The published manifest owns its identity digest; recomputing
                 # one here would not be the digest that consumers verify.
                 "manifest_sha256": manifest.get("manifest_sha256"),
-                "status": manifest.get("status"),
+                # ``status`` is the point outcome a consumer should branch on.
+                # The raw published status stays available as
+                # ``manifest_status`` so a failed execution cannot masquerade
+                # as ``QUALIFIED`` just because a stale package exists.
+                "status": manifest.get("status") if point_ok else "FAILED",
+                "manifest_status": manifest.get("status"),
                 "evidence_level": manifest.get("evidence_level"),
+                "execution_ok": record.execution_ok,
+                "analysis_ok": record.analysis_ok,
+                "failure_reason": record.failure_reason,
+                "exit_code": record.exit_code,
                 "statistics": statistics,
                 "details": details,
             }

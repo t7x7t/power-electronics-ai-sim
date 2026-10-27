@@ -22,11 +22,13 @@ built by :func:`pe_sim.study.aggregate_study`, which only ever reports
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .artifacts import manifest_digest, verify_package
 from .study import (
     StudyPlan,
     StudyPlanError,
@@ -57,6 +59,20 @@ _RUN_DIR_MISSING = "run_dir_missing"
 _MANIFEST_READ_ERROR = "manifest.json is missing or not a JSON object"
 _SAMPLES_READ_ERROR = "samples.json is missing or not an array of objects"
 _MANIFEST_OK_STATUSES = frozenset({"RUN_OK", "QUALIFIED"})
+
+#: Machine-readable point failure reasons recorded in the study report.
+_FAILURE_CONFIG_WRITE = "config_write_error"
+_FAILURE_EXECUTOR = "executor_error"
+_FAILURE_EXIT_CODE = "executor_exit_code_nonzero"
+_FAILURE_RUN_DIR = "run_dir_missing"
+_FAILURE_MANIFEST = "manifest_error"
+_FAILURE_MANIFEST_STATUS = "manifest_status_not_success"
+_FAILURE_MANIFEST_RUN_ID = "manifest_run_id_mismatch"
+_FAILURE_MANIFEST_PLANT_ID = "manifest_plant_id_mismatch"
+_FAILURE_MANIFEST_DIGEST = "manifest_sha256_mismatch"
+_FAILURE_PACKAGE_DIGEST = "package_digest_mismatch"
+_FAILURE_STATISTICS = "statistics_error"
+_FAILURE_PERIODICITY = "periodicity_error"
 
 
 @dataclass(frozen=True)
@@ -124,6 +140,7 @@ def run_study(
     executed = 0
     all_points_ok = True
     converged = False
+    periodicity_failed = False
     last_comparison: Mapping[str, Any] | None = None
 
     for point in plan.points:
@@ -141,9 +158,14 @@ def run_study(
         except Exception as exc:  # noqa: BLE001 - recorded in the report
             all_points_ok = False
             details["config_error"] = f"{type(exc).__name__}: {exc}"
-            records.append(_failed_point_record(point, details))
+            records.append(
+                _failed_point_record(
+                    point, details, failure_reason=_FAILURE_CONFIG_WRITE
+                )
+            )
             continue
 
+        exit_code: int | None = None
         try:
             exit_code, payload = execute_point(point, config_path)
             exit_code = int(exit_code)
@@ -152,10 +174,20 @@ def run_study(
             # propagate; ordinary executor failures become failed points.
             all_points_ok = False
             details["executor_error"] = f"{type(exc).__name__}: {exc}"
-            records.append(_failed_point_record(point, details))
+            records.append(
+                _failed_point_record(
+                    point, details, failure_reason=_FAILURE_EXECUTOR
+                )
+            )
             continue
-        if exit_code != 0:
+
+        execution_ok = exit_code == 0
+        analysis_ok = True
+        failure_reason: str | None = None
+        if not execution_ok:
             all_points_ok = False
+            failure_reason = _FAILURE_EXIT_CODE
+            details["exit_code"] = exit_code
 
         run_dir = _payload_run_dir(payload)
         if run_dir is None or not run_dir.is_dir():
@@ -172,6 +204,10 @@ def run_study(
                     manifest={},
                     statistics=None,
                     details=details,
+                    execution_ok=False,
+                    analysis_ok=False,
+                    failure_reason=failure_reason or _FAILURE_RUN_DIR,
+                    exit_code=exit_code,
                 )
             )
             continue
@@ -179,12 +215,25 @@ def run_study(
         manifest, manifest_error = _read_manifest(run_dir)
         if manifest_error is not None:
             all_points_ok = False
+            analysis_ok = False
+            failure_reason = failure_reason or _FAILURE_MANIFEST
             details["manifest_error"] = manifest_error
-        elif manifest.get("status") not in _MANIFEST_OK_STATUSES:
-            all_points_ok = False
-            details["manifest_error"] = (
-                f"manifest status is {manifest.get('status')!r}"
+        else:
+            if manifest.get("status") not in _MANIFEST_OK_STATUSES:
+                all_points_ok = False
+                analysis_ok = False
+                failure_reason = failure_reason or _FAILURE_MANIFEST_STATUS
+                details["manifest_error"] = (
+                    f"manifest status is {manifest.get('status')!r}"
+                )
+            identity_problem, identity_details = _manifest_identity_problem(
+                manifest, run_dir, point
             )
+            if identity_problem is not None:
+                all_points_ok = False
+                analysis_ok = False
+                failure_reason = failure_reason or identity_problem
+                details.update(identity_details)
 
         samples = _read_samples(run_dir)
         declared_statistics = plan.plan.get("statistics", [])
@@ -193,6 +242,8 @@ def run_study(
             # ``statistics=None`` silently would publish the point as if the
             # statistics had never been requested.
             all_points_ok = False
+            analysis_ok = False
+            failure_reason = failure_reason or _FAILURE_STATISTICS
             details["statistics_error"] = _SAMPLES_READ_ERROR
             statistics = None
         else:
@@ -206,6 +257,8 @@ def run_study(
                 # failed point, because the study promised an analysis it could
                 # not deliver.
                 all_points_ok = False
+                analysis_ok = False
+                failure_reason = failure_reason or _FAILURE_STATISTICS
                 details["statistics_error"] = statistics_error
 
         if periodicity:
@@ -214,7 +267,12 @@ def run_study(
                 plan, samples
             )
             details["periodicity"] = periodicity_details
-            if comparison is not None:
+            if comparison is None:
+                all_points_ok = False
+                analysis_ok = False
+                periodicity_failed = True
+                failure_reason = failure_reason or _FAILURE_PERIODICITY
+            else:
                 last_comparison = comparison
                 if comparison.get("converged") is True:
                     converged = True
@@ -228,8 +286,17 @@ def run_study(
                 manifest=manifest,
                 statistics=statistics,
                 details=details,
+                execution_ok=execution_ok,
+                analysis_ok=analysis_ok,
+                failure_reason=failure_reason,
+                exit_code=exit_code,
             )
         )
+
+    if periodicity_failed:
+        # A comparison error on an earlier point must not be erased by a later
+        # point that happens to converge.
+        converged = False
 
     skipped_indices = [point.index for point in plan.points[executed:]]
     skipped = len(plan.points) - executed
@@ -288,13 +355,29 @@ def _write_point_config(point: StudyPoint, base_dir: Path) -> Path:
     directory = base_dir / "points" / point.label
     directory.mkdir(parents=True, exist_ok=True)
     config_path = directory / "config.json"
-    with open(config_path, "w", encoding="utf-8", newline="\n") as stream:
-        stream.write(text)
+    # Write through a process-unique temporary file: a crash must not leave a
+    # half-written point document that a later reader could mistake for the
+    # planned input.
+    temporary = directory / f"config.json.{os.getpid()}.tmp"
+    try:
+        with open(temporary, "w", encoding="utf-8", newline="\n") as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, config_path)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
     return config_path
 
 
 def _failed_point_record(
-    point: StudyPoint, details: dict[str, Any]
+    point: StudyPoint,
+    details: dict[str, Any],
+    *,
+    failure_reason: str,
 ) -> StudyPointRecord:
     """Build the record for a point that never produced a run package."""
 
@@ -306,7 +389,77 @@ def _failed_point_record(
         manifest={},
         statistics=None,
         details=details,
+        execution_ok=False,
+        analysis_ok=False,
+        failure_reason=failure_reason,
+        exit_code=None,
     )
+
+
+def _manifest_identity_problem(
+    manifest: Mapping[str, Any], run_dir: Path, point: StudyPoint
+) -> tuple[str | None, dict[str, Any]]:
+    """Return the first identity problem with a published point package.
+
+    A package is evidence for *this* point only when its manifest names the
+    same run and plant, and its recorded digest matches its contents.  The
+    package digest is checked with :func:`pe_sim.artifacts.verify_package`, the
+    single implementation of that rule, but only when the manifest declares
+    one.  Minimal fake packages in tests may omit ``package_sha256``.
+    """
+
+    manifest_run_id = manifest.get("run_id")
+    if manifest_run_id != point.run_id:
+        return _FAILURE_MANIFEST_RUN_ID, {
+            "manifest_run_id": manifest_run_id,
+            "expected_run_id": point.run_id,
+        }
+
+    expected_plant_id = point.document.get("plant_id")
+    manifest_plant = manifest.get("plant")
+    manifest_plant_id = (
+        manifest_plant.get("id")
+        if isinstance(manifest_plant, Mapping)
+        else None
+    )
+    if (
+        not isinstance(manifest_plant_id, str)
+        or not manifest_plant_id
+        or manifest_plant_id != expected_plant_id
+    ):
+        return _FAILURE_MANIFEST_PLANT_ID, {
+            "manifest_plant_id": manifest_plant_id,
+            "expected_plant_id": expected_plant_id,
+        }
+
+    declared_digest = manifest.get("manifest_sha256")
+    if not isinstance(declared_digest, str) or not declared_digest:
+        return _FAILURE_MANIFEST_DIGEST, {
+            "manifest_sha256": declared_digest,
+        }
+    try:
+        computed_digest = manifest_digest(manifest)
+    except (TypeError, ValueError) as exc:
+        return _FAILURE_MANIFEST_DIGEST, {
+            "manifest_digest_error": f"{type(exc).__name__}: {exc}",
+        }
+    if computed_digest != declared_digest:
+        return _FAILURE_MANIFEST_DIGEST, {
+            "manifest_sha256": declared_digest,
+            "computed_manifest_sha256": computed_digest,
+        }
+
+    if "package_sha256" in manifest:
+        try:
+            problems = verify_package(manifest, run_dir)
+        except (OSError, TypeError, ValueError) as exc:
+            problems = (f"package cannot be verified: {exc}",)
+        if problems:
+            return _FAILURE_PACKAGE_DIGEST, {
+                "package_problems": list(problems),
+            }
+
+    return None, {}
 
 
 # ---------------------------------------------------------------------------
@@ -314,11 +467,20 @@ def _failed_point_record(
 # ---------------------------------------------------------------------------
 
 
+def _reject_json_constant(value: str) -> None:
+    """Reject Python's non-standard ``NaN``/``Infinity`` JSON extensions."""
+
+    raise ValueError(f"non-finite JSON constant {value!r} is not allowed")
+
+
 def _read_json(path: Path) -> Any:
     """Return decoded JSON, or ``None`` when the file is missing or invalid."""
 
     try:
-        return json.loads(path.read_text(encoding="utf-8-sig"))
+        return json.loads(
+            path.read_text(encoding="utf-8-sig"),
+            parse_constant=_reject_json_constant,
+        )
     except (OSError, ValueError):
         return None
 

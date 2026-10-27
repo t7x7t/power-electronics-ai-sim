@@ -75,6 +75,11 @@ def _type2_controller() -> Type2Controller:
     )
 
 
+class _UnityController:
+    sample_period_s = 1e-4
+    coefficients = {"numerator": [1.0], "denominator": [1.0]}
+
+
 def _boost() -> BoostPlant:
     return BoostPlant(
         input_voltage_v=12.0,
@@ -119,6 +124,27 @@ def _manual_loop(
         "method": "analytic",
         "assumptions": ["synthetic_loop_for_margin_interpolation"],
     }
+
+
+def _double_integrator_model() -> SmallSignalModel:
+    omega0 = 2.0 * math.pi * 1_000.0
+    return SmallSignalModel(
+        plant_id="double-integrator",
+        method="analytic",
+        state_space=LinearStateSpace(
+            ((0.0, 1.0), (0.0, 0.0)),
+            ((0.0,), (omega0**2,)),
+        ),
+        output_matrix=((1.0, 0.0),),
+        feedthrough=0.0,
+        operating_point={"duty": 0.5, "vout": 1.0, "il": 0.5},
+        parameters={"omega0_rad_s": omega0},
+        assumptions=("unit_test_fixture",),
+        verified_by=(
+            "tests/test_ac_analysis.py::"
+            "test_stability_margins_double_integrator_flat_at_minus_180"
+        ),
+    )
 
 
 def _polyval_desc(coefficients: list[float], z: complex) -> complex:
@@ -479,6 +505,113 @@ def test_stability_margins_treats_zero_margin_as_not_positive() -> None:
     assert margins["margin_positive"] is False
 
 
+def test_stability_margins_double_integrator_flat_at_minus_180() -> None:
+    response = loop_gain_response(
+        _double_integrator_model(),
+        _UnityController(),
+        start_hz=10.0,
+        stop_hz=100_000.0,
+        points=241,
+    )
+
+    margins = stability_margins(response)
+
+    assert margins["gain_crossover_hz"] == pytest.approx(1_000.0, rel=1e-9)
+    assert margins["phase_margin_deg"] == pytest.approx(0.0, abs=1e-9)
+    assert margins["gain_margin_db"] is None
+    assert margins["phase_crossover_hz"] is None
+    assert margins["margin_positive"] is None
+    assert "phase_flat_at_minus_180" in margins["notes"]
+
+
+def test_stability_margins_rejects_unavailable_or_wrong_schema() -> None:
+    loop = _manual_loop([10.0, 100.0], [-20.0, 20.0], [-60.0, -120.0])
+    loop["status"] = "failed"
+    with pytest.raises(ValueError, match="status"):
+        stability_margins(loop)
+
+    loop = _manual_loop([10.0, 100.0], [-20.0, 20.0], [-60.0, -120.0])
+    loop["schema"] = "bogus"
+    with pytest.raises(ValueError, match="schema"):
+        stability_margins(loop)
+
+
+def test_stability_margins_rejects_sweep_disagreement() -> None:
+    loop = _manual_loop([10.0, 100.0], [-20.0, 20.0], [-60.0, -120.0])
+    loop["sweep"] = {
+        "start_hz": 10.0,
+        "stop_hz": 100.0,
+        "points": 241,
+        "spacing": "log10",
+    }
+    with pytest.raises(ValueError, match="points"):
+        stability_margins(loop)
+
+    loop["sweep"] = {
+        "start_hz": 5.0,
+        "stop_hz": 200.0,
+        "points": 2,
+        "spacing": "log10",
+    }
+    with pytest.raises(ValueError, match="start_hz|stop_hz"):
+        stability_margins(loop)
+
+
+def test_stability_margins_rejects_bare_verified_by_string() -> None:
+    loop = _manual_loop([10.0, 100.0], [-20.0, 20.0], [-60.0, -120.0])
+    loop["provenance"] = {
+        "verified_by": "tests/test_ac_analysis.py::test_x",
+        "plant_verified_by": None,
+    }
+    with pytest.raises(ValueError, match="verified_by"):
+        stability_margins(loop)
+
+
+def test_stability_margins_allows_partial_provenance_without_key_error() -> None:
+    loop = _manual_loop([10.0, 100.0], [-20.0, 20.0], [-60.0, -120.0])
+    loop["provenance"] = {"plant_verified_by": None}
+
+    margins = stability_margins(loop)
+
+    own_identifier = (
+        "tests/test_ac_analysis.py::"
+        "test_stability_margins_declares_its_own_verified_by"
+    )
+    assert margins["verified_by"] == [own_identifier]
+    assert margins["plant_verified_by"] is None
+    assert margins["provenance"] == {
+        "plant_verified_by": None,
+        "verified_by": [own_identifier],
+    }
+
+
+def test_stability_margins_rejects_evidence_level_assumptions() -> None:
+    loop = _manual_loop([10.0, 100.0], [-20.0, 20.0], [-60.0, -120.0])
+    loop["assumptions"] = ["comparable"]
+    with pytest.raises(ValueError, match="evidence-level"):
+        stability_margins(loop)
+
+
+def test_stability_margins_rejects_invalid_verified_by_entry() -> None:
+    loop = _manual_loop([10.0, 100.0], [-20.0, 20.0], [-60.0, -120.0])
+    loop["provenance"] = {
+        "verified_by": ["tests/test_ac_analysis.py"],
+        "plant_verified_by": None,
+    }
+    with pytest.raises(ValueError, match="tests/<file>"):
+        stability_margins(loop)
+
+
+def test_stability_margins_rejects_non_string_plant_verified_by() -> None:
+    loop = _manual_loop([10.0, 100.0], [-20.0, 20.0], [-60.0, -120.0])
+    loop["provenance"] = {
+        "verified_by": [],
+        "plant_verified_by": 3,
+    }
+    with pytest.raises(ValueError, match="plant_verified_by"):
+        stability_margins(loop)
+
+
 def test_stability_margins_rejects_plant_transfer_function_response() -> None:
     response = frequency_response(
         _buck_model(), start_hz=10.0, stop_hz=1_000.0, points=10
@@ -625,13 +758,47 @@ def test_provenance_records_capability_origin() -> None:
     )
 
 
+def test_stability_margins_declares_its_own_verified_by() -> None:
+    loop = loop_gain_response(
+        _buck_model(), _type2_controller(), start_hz=10.0, stop_hz=100_000.0, points=241
+    )
+    margins = stability_margins(loop)
+
+    own_identifier = (
+        "tests/test_ac_analysis.py::"
+        "test_stability_margins_declares_its_own_verified_by"
+    )
+    assert margins["verified_by"] == [
+        *loop["provenance"]["verified_by"],
+        own_identifier,
+    ]
+    assert margins["provenance"]["verified_by"] == margins["verified_by"]
+    assert own_identifier not in loop["provenance"]["verified_by"]
+
+
 def test_stability_margins_inherits_provenance_and_records_interpolation() -> None:
     loop = loop_gain_response(
         _buck_model(), _type2_controller(), start_hz=10.0, stop_hz=100_000.0, points=241
     )
     margins = stability_margins(loop)
 
-    assert margins["provenance"] == loop["provenance"]
+    expected_verified_by = [
+        *loop["provenance"]["verified_by"],
+        (
+            "tests/test_ac_analysis.py::"
+            "test_stability_margins_declares_its_own_verified_by"
+        ),
+    ]
+    assert margins["provenance"]["verified_by"] == expected_verified_by
+    assert {
+        key: value
+        for key, value in margins["provenance"].items()
+        if key != "verified_by"
+    } == {
+        key: value
+        for key, value in loop["provenance"].items()
+        if key != "verified_by"
+    }
     assert margins["provenance"]["sweep"] == loop["provenance"]["sweep"]
     assert margins["provenance"]["controller"] == loop["provenance"]["controller"]
     assert margins["interpolation"] == "log10_frequency_linear_db_and_degrees"

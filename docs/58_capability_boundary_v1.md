@@ -52,7 +52,11 @@
    **不含**采样延迟、零阶保持相位与混叠；结果自报 `method`/`assumptions`/`verified_by`
    与完整 `provenance`。`phase_margin_deg`/`gain_margin_db` 只在给定工作点与**扫描分辨率**
    下有意义（同一回路 241/401/512 点的增益裕度实测为 26.79/25.46/25.81 dB），
-   且 `margin_positive=None` 意味着“无法评估”，不得读作“稳定”。
+   且 `margin_positive=None` 意味着“无法评估”，不得读作“稳定”。相位平坦在 ±180° 时
+   `gain_margin_db=None` 并带 `phase_flat_at_minus_180`，不得用第一个采样点伪造增益裕度；
+   margins 的 `verified_by` 必须包含验证 margins 自身的测试，而不是只复制 loop-gain 的测试。
+   `LossBreakdown.to_dict()` 同样带 `provenance`（含工作点、`capability_origin` 与
+   `plant_verified_by`）；`impedance_response`/`middlebrook_ratio` 顶层与 AC 结果同形。
 7. **阻抗与 Middlebrook 共用同一线性化。** `SmallSignalModel` 的端口是具名的
    （`duty`/`vin`/`load_current` → `vout`/`input_current`），`Zin = v_in/i_in`、
    `Zout = v_out/i_load`（`load_current` 为**注入**输出节点的电流）。

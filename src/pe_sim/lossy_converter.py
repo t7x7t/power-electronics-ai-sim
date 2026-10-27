@@ -438,6 +438,13 @@ class LossyBuckPlant:
             assumptions=_ASSUMPTIONS,
             verified_by=_VERIFIED_BY,
             declared_lossless=declared_lossless,
+            operating_point={
+                "duty": duty,
+                "vout": voltage,
+                "il": current,
+            },
+            origin="caller_registered",
+            plant_verified_by=_VERIFIED_BY,
         )
 
     # -- internals --------------------------------------------------------

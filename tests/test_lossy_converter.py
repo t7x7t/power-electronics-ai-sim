@@ -147,6 +147,7 @@ def test_loss_terms_sum_to_the_power_balance() -> None:
 
     # The projection must be re-validatable by the same invariants.
     payload = breakdown.to_dict()
+    provenance = payload["provenance"]
     replayed = LossBreakdown(
         plant_id=payload["plant_id"],
         method=payload["method"],
@@ -158,8 +159,33 @@ def test_loss_terms_sum_to_the_power_balance() -> None:
         assumptions=tuple(payload["assumptions"]),
         verified_by=payload["verified_by"],
         declared_lossless=payload["declared_lossless"],
+        operating_point=provenance["linearization_point"],
+        origin=provenance["capability_origin"],
+        plant_verified_by=provenance["plant_verified_by"],
     )
     assert replayed.to_dict() == payload
+
+
+def test_loss_model_declares_the_evaluated_operating_point() -> None:
+    plant = _plant()
+    breakdown = plant.loss_model(_operating_point())
+    steady = plant.analytical_steady_state(0.5)
+    provenance = breakdown.to_dict()["provenance"]
+
+    assert breakdown.origin == "caller_registered"
+    assert dict(breakdown.operating_point)["duty"] == pytest.approx(0.5)
+    assert dict(breakdown.operating_point)["vout"] == pytest.approx(
+        steady["output_voltage_v"]
+    )
+    assert dict(breakdown.operating_point)["il"] == pytest.approx(
+        steady["inductor_current_a"]
+    )
+    assert provenance["capability_origin"] == "caller_registered"
+    assert provenance["plant_verified_by"] == (
+        "tests/test_lossy_converter.py::test_loss_terms_sum_to_the_power_balance"
+    )
+    assert provenance["linearization_point"] == dict(breakdown.operating_point)
+    assert provenance["verified_by"] == [breakdown.verified_by]
 
 
 def test_loss_model_term_keys_match_the_contract() -> None:

@@ -17,10 +17,12 @@ from pe_sim.backends.whole_run_engine import LinearStateSpace
 from pe_sim.model_capabilities import (
     CAPABILITY_ORIGINS,
     CAPABILITY_SCHEMA,
+    CAPABILITY_UNAVAILABLE_REASONS,
     CapabilityUnavailable,
     LossBreakdown,
     OperatingPoint,
     SmallSignalModel,
+    capability_provenance,
     clear_model_capabilities,
     load_builtin_model_capabilities,
     loss_model_for,
@@ -28,6 +30,7 @@ from pe_sim.model_capabilities import (
     register_small_signal_model,
     registered_model_capabilities,
     small_signal_model_for,
+    validate_capability_provenance,
 )
 from pe_sim.reference_plants import BoostPlant, BuckPlant
 from pe_sim.time_model import RUNTIME_EVIDENCE_LEVELS
@@ -71,7 +74,10 @@ def _operating_point(duty: float = 0.5, **fields: float) -> OperatingPoint:
 
 
 def _unit_model(
-    plant_id: str, *, provider_marker: float = 1.0
+    plant_id: str,
+    *,
+    provider_marker: float = 1.0,
+    origin: str = "caller_registered",
 ) -> SmallSignalModel:
     """A one-state model ``G(s) = 1/s`` used only to exercise the registry."""
 
@@ -85,10 +91,11 @@ def _unit_model(
         parameters={"gain": 1.0, "provider_marker": provider_marker},
         assumptions=("unit_test_fixture",),
         verified_by="tests/test_model_capabilities.py::_unit_model",
+        origin=origin,
     )
 
 
-def _unit_loss(plant_id: str) -> LossBreakdown:
+def _unit_loss(plant_id: str, *, origin: str = "caller_registered") -> LossBreakdown:
     return LossBreakdown(
         plant_id=plant_id,
         method="analytic",
@@ -99,6 +106,7 @@ def _unit_loss(plant_id: str) -> LossBreakdown:
         efficiency=0.95,
         assumptions=("unit_test_fixture",),
         verified_by="tests/test_model_capabilities.py::_unit_loss",
+        origin=origin,
     )
 
 
@@ -130,6 +138,22 @@ def test_unregistered_loss_model_fails_closed() -> None:
 
     assert caught.value.reason == "loss_model_not_declared"
     assert "BuckPlant" in str(caught.value)
+
+
+def test_capability_unavailable_reason_vocabulary_is_closed() -> None:
+    required = {
+        "small_signal_model_not_declared",
+        "loss_model_not_declared",
+        "controller_transfer_function_not_declared",
+        "model_plant_id_mismatch",
+        "operating_point_not_declared",
+        "small_signal_parameters_not_declared",
+        "model_origin_not_permitted",
+    }
+    assert required <= CAPABILITY_UNAVAILABLE_REASONS
+
+    with pytest.raises(ValueError, match="reason"):
+        CapabilityUnavailable("not_a_declared_reason", "message")
 
 
 def test_duplicate_registration_requires_replace() -> None:
@@ -422,6 +446,53 @@ def test_small_signal_model_rejects_non_single_row_output() -> None:
         )
 
 
+def test_small_signal_model_accepts_a_rectangular_multi_output_matrix() -> None:
+    model = SmallSignalModel(
+        plant_id="multi-output",
+        method="analytic",
+        state_space=LinearStateSpace(
+            ((0.0, 1.0), (0.0, 0.0)),
+            ((0.0,), (1.0,)),
+        ),
+        output_matrix=((1.0, 2.0), (3.0, 4.0)),
+        feedthrough=0.0,
+        input_names=("duty",),
+        output_names=("a", "b"),
+        operating_point={"duty": 0.5, "vout": 1.0, "il": 0.5},
+        parameters={"gain": 1.0},
+        assumptions=("unit_test_fixture",),
+        verified_by=(
+            "tests/test_model_capabilities.py::"
+            "test_small_signal_model_accepts_a_rectangular_multi_output_matrix"
+        ),
+    )
+
+    assert model.output_names == ("a", "b")
+
+
+def test_small_signal_model_rejects_ragged_output_matrix_rows() -> None:
+    with pytest.raises(ValueError, match="row length"):
+        SmallSignalModel(
+            plant_id="ragged",
+            method="analytic",
+            state_space=LinearStateSpace(
+                ((0.0, 1.0), (0.0, 0.0)),
+                ((0.0,), (1.0,)),
+            ),
+            output_matrix=((1.0, 2.0), (3.0,)),
+            feedthrough=0.0,
+            input_names=("duty",),
+            output_names=("a", "b"),
+            operating_point={"duty": 0.5, "vout": 1.0, "il": 0.5},
+            parameters={"gain": 1.0},
+            assumptions=("unit_test_fixture",),
+            verified_by=(
+                "tests/test_model_capabilities.py::"
+                "test_small_signal_model_rejects_ragged_output_matrix_rows"
+            ),
+        )
+
+
 # ---------------------------------------------------------------------------
 # Provider origin and self-certification boundary
 # ---------------------------------------------------------------------------
@@ -497,6 +568,52 @@ def test_builtin_small_signal_models_declare_builtin_origin() -> None:
 def test_small_signal_model_rejects_unknown_origin() -> None:
     with pytest.raises(ValueError, match="origin must be one of"):
         SmallSignalModel(**_model_kwargs(origin="certified"))
+
+
+def test_caller_factory_cannot_claim_builtin_small_signal_origin() -> None:
+    register_small_signal_model(
+        "fake-builtin",
+        lambda plant, operating_point: _unit_model(
+            "fake-builtin", origin="builtin"
+        ),
+    )
+
+    with pytest.raises(CapabilityUnavailable) as caught:
+        small_signal_model_for(_KeyedPlant("fake-builtin"), _operating_point())
+
+    assert caught.value.reason == "model_origin_not_permitted"
+    assert "builtin" in str(caught.value)
+
+
+def test_caller_factory_cannot_claim_builtin_loss_origin() -> None:
+    register_loss_model(
+        "fake-loss-builtin",
+        lambda plant, operating_point: _unit_loss(
+            "fake-loss-builtin", origin="builtin"
+        ),
+    )
+
+    with pytest.raises(CapabilityUnavailable) as caught:
+        loss_model_for(_KeyedPlant("fake-loss-builtin"), _operating_point())
+
+    assert caught.value.reason == "model_origin_not_permitted"
+    assert "builtin" in str(caught.value)
+
+
+def test_builtin_buck_reports_builtin_capability_origin() -> None:
+    load_builtin_model_capabilities()
+    model = small_signal_model_for(_buck(), _operating_point())
+
+    provenance = capability_provenance(
+        model,
+        sweep=None,
+        verified_by=(
+            "tests/test_model_capabilities.py::"
+            "test_builtin_buck_reports_builtin_capability_origin",
+        ),
+    )
+
+    assert provenance["capability_origin"] == "builtin"
 
 
 # ---------------------------------------------------------------------------
@@ -582,6 +699,56 @@ def test_loss_breakdown_accepts_consistent_values() -> None:
     assert breakdown.to_dict()["declared_lossless"] is False
 
 
+def test_loss_breakdown_to_dict_carries_capability_provenance() -> None:
+    operating_point = {"duty": 0.5, "vout": 9.5, "il": 0.95}
+    breakdown = LossBreakdown(
+        **_loss_kwargs(
+            operating_point=operating_point,
+            origin="caller_registered",
+            plant_verified_by="tests/test_model_capabilities.py::_unit_loss",
+        )
+    )
+
+    payload = breakdown.to_dict()
+    provenance = payload["provenance"]
+
+    assert set(provenance) == {
+        "plant_id",
+        "linearization_point",
+        "method",
+        "capability_origin",
+        "assumptions",
+        "plant_verified_by",
+        "controller",
+        "sweep",
+        "verified_by",
+    }
+    assert provenance["plant_id"] == "loss-invariant"
+    assert provenance["linearization_point"] == operating_point
+    assert provenance["method"] == "analytic"
+    assert provenance["capability_origin"] == "caller_registered"
+    assert provenance["assumptions"] == ["unit_test_fixture"]
+    assert provenance["plant_verified_by"] == (
+        "tests/test_model_capabilities.py::_unit_loss"
+    )
+    assert provenance["controller"] is None
+    assert provenance["sweep"] is None
+    assert provenance["verified_by"] == [breakdown.verified_by]
+
+
+def test_loss_breakdown_provenance_defaults_to_no_linearization_point() -> None:
+    payload = LossBreakdown(**_loss_kwargs()).to_dict()
+
+    assert payload["provenance"]["linearization_point"] is None
+    assert payload["provenance"]["capability_origin"] == "caller_registered"
+    assert payload["provenance"]["plant_verified_by"] is None
+
+
+def test_loss_breakdown_rejects_unknown_origin() -> None:
+    with pytest.raises(ValueError, match="origin must be one of"):
+        LossBreakdown(**_loss_kwargs(origin="certified"))
+
+
 def test_loss_breakdown_accepts_declared_lossless() -> None:
     breakdown = LossBreakdown(
         **_loss_kwargs(
@@ -594,6 +761,110 @@ def test_loss_breakdown_accepts_declared_lossless() -> None:
     )
 
     assert breakdown.declared_lossless is True
+
+
+def test_loss_breakdown_rejects_declared_lossless_with_losses() -> None:
+    with pytest.raises(ValueError, match="declared_lossless"):
+        LossBreakdown(
+            **_loss_kwargs(
+                terms={"conduction_w": 1.0},
+                total_loss_w=1.0,
+                output_power_w=9.0,
+                input_power_w=10.0,
+                efficiency=0.9,
+                declared_lossless=True,
+            )
+        )
+
+
+def test_loss_breakdown_rejects_declared_lossless_with_non_unit_efficiency() -> None:
+    with pytest.raises(ValueError, match="efficiency"):
+        LossBreakdown(
+            **_loss_kwargs(
+                terms={"ideal_w": 0.0},
+                total_loss_w=0.0,
+                output_power_w=10.0,
+                input_power_w=10.0,
+                efficiency=1.0 - 1e-11,
+                declared_lossless=True,
+            )
+        )
+
+
+def test_loss_breakdown_rejects_negative_output_power() -> None:
+    with pytest.raises(ValueError, match="output_power_w"):
+        LossBreakdown(
+            **_loss_kwargs(
+                terms={"conduction_w": 11.0},
+                total_loss_w=11.0,
+                output_power_w=-1.0,
+                input_power_w=10.0,
+                efficiency=-0.1,
+            )
+        )
+
+
+@pytest.mark.parametrize("declared_lossless", [True, False])
+def test_loss_breakdown_rejects_negative_efficiency(declared_lossless) -> None:
+    with pytest.raises(ValueError, match="efficiency"):
+        LossBreakdown(
+            **_loss_kwargs(
+                terms={"conduction_w": 9.0},
+                total_loss_w=9.0,
+                output_power_w=1.0,
+                input_power_w=10.0,
+                efficiency=-0.1,
+                declared_lossless=declared_lossless,
+            )
+        )
+
+
+def test_validate_capability_provenance_accepts_core_fields() -> None:
+    validated = validate_capability_provenance(
+        {
+            "plant_id": "buck",
+            "method": "analytic",
+            "capability_origin": "builtin",
+            "assumptions": ("ccm_average_model",),
+            "verified_by": [
+                "tests/test_model_capabilities.py::test_x"
+            ],
+            "plant_verified_by": None,
+        }
+    )
+
+    assert validated["plant_id"] == "buck"
+    assert validated["method"] == "analytic"
+    assert validated["capability_origin"] == "builtin"
+    assert validated["assumptions"] == ["ccm_average_model"]
+    assert validated["verified_by"] == [
+        "tests/test_model_capabilities.py::test_x"
+    ]
+    assert validated["plant_verified_by"] is None
+
+
+@pytest.mark.parametrize(
+    "verified_by",
+    [
+        "tests/test_model_capabilities.py::test_x",
+        ["comparable"],
+        ["tests/test_model_capabilities.py"],
+    ],
+)
+def test_validate_capability_provenance_rejects_bad_verified_by(
+    verified_by,
+) -> None:
+    with pytest.raises(ValueError, match="verified_by"):
+        validate_capability_provenance(
+            {
+                "plant_id": "buck",
+                "method": "analytic",
+                "capability_origin": "builtin",
+                "assumptions": ("ccm_average_model",),
+                "verified_by": verified_by,
+                "plant_verified_by": None,
+            }
+        )
 
 
 # ---------------------------------------------------------------------------

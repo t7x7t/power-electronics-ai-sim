@@ -242,6 +242,98 @@ def _synthetic_impedance(magnitudes, *, frequencies=None, kind="input_impedance"
     }
 
 
+@pytest.mark.parametrize(
+    "plant_magnitudes, external_magnitudes",
+    [
+        ([-3.0, -2.0], [-1.0, -1.0]),
+        ([-3.0, -2.0], [1.0, 1.0]),
+        ([2.0, 2.0], [-1.0, -1.0]),
+    ],
+)
+def test_middlebrook_ratio_rejects_negative_finite_magnitudes(
+    plant_magnitudes, external_magnitudes
+) -> None:
+    plant = _synthetic_impedance(plant_magnitudes)
+    external = _synthetic_impedance(external_magnitudes)
+    with pytest.raises(ValueError, match="negative"):
+        middlebrook_ratio(plant, external, kind="input")
+
+
+def test_middlebrook_ratio_rejects_non_finite_frequencies() -> None:
+    plant = _synthetic_impedance([2.0, 1.0], frequencies=[math.inf, 20.0])
+    external = _synthetic_impedance([1.0, 1.0])
+    with pytest.raises(ValueError, match="finite"):
+        middlebrook_ratio(plant, external, kind="input")
+
+
+@pytest.mark.parametrize("frequencies", [[10.0, 5.0], [10.0, 10.0]])
+def test_middlebrook_ratio_rejects_non_increasing_frequencies(frequencies) -> None:
+    plant = _synthetic_impedance([2.0, 2.0], frequencies=frequencies)
+    external = _synthetic_impedance([1.0, 1.0])
+    with pytest.raises(ValueError, match="strictly increasing"):
+        middlebrook_ratio(plant, external, kind="input")
+
+
+@pytest.mark.parametrize("field,value", [("schema", "bogus"), ("status", "failed")])
+def test_middlebrook_ratio_rejects_non_available_inputs(field, value) -> None:
+    plant = _synthetic_impedance([2.0])
+    plant[field] = value
+    with pytest.raises(ValueError, match=field):
+        middlebrook_ratio(plant, _synthetic_impedance([1.0]), kind="input")
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"verified_by": ["comparable"]},
+        {"verified_by": "tests/test_impedance_analysis.py::test_x"},
+        {"assumptions": ["functional"]},
+        {"plant_id": ""},
+        {"method": "certified"},
+        {"capability_origin": "self_certified"},
+        {"plant_verified_by": 3},
+    ],
+)
+def test_middlebrook_ratio_rejects_invalid_external_provenance(overrides) -> None:
+    plant = _synthetic_impedance([2.0])
+    external = _synthetic_impedance([1.0])
+    external["provenance"].update(overrides)
+    with pytest.raises(ValueError):
+        middlebrook_ratio(plant, external, kind="input")
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"verified_by": ["comparable"]},
+        {"assumptions": ["functional"]},
+    ],
+)
+def test_middlebrook_ratio_rejects_invalid_plant_provenance(overrides) -> None:
+    plant = _synthetic_impedance([2.0])
+    external = _synthetic_impedance([1.0])
+    plant["provenance"].update(overrides)
+    with pytest.raises(ValueError):
+        middlebrook_ratio(plant, external, kind="input")
+
+
+def test_middlebrook_ratio_rejects_provenance_missing_plant_id() -> None:
+    plant = _synthetic_impedance([2.0])
+    external = _synthetic_impedance([1.0])
+    del plant["provenance"]["plant_id"]
+    with pytest.raises(ValueError, match="plant_id"):
+        middlebrook_ratio(plant, external, kind="input")
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf")])
+def test_middlebrook_ratio_keeps_non_finite_magnitudes_not_evaluable(value) -> None:
+    plant = _synthetic_impedance([2.0, value])
+    external = _synthetic_impedance([1.0, 1.0])
+    result = middlebrook_ratio(plant, external, kind="input")
+    assert result["criterion"] == "not_evaluable"
+    assert result["evaluated_points"] == 1
+
+
 def test_middlebrook_ratio_must_share_the_frequency_axis() -> None:
     plant = _synthetic_impedance([2.0, 3.0])
     external = _synthetic_impedance(
@@ -292,6 +384,35 @@ def test_middlebrook_never_claims_stability() -> None:
     assert "necessary screen" in result["criterion_meaning"]
     for forbidden in ("stable", "unstable", "safe"):
         assert forbidden not in result["criterion_meaning"]
+
+
+def test_impedance_response_top_level_fields_match_provenance() -> None:
+    response = impedance_response(
+        _buck_model(0.5), kind="input", start_hz=1.0, stop_hz=1e5, points=8
+    )
+
+    assert response["method"] == response["provenance"]["method"]
+    assert response["assumptions"] == response["provenance"]["assumptions"]
+    assert response["verified_by"] == response["provenance"]["verified_by"]
+    assert response["plant_verified_by"] == response["provenance"][
+        "plant_verified_by"
+    ]
+
+
+def test_middlebrook_top_level_fields_match_provenance() -> None:
+    result = middlebrook_ratio(
+        _synthetic_impedance([2.0]), _synthetic_impedance([1.0]), kind="input"
+    )
+
+    assert result["method"] == result["provenance"]["method"]
+    assert result["assumptions"] == result["provenance"]["assumptions"]
+    assert result["verified_by"] == result["provenance"]["verified_by"]
+    assert result["plant_verified_by"] == result["provenance"][
+        "plant_verified_by"
+    ]
+    assert isinstance(result["verified_by"], list)
+    assert result["verified_by"]
+    assert all(isinstance(item, str) for item in result["verified_by"])
 
 
 def test_impedance_provenance_is_self_contained() -> None:

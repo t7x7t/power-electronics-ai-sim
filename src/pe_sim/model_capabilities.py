@@ -70,6 +70,10 @@ Reason codes produced by this module
 ``model_plant_id_mismatch``
     The provider found under a lookup key returned a model whose ``plant_id``
     is different from that key.  The message names both values.
+``model_origin_not_permitted``
+    A provider returned a model declaring ``origin="builtin"`` while the
+    factory that produced it is not one of the built-in factories.  A caller
+    cannot self-certify its model as built in.
 
 Only the Python standard library is used.
 """
@@ -80,7 +84,7 @@ import math
 import re
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
 
 from .backends.whole_run_engine import LinearStateSpace
 from .time_model import RUNTIME_EVIDENCE_LEVELS
@@ -89,6 +93,20 @@ from .time_model import RUNTIME_EVIDENCE_LEVELS
 CAPABILITY_SCHEMA = "pe-sim.model-capability.v1"
 LINEARIZATION_METHODS = ("analytic", "identified")
 CAPABILITY_ORIGINS = ("builtin", "caller_registered")
+
+#: Closed vocabulary of machine-readable capability-gap reasons.  A provider
+#: may not invent a new reason string: consumers branch on this set.
+CAPABILITY_UNAVAILABLE_REASONS = frozenset(
+    {
+        "small_signal_model_not_declared",
+        "loss_model_not_declared",
+        "controller_transfer_function_not_declared",
+        "model_plant_id_mismatch",
+        "operating_point_not_declared",
+        "small_signal_parameters_not_declared",
+        "model_origin_not_permitted",
+    }
+)
 
 _VERIFIED_BY_PATTERN = re.compile(
     r"^tests/[A-Za-z0-9_./-]+\.py::[A-Za-z0-9_\[\].-]+$"
@@ -114,6 +132,11 @@ class CapabilityUnavailable(Exception):
     def __init__(self, reason: str, message: str) -> None:
         if not isinstance(reason, str) or not reason:
             raise ValueError("reason must be a non-empty string")
+        if reason not in CAPABILITY_UNAVAILABLE_REASONS:
+            raise ValueError(
+                "reason must be one of "
+                f"{sorted(CAPABILITY_UNAVAILABLE_REASONS)}, got {reason!r}"
+            )
         if not isinstance(message, str) or not message:
             raise ValueError("message must be a non-empty string")
         super().__init__(message)
@@ -254,6 +277,62 @@ def _validate_signal_names(
             raise ValueError(f"{label} entries must be unique; duplicated {item!r}")
         seen.add(item)
     return items
+
+
+def validate_capability_provenance(
+    provenance: Any, *, label: str = "provenance"
+) -> dict[str, Any]:
+    """Validate one capability provenance block and return its core fields.
+
+    The rules are shared by every capability result so a consumer cannot see a
+    ``plant_id`` that is empty, a ``method`` outside
+    :data:`LINEARIZATION_METHODS`, an unknown ``capability_origin``, an
+    assumption carrying an evidence-level word, or a ``verified_by`` entry that
+    is not a ``tests/<file>.py::<test_name>`` reference.  ``plant_verified_by``
+    is the plant's own declaration and may be ``None``.
+    """
+
+    if not isinstance(provenance, Mapping):
+        raise ValueError(f"{label} must be a mapping")
+    plant_id = provenance.get("plant_id")
+    if not isinstance(plant_id, str) or not plant_id.strip():
+        raise ValueError(f"{label}['plant_id'] must be a non-empty string")
+    method = _validate_method(provenance.get("method"), f"{label}['method']")
+    origin = provenance.get("capability_origin")
+    if not isinstance(origin, str) or origin not in CAPABILITY_ORIGINS:
+        raise ValueError(
+            f"{label}['capability_origin'] must be one of "
+            f"{CAPABILITY_ORIGINS}, got {origin!r}"
+        )
+    assumptions = _validate_assumptions(
+        provenance.get("assumptions"), f"{label}['assumptions']"
+    )
+    verified_by_raw = provenance.get("verified_by")
+    if isinstance(verified_by_raw, (str, bytes)) or not isinstance(
+        verified_by_raw, (list, tuple)
+    ):
+        raise ValueError(
+            f"{label}['verified_by'] must be a sequence of "
+            "'tests/<file>.py::<test_name>' identifiers"
+        )
+    verified_by = tuple(
+        _validate_verified_by(item, f"{label}['verified_by'][{index}]")
+        for index, item in enumerate(verified_by_raw)
+    )
+    plant_verified_by = provenance.get("plant_verified_by")
+    if plant_verified_by is not None and not isinstance(plant_verified_by, str):
+        raise ValueError(
+            f"{label}['plant_verified_by'] must be a string or None, "
+            f"got {plant_verified_by!r}"
+        )
+    return {
+        "plant_id": plant_id,
+        "method": method,
+        "capability_origin": origin,
+        "assumptions": list(assumptions),
+        "verified_by": list(verified_by),
+        "plant_verified_by": plant_verified_by,
+    }
 
 
 def _require_consistent(actual: float, expected: float, label: str) -> None:
@@ -431,10 +510,13 @@ class SmallSignalModel:
         output_names = _validate_signal_names(
             self.output_names, "output_names", expected_length=len(rows)
         )
-        if len(rows[0]) != self.state_space.state_size:
-            raise ValueError(
-                "output_matrix row length must equal state_space.state_size"
-            )
+        for row_index, row in enumerate(rows):
+            if len(row) != self.state_space.state_size:
+                raise ValueError(
+                    "output_matrix row length must equal "
+                    f"state_space.state_size; row {row_index} has "
+                    f"{len(row)} entries, expected {self.state_space.state_size}"
+                )
 
         feedthrough = _finite_float(self.feedthrough, "feedthrough")
         declared_matrix = self.feedthrough_matrix
@@ -626,6 +708,9 @@ class LossBreakdown:
     assumptions: tuple[str, ...]
     verified_by: str
     declared_lossless: bool = False
+    operating_point: Mapping[str, float] | None = None
+    origin: str = "caller_registered"
+    plant_verified_by: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.plant_id, str) or not self.plant_id:
@@ -647,11 +732,30 @@ class LossBreakdown:
         declared_lossless = self.declared_lossless
         if not isinstance(declared_lossless, bool):
             raise ValueError("declared_lossless must be a bool")
+        operating_point = self.operating_point
+        if operating_point is not None:
+            operating_point = _freeze_float_mapping(
+                operating_point, "operating_point"
+            )
+        origin = self.origin
+        if origin not in CAPABILITY_ORIGINS:
+            raise ValueError(
+                f"origin must be one of {CAPABILITY_ORIGINS}, got {origin!r}"
+            )
+        plant_verified_by = self.plant_verified_by
+        if plant_verified_by is not None:
+            plant_verified_by = _validate_verified_by(
+                plant_verified_by, "plant_verified_by"
+            )
 
         if input_power_w <= 0.0:
             raise ValueError(
                 "input_power_w must be finite and positive so efficiency is defined"
             )
+        if output_power_w < 0.0:
+            raise ValueError("output_power_w must be finite and non-negative")
+        if efficiency < 0.0:
+            raise ValueError("efficiency must be finite and non-negative")
         _require_consistent(
             total_loss_w,
             sum(terms.values()),
@@ -667,17 +771,37 @@ class LossBreakdown:
             output_power_w / input_power_w,
             "efficiency must equal output_power_w / input_power_w",
         )
-        if efficiency >= 1.0 - 1e-12:
-            if not declared_lossless:
+        if declared_lossless:
+            if total_loss_w != 0.0:
                 raise ValueError(
-                    "efficiency >= 1 - 1e-12 requires declared_lossless=True; "
-                    "a lossless breakdown must be declared, not inferred"
+                    "declared_lossless=True requires total_loss_w == 0.0; "
+                    f"got {total_loss_w!r}"
+                )
+            non_zero_terms = sorted(
+                key for key, value in terms.items() if value != 0.0
+            )
+            if non_zero_terms:
+                raise ValueError(
+                    "declared_lossless=True requires every loss term to be "
+                    f"zero; got non-zero values for {non_zero_terms}"
+                )
+            if not math.isclose(
+                efficiency, 1.0, rel_tol=1e-12, abs_tol=0.0
+            ):
+                raise ValueError(
+                    "declared_lossless=True requires efficiency close to 1.0 "
+                    f"(relative tolerance 1e-12); got {efficiency!r}"
                 )
             if not assumptions:
                 raise ValueError(
                     "a declared_lossless breakdown must declare at least one "
                     "assumption"
                 )
+        elif efficiency >= 1.0 - 1e-12:
+            raise ValueError(
+                "efficiency >= 1 - 1e-12 requires declared_lossless=True; "
+                "a lossless breakdown must be declared, not inferred"
+            )
 
         object.__setattr__(self, "terms", terms)
         object.__setattr__(self, "total_loss_w", total_loss_w)
@@ -687,6 +811,9 @@ class LossBreakdown:
         object.__setattr__(self, "assumptions", assumptions)
         object.__setattr__(self, "verified_by", verified_by)
         object.__setattr__(self, "declared_lossless", declared_lossless)
+        object.__setattr__(self, "operating_point", operating_point)
+        object.__setattr__(self, "origin", origin)
+        object.__setattr__(self, "plant_verified_by", plant_verified_by)
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-safe projection of the validated breakdown."""
@@ -704,6 +831,21 @@ class LossBreakdown:
             "declared_lossless": self.declared_lossless,
             "assumptions": list(self.assumptions),
             "verified_by": self.verified_by,
+            "provenance": {
+                "plant_id": self.plant_id,
+                "linearization_point": (
+                    dict(self.operating_point)
+                    if self.operating_point is not None
+                    else None
+                ),
+                "method": self.method,
+                "capability_origin": self.origin,
+                "assumptions": list(self.assumptions),
+                "plant_verified_by": self.plant_verified_by,
+                "controller": None,
+                "sweep": None,
+                "verified_by": [self.verified_by],
+            },
         }
 
 
@@ -713,6 +855,12 @@ class LossBreakdown:
 
 SmallSignalFactory = Callable[[Any, OperatingPoint], SmallSignalModel]
 LossFactory = Callable[[Any, OperatingPoint], LossBreakdown]
+
+#: The loss whitelist is intentionally empty: this module installs no
+#: built-in loss provider, so no factory may claim ``origin="builtin"`` for a
+#: loss breakdown.  The small-signal whitelist is defined after the built-in
+#: factories below.
+_BUILTIN_LOSS_FACTORIES: tuple[LossFactory, ...] = ()
 
 _SMALL_SIGNAL_REGISTRY: dict[str, SmallSignalFactory] = {}
 _LOSS_REGISTRY: dict[str, LossFactory] = {}
@@ -821,6 +969,32 @@ def _require_plant_id_matches(
     )
 
 
+def _require_origin_permitted(
+    declared_origin: str,
+    factory: Any,
+    builtin_factories: tuple[Any, ...],
+    capability: str,
+) -> None:
+    """Reject a caller factory that claims the built-in origin.
+
+    Only factory identity (not a name or flag) establishes built-in status;
+    checking identity prevents a caller from registering a wrapper that simply
+    returns a model with ``origin="builtin"``.
+    """
+
+    if declared_origin != "builtin":
+        return
+    if any(factory is builtin for builtin in builtin_factories):
+        return
+    factory_name = getattr(factory, "__qualname__", repr(factory))
+    raise CapabilityUnavailable(
+        "model_origin_not_permitted",
+        f"{capability} factory {factory_name!r} returned an object declaring "
+        "origin 'builtin', but only the factories installed by "
+        "load_builtin_model_capabilities() may declare that origin",
+    )
+
+
 def small_signal_model_for(
     plant: Any, operating_point: OperatingPoint
 ) -> SmallSignalModel:
@@ -850,6 +1024,12 @@ def small_signal_model_for(
             f"{type(model).__name__}, expected SmallSignalModel"
         )
     _require_plant_id_matches(model.plant_id, lookup_key, "small-signal model")
+    _require_origin_permitted(
+        model.origin,
+        factory,
+        _BUILTIN_SMALL_SIGNAL_FACTORIES,
+        "small-signal model",
+    )
     return model
 
 
@@ -878,6 +1058,12 @@ def loss_model_for(plant: Any, operating_point: OperatingPoint) -> LossBreakdown
             f"{type(breakdown).__name__}, expected LossBreakdown"
         )
     _require_plant_id_matches(breakdown.plant_id, lookup_key, "loss model")
+    _require_origin_permitted(
+        breakdown.origin,
+        factory,
+        _BUILTIN_LOSS_FACTORIES,
+        "loss model",
+    )
     return breakdown
 
 
@@ -1173,6 +1359,10 @@ _BUILTIN_SMALL_SIGNAL_MODELS: tuple[tuple[str, SmallSignalFactory], ...] = (
     ("boost", _boost_small_signal_model),
 )
 
+_BUILTIN_SMALL_SIGNAL_FACTORIES: tuple[SmallSignalFactory, ...] = tuple(
+    factory for _, factory in _BUILTIN_SMALL_SIGNAL_MODELS
+)
+
 
 def load_builtin_model_capabilities() -> None:
     """Install the built-in analytic buck and boost small-signal models.
@@ -1192,6 +1382,7 @@ def load_builtin_model_capabilities() -> None:
 __all__ = [
     "CAPABILITY_ORIGINS",
     "CAPABILITY_SCHEMA",
+    "CAPABILITY_UNAVAILABLE_REASONS",
     "LINEARIZATION_METHODS",
     "CapabilityUnavailable",
     "LossBreakdown",
@@ -1204,4 +1395,5 @@ __all__ = [
     "register_small_signal_model",
     "registered_model_capabilities",
     "small_signal_model_for",
+    "validate_capability_provenance",
 ]

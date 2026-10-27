@@ -151,8 +151,9 @@
   `method`/`assumptions`/`verified_by` 与完整 `provenance`，不携带证据等级。
   独立校验后加固：`origin` 区分内置/调用方注册、`verified_by` 必须指向真实测试 id、
   `assumptions` 禁用证据等级词、`plant_id` 与查找键必须一致、margins 保留扫频与插值方法、
-  `LossBreakdown` 强制功率/损耗/效率一致性。**C4/C5/C6 均未关闭**：缺阻抗与 Middlebrook
-  （C5）、缺 loss provider 与效率分解（C6）、缺 CLI/study 入口。
+  `LossBreakdown` 强制功率/损耗/效率一致性。**C4/C5/C6 仍为 `kernel_gap`**：三片库级
+  实现（AC、阻抗/Middlebrook、损耗/效率）均已交付，但仍缺 CLI/study 入口；入口落地前
+  不关闭，避免把“有函数但用户调不到”当成可用。
 - 已交付（第二片）：`SmallSignalModel` 端口具名化（`duty`/`vin`/`load_current` →
   `vout`/`input_current`，旧单端口视图保持不变）、`src/pe_sim/impedance_analysis.py`
   （`Zin`/`Zout` 扇帚与 Middlebrook 幅度判据）、`src/pe_sim/frequency_domain.py`
@@ -173,10 +174,23 @@
   取得，`review_status` 为 `not_pinned`，未碰 `reviewed_identities.json`。
 - 已知近似（已写进 `assumptions`）：按平均 `IL²` 计导通损耗（无纹波修正）、低边用固定 `Vf`
   （同步整流应改用低边 `Rds`）、开关损耗仅含 `Qoss·Vin·fsw`（无交越/软开关）、不建模磁芯损耗与温度。
-- 交付：可选 `small_signal_model(op)` 与 `loss_model()`；AC 扫频 / Bode / PM / GM；
+- 交付：可选 `small_signal_model_for(plant, op)` 与 `loss_model()`；AC 扫频 / Bode / PM / GM；
   输入/输出阻抗与 Middlebrook 判据；效率与损耗分解。
 - 验收：未实现能力的植物报告"不可用"而非 `limited`；每个结果记录线性化方法与验证方式；
   实现方式（解析 vs 辨识）出现在工件里。
+- **入口前独立评审与加固（2026-10-27，未提升版本）**：4 个独立子智能体分别审查
+  架构/需求、buck-boost 与阻抗、Middlebrook/裕度、损耗，监督者逐条复现。已修：
+  ① `run_study` 把 `exit_code`/执行失败写入 `StudyPointRecord`，`aggregate_study` 仅当
+  全部点 `execution_ok` 且 `analysis_ok` 才允许 `cross_point_comparability="claimed"`；
+  ② periodicity 前点错误不再被后点收敛掩盖；③ `study_runner` 校验 manifest `run_id`、
+  `plant_id` 与 `manifest_sha256`（存在 `package_sha256` 时调用既有 `verify_package`）；
+  ④ `stability_margins` 把 ±180° 视为同角，相位平坦在 −180° 时 GM 不猜值，并拒绝
+  `status="failed"`/`schema` 不符/sweep 点数不符的输入；⑤ `middlebrook_ratio` 拒绝负幅值、
+  非有限/非递增频率与非法 provenance；⑥ `LossBreakdown` 拒绝负输出功率、负效率与
+  “声明无损但有损耗项”；⑦ `CapabilityUnavailable` 理由码封闭并映射 CLI `invalid_request`；
+  ⑧ `origin="builtin"` 只能由内置工厂声明；⑨ S7/S8 新名字以 experimental 身份顶层可达。
+  相关 10 个测试文件 **415 passed**；全量 **1655 passed / 11 skipped**（无 ngspice）。
+  入口与 `docs/60` 状态仍未改动。
 
 **S9 — 适配器扩面（A8 A9 A11 B7 B8 B3 D3）**
 

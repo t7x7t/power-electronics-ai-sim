@@ -254,6 +254,62 @@ from .backends import (
     write_user_config,
 )
 
+from .study import (
+    MAX_STUDY_POINTS,
+    STATISTIC_REDUCERS,
+    STUDY_AGGREGATE_SCHEMA,
+    STUDY_COMPARABILITY_REASONS,
+    STUDY_KINDS,
+    STUDY_LIMITATIONS,
+    STUDY_POINT_EVIDENCE_LEVEL,
+    STUDY_REPORT_SCHEMA,
+    STUDY_SCHEMA,
+    StudyPlan,
+    StudyPlanError,
+    StudyPoint,
+    StudyPointRecord,
+    aggregate_study,
+    build_study_report,
+    evaluate_periodicity,
+    monte_carlo_draws,
+    monte_carlo_draws_sha256,
+    parse_study_document,
+    statistics_for_point,
+    write_study_report,
+)
+from .study_runner import StudyRunResult, run_study
+from .model_capabilities import (
+    CAPABILITY_ORIGINS,
+    CAPABILITY_SCHEMA,
+    CAPABILITY_UNAVAILABLE_REASONS,
+    LINEARIZATION_METHODS,
+    CapabilityUnavailable,
+    LossBreakdown,
+    OperatingPoint,
+    SmallSignalModel,
+    capability_provenance,
+    load_builtin_model_capabilities,
+    loss_model_for,
+    register_loss_model,
+    register_small_signal_model,
+    registered_model_capabilities,
+    small_signal_model_for,
+    validate_capability_provenance,
+)
+from .ac_analysis import (
+    AC_RESULT_SCHEMA,
+    frequency_response,
+    loop_gain_response,
+    stability_margins,
+)
+from .impedance_analysis import (
+    IMPEDANCE_KINDS,
+    IMPEDANCE_SCHEMA,
+    impedance_response,
+    middlebrook_ratio,
+)
+from .lossy_converter import LossyBuckPlant, register_loss_provider
+
 from .public_api import EXPERIMENTAL_API, STABLE_API
 
 __all__ = sorted(STABLE_API | EXPERIMENTAL_API)

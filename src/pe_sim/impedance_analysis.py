@@ -30,12 +30,17 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from .frequency_domain import (
+    finite_number as _finite_number,
     log_frequencies,
     magnitude_series,
     unwrapped_phase_deg,
     validate_sweep,
 )
-from .model_capabilities import SmallSignalModel, capability_provenance
+from .model_capabilities import (
+    SmallSignalModel,
+    capability_provenance,
+    validate_capability_provenance,
+)
 
 
 IMPEDANCE_SCHEMA = "pe-sim.impedance-analysis.v1"
@@ -153,6 +158,9 @@ def impedance_response(
         assumptions.append("load_current_is_injected_at_the_output_node")
     assumptions = _deduplicate(assumptions)
     sweep = _sweep_block(start, stop, count)
+    verified_by = list(
+        _INPUT_VERIFIED_BY if kind == "input" else _OUTPUT_VERIFIED_BY
+    )
 
     return {
         "schema": IMPEDANCE_SCHEMA,
@@ -160,6 +168,9 @@ def impedance_response(
         "kind": f"{kind}_impedance",
         "plant_id": model.plant_id,
         "method": model.method,
+        "assumptions": list(assumptions),
+        "verified_by": verified_by,
+        "plant_verified_by": model.verified_by,
         "convention": (
             "Zin = v_in / i_in"
             if kind == "input"
@@ -172,9 +183,7 @@ def impedance_response(
         "provenance": capability_provenance(
             model,
             sweep=sweep,
-            verified_by=(
-                _INPUT_VERIFIED_BY if kind == "input" else _OUTPUT_VERIFIED_BY
-            ),
+            verified_by=verified_by,
             assumptions=assumptions,
         ),
     }
@@ -192,26 +201,95 @@ def _deduplicate(values: Sequence[str]) -> list[str]:
     return unique
 
 
-def _require_response(value: Any, label: str) -> Mapping[str, Any]:
+def _require_frequency_axis(value: Any, label: str) -> list[float]:
+    if isinstance(value, (str, bytes)) or not isinstance(value, (list, tuple)):
+        raise ValueError(f"{label} must be a sequence of finite numbers")
+    frequencies = [
+        _finite_number(item, f"{label}[{index}]")
+        for index, item in enumerate(value)
+    ]
+    if not frequencies:
+        raise ValueError(f"{label} must not be empty")
+    if frequencies[0] <= 0.0:
+        raise ValueError(f"{label} must contain strictly positive frequencies")
+    for index, (lower, upper) in enumerate(zip(frequencies, frequencies[1:])):
+        if not upper > lower:
+            raise ValueError(
+                f"{label} must be strictly increasing; index {index + 1} is "
+                f"not greater than index {index}"
+            )
+    return frequencies
+
+
+def _require_magnitude_axis(value: Any, label: str) -> list[float]:
+    if isinstance(value, (str, bytes)) or not isinstance(value, (list, tuple)):
+        raise ValueError(f"{label} must be a sequence of numbers")
+    magnitudes: list[float] = []
+    for index, item in enumerate(value):
+        if isinstance(item, bool) or not isinstance(item, (int, float)):
+            raise ValueError(f"{label}[{index}] must be a number")
+        number = float(item)
+        if math.isfinite(number) and number < 0.0:
+            raise ValueError(
+                f"{label}[{index}] must not be negative; a magnitude is "
+                f"non-negative, or non-finite when it cannot be evaluated, "
+                f"got {number!r}"
+            )
+        magnitudes.append(number)
+    if not magnitudes:
+        raise ValueError(f"{label} must not be empty")
+    return magnitudes
+
+
+def _require_response(
+    value: Any, label: str, *, require_provenance: bool
+) -> tuple[Mapping[str, Any], list[float], list[float], dict[str, Any] | None]:
     if not isinstance(value, Mapping):
         raise TypeError(f"{label} must be a mapping produced by impedance_response")
-    if value.get("schema") != IMPEDANCE_SCHEMA or value.get("status") != "available":
-        raise ValueError(f"{label} is not an available impedance result")
+    if value.get("schema") != IMPEDANCE_SCHEMA:
+        raise ValueError(
+            f"{label}['schema'] must equal {IMPEDANCE_SCHEMA!r}, "
+            f"got {value.get('schema')!r}"
+        )
+    if value.get("status") != "available":
+        raise ValueError(
+            f"{label}['status'] must be 'available', "
+            f"got {value.get('status')!r}"
+        )
     for key in ("frequencies_hz", "magnitude_ohm"):
         if key not in value:
             raise ValueError(f"{label} is missing {key!r}")
-    return value
+    frequencies = _require_frequency_axis(
+        value["frequencies_hz"], f"{label}['frequencies_hz']"
+    )
+    magnitudes = _require_magnitude_axis(
+        value["magnitude_ohm"], f"{label}['magnitude_ohm']"
+    )
+    provenance_value = value.get("provenance")
+    if provenance_value is None:
+        if require_provenance:
+            raise ValueError(
+                f"{label} must carry a provenance mapping; an impedance "
+                "result without provenance cannot be used as the plant side"
+            )
+        provenance = None
+    else:
+        provenance = validate_capability_provenance(
+            provenance_value, label=f"{label}['provenance']"
+        )
+    return value, frequencies, magnitudes, provenance
 
 
 def _ratio_or_none(numerator: float, denominator: float) -> float | None:
     """Apply IEEE ratio semantics to one sampled point.
 
-    ``+inf`` is a determinate pass (a nonzero numerator over a zero
-    denominator), ``0.0`` is a determinate violation, and ``0/0`` or an
-    otherwise non-finite operand is not evaluable.
+    ``+inf`` is a determinate pass (a finite positive numerator over a zero
+    denominator), ``0.0`` is a determinate violation, and ``0/0`` or any
+    non-finite operand is not evaluable.  A non-finite magnitude is therefore
+    never allowed to pass the screen merely because the other side is zero.
     """
 
-    if math.isnan(numerator) or math.isnan(denominator):
+    if not math.isfinite(numerator) or not math.isfinite(denominator):
         return None
     if denominator == 0.0:
         if numerator > 0.0:
@@ -220,8 +298,6 @@ def _ratio_or_none(numerator: float, denominator: float) -> float | None:
     if numerator == 0.0:
         if denominator > 0.0:
             return 0.0
-        return None
-    if not math.isfinite(numerator) or not math.isfinite(denominator):
         return None
     return numerator / denominator
 
@@ -255,8 +331,16 @@ def middlebrook_ratio(
     """
 
     kind = _require_kind(kind)
-    plant = _require_response(plant_impedance, "plant_impedance")
-    external = _require_response(external_impedance, "external_impedance")
+    plant, plant_frequencies, plant_magnitudes, plant_provenance = (
+        _require_response(
+            plant_impedance, "plant_impedance", require_provenance=True
+        )
+    )
+    external, external_frequencies, external_magnitudes, external_provenance = (
+        _require_response(
+            external_impedance, "external_impedance", require_provenance=False
+        )
+    )
 
     expected_plant_kind = f"{kind}_impedance"
     if plant.get("kind") != expected_plant_kind:
@@ -264,23 +348,12 @@ def middlebrook_ratio(
             f"plant_impedance['kind'] must be {expected_plant_kind!r} for "
             f"kind={kind!r}, got {plant.get('kind')!r}"
         )
-    plant_provenance = plant.get("provenance")
-    if not isinstance(plant_provenance, Mapping):
-        raise ValueError(
-            "plant_impedance must carry a provenance mapping; an impedance "
-            "result without provenance cannot be used as the plant side"
-        )
     external_kind = external.get("kind")
     if not isinstance(external_kind, str) or not external_kind.strip():
         raise ValueError(
             "external_impedance['kind'] must be a non-empty string, got "
             f"{external_kind!r}"
         )
-
-    plant_frequencies = list(plant["frequencies_hz"])
-    external_frequencies = list(external["frequencies_hz"])
-    plant_magnitudes = [float(value) for value in plant["magnitude_ohm"]]
-    external_magnitudes = [float(value) for value in external["magnitude_ohm"]]
 
     lengths = (
         len(plant_frequencies),
@@ -360,11 +433,11 @@ def middlebrook_ratio(
     else:
         criterion = "satisfied"
 
-    inherited = dict(plant_provenance)
+    inherited = dict(plant["provenance"])
     inherited_assumptions = _deduplicate(
         [
             value
-            for value in (inherited.get("assumptions") or [])
+            for value in plant_provenance["assumptions"]
             if kind != "input"
             or value != "load_current_is_injected_at_the_output_node"
         ]
@@ -375,16 +448,11 @@ def middlebrook_ratio(
     inherited["controller"] = None
     inherited["verified_by"] = list(_MIDDLEBROOK_VERIFIED_BY)
 
-    external_provenance = external.get("provenance")
-    if isinstance(external_provenance, Mapping):
-        external_plant_id = external_provenance.get("plant_id")
-        external_method = external_provenance.get("method")
-        external_assumptions = list(
-            external_provenance.get("assumptions") or []
-        )
-        external_verified_by = list(
-            external_provenance.get("verified_by") or []
-        )
+    if external_provenance is not None:
+        external_plant_id = external_provenance["plant_id"]
+        external_method = external_provenance["method"]
+        external_assumptions = list(external_provenance["assumptions"])
+        external_verified_by = list(external_provenance["verified_by"])
     else:
         external_plant_id = None
         external_method = None
@@ -408,6 +476,10 @@ def middlebrook_ratio(
         "min_ratio_scope": min_ratio_scope,
         "notes": notes,
         "criterion_meaning": _CRITERION_MEANING,
+        "method": plant_provenance["method"],
+        "assumptions": list(inherited_assumptions),
+        "verified_by": list(_MIDDLEBROOK_VERIFIED_BY),
+        "plant_verified_by": plant_provenance["plant_verified_by"],
         "external": {
             "kind": external_kind,
             "plant_id": external_plant_id,

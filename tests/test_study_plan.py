@@ -218,6 +218,8 @@ def test_study_constants_are_closed_and_stable():
             "empty_study",
             "duplicate_points",
             "point_identity_incomplete",
+            "point_execution_failed",
+            "point_analysis_failed",
         }
     )
 

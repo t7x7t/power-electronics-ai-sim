@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pe_sim.cli as cli_module
 from pe_sim.cli import main
 from pe_sim.inspection import inspect_run
+from pe_sim.model_capabilities import CapabilityUnavailable
 from pe_sim.run_events import (
     EVENT_RUN_FINISHED,
     EVENT_RUN_STARTED,
@@ -76,6 +78,25 @@ def test_cli_prints_a_versioned_terminal_result(tmp_path, capsys, monkeypatch):
     }
     assert payload["failure_category"] is None
     assert captured.err == "", "no interaction surface is paid for unless requested"
+
+
+def test_cli_maps_capability_unavailable_to_config_rejected(capsys, monkeypatch):
+    def raise_unavailable() -> None:
+        raise CapabilityUnavailable(
+            "model_origin_not_permitted",
+            "caller factory claimed builtin origin",
+        )
+
+    monkeypatch.setattr(cli_module, "load_builtin_plants", raise_unavailable)
+
+    assert main(["list-plants"]) == 2
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert payload["status"] == "CONFIG_REJECTED"
+    assert payload["error_code"] == "invalid_request"
+    assert payload["reason"] == "model_origin_not_permitted"
+    assert "Traceback" not in captured.err
 
 
 def test_cli_streams_versioned_progress_events_on_stderr(tmp_path, capsys, monkeypatch):
