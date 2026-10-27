@@ -158,6 +158,13 @@
   （`Zin`/`Zout` 扇帚与 Middlebrook 幅度判据）、`src/pe_sim/frequency_domain.py`
   （扫频/幅值/相位助手单一实现）。实现中修正了一处真实符号错误：buck 的输入电流
   状态行必须乘电感电流（`i_in = D·iL`），最初的 `(0, D)` 会让 `Zin(0)` 差 10 倍。
+- 第二片独立物理审计：状态空间、`load_current` 符号、`Zin(0)=R/D²`、
+  `Zout(f0)=R`、与 `9ab9920` 的 `transfer_function` 回归全部 PASS；Middlebrook 判 FAIL：
+  ① 幅值数组长度不一致被 `zip` 静默截断，可把 `violated` 报成 `satisfied`；② 零阻抗被当成
+  “不可评估”，导致 `first_violation_hz` 跳过真实违反点。已修：长度必须三元一致；零分子判违反、
+  零分母（正分子）判通过、0/0 才 `not_evaluable`；`min_ratio_scope`/`total_points`/`evaluated_points`
+  显式化；−∞ dB 用 `min_ratio_db_bound` 表达以保持 JSON 有限；外部阻抗来源记入 `external`；
+  `verified_by` 修正为扁平字符串列表（曾误为嵌套列表）。
 - 交付：可选 `small_signal_model(op)` 与 `loss_model()`；AC 扫频 / Bode / PM / GM；
   输入/输出阻抗与 Middlebrook 判据；效率与损耗分解。
 - 验收：未实现能力的植物报告"不可用"而非 `limited`；每个结果记录线性化方法与验证方式；

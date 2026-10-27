@@ -270,7 +270,7 @@ def test_middlebrook_ratio_satisfied_and_violated() -> None:
 
 def test_middlebrook_ratio_is_not_evaluable_when_a_magnitude_is_zero() -> None:
     plant = _synthetic_impedance([2.0, 0.0])
-    external = _synthetic_impedance([1.0, 1.0])
+    external = _synthetic_impedance([1.0, 0.0])
     result = middlebrook_ratio(plant, external, kind="input")
     assert result["criterion"] == "not_evaluable"
     assert "non_finite_ratio" in result["notes"]
@@ -332,3 +332,184 @@ def test_impedance_payloads_carry_no_evidence_vocabulary() -> None:
         assert "evidence_level" not in text
         for level in RUNTIME_EVIDENCE_LEVELS:
             assert f'"{level}"' not in text
+
+
+def test_middlebrook_ratio_rejects_inconsistent_response_lengths() -> None:
+    plant = _synthetic_impedance(
+        [2.0, 2.0, 0.5], frequencies=[10.0, 20.0, 30.0]
+    )
+    external = _synthetic_impedance(
+        [1.0, 1.0], frequencies=[10.0, 20.0, 30.0]
+    )
+    with pytest.raises(ValueError, match="length"):
+        middlebrook_ratio(plant, external, kind="input")
+
+
+def test_middlebrook_ratio_reports_a_late_violation_without_truncation() -> None:
+    plant = _synthetic_impedance(
+        [2.0, 2.0, 0.5], frequencies=[10.0, 20.0, 30.0]
+    )
+    external = _synthetic_impedance(
+        [1.0, 1.0, 1.0], frequencies=[10.0, 20.0, 30.0]
+    )
+    result = middlebrook_ratio(plant, external, kind="input")
+    assert result["criterion"] == "violated"
+    assert result["violation_count"] == 1
+    assert result["first_violation_hz"] == pytest.approx(30.0)
+    assert result["min_ratio_db"] == pytest.approx(20.0 * math.log10(0.5))
+    assert result["total_points"] == 3
+    assert result["evaluated_points"] == 3
+    assert result["min_ratio_scope"] == "all_sampled_points"
+
+
+def test_zero_magnitude_is_a_determinate_violation() -> None:
+    plant = _synthetic_impedance([2.0, 0.0])
+    external = _synthetic_impedance([1.0, 1.0])
+    input_result = middlebrook_ratio(plant, external, kind="input")
+    assert input_result["criterion"] == "violated"
+    assert input_result["violation_count"] == 1
+    assert input_result["first_violation_hz"] == pytest.approx(20.0)
+    assert input_result["min_ratio_db"] is None
+    assert input_result["min_ratio_db_bound"] == "negative_infinity"
+
+    output = _synthetic_impedance([1.0, 1.0], kind="output_impedance")
+    load = _synthetic_impedance([4.0, 0.0])
+    output_result = middlebrook_ratio(output, load, kind="output")
+    assert output_result["criterion"] == "violated"
+    assert output_result["violation_count"] == 1
+    assert output_result["first_violation_hz"] == pytest.approx(20.0)
+    assert output_result["min_ratio_db"] is None
+    assert output_result["min_ratio_db_bound"] == "negative_infinity"
+
+
+def test_zero_ratio_result_is_json_safe() -> None:
+    """A certain violation is minus infinity in dB, which JSON cannot carry."""
+
+    plant = _synthetic_impedance([2.0, 0.0])
+    external = _synthetic_impedance([1.0, 1.0])
+    result = middlebrook_ratio(plant, external, kind="input")
+    text = json.dumps(result, allow_nan=False)
+    assert "-Infinity" not in text and "NaN" not in text
+    assert json.loads(text)["min_ratio_db_bound"] == "negative_infinity"
+
+
+def test_zero_denominator_with_positive_numerator_is_an_infinite_ratio() -> None:
+    plant = _synthetic_impedance([2.0, 2.0])
+    external = _synthetic_impedance([1.0, 0.0])
+    result = middlebrook_ratio(plant, external, kind="input")
+    assert result["criterion"] == "satisfied"
+    assert result["violation_count"] == 0
+    assert result["first_violation_hz"] is None
+    assert result["min_ratio_db"] == pytest.approx(20.0 * math.log10(2.0))
+    assert result["total_points"] == 2
+    assert result["evaluated_points"] == 2
+    assert result["min_ratio_scope"] == "all_sampled_points"
+
+
+def test_undefined_ratio_does_not_hide_a_determinate_violation() -> None:
+    plant = _synthetic_impedance([0.5, 0.0])
+    external = _synthetic_impedance([1.0, 0.0])
+    result = middlebrook_ratio(plant, external, kind="input")
+    assert result["criterion"] == "violated"
+    assert result["violation_count"] == 1
+    assert result["first_violation_hz"] == pytest.approx(10.0)
+    assert result["min_ratio_db"] == pytest.approx(20.0 * math.log10(0.5))
+    assert result["total_points"] == 2
+    assert result["evaluated_points"] == 1
+    assert result["min_ratio_scope"] == "evaluable_subset"
+    assert "non_finite_ratio" in result["notes"]
+    assert "minimum_covers_evaluable_points_only" in result["notes"]
+
+
+def test_only_undefined_ratios_leave_the_minimum_empty() -> None:
+    result = middlebrook_ratio(
+        _synthetic_impedance([0.0]),
+        _synthetic_impedance([0.0]),
+        kind="input",
+    )
+    assert result["criterion"] == "not_evaluable"
+    assert result["violation_count"] == 0
+    assert result["min_ratio_db"] is None
+    assert result["worst_frequency_hz"] is None
+    assert result["first_violation_hz"] is None
+    assert result["total_points"] == 1
+    assert result["evaluated_points"] == 0
+    assert result["min_ratio_scope"] == "evaluable_subset"
+    assert "non_finite_ratio" in result["notes"]
+    assert "minimum_covers_evaluable_points_only" in result["notes"]
+
+
+def test_middlebrook_verified_by_is_a_flat_string_list() -> None:
+    result = middlebrook_ratio(
+        _synthetic_impedance([2.0]), _synthetic_impedance([1.0]), kind="input"
+    )
+    verified_by = result["provenance"]["verified_by"]
+    assert isinstance(verified_by, list)
+    assert verified_by
+    assert all(isinstance(item, str) for item in verified_by)
+    assert verified_by == [
+        "tests/test_impedance_analysis.py::"
+        "test_middlebrook_ratio_satisfied_and_violated"
+    ]
+
+
+def test_middlebrook_requires_matching_kind_and_plant_provenance() -> None:
+    plant = _synthetic_impedance([2.0])
+    external = _synthetic_impedance([1.0])
+    with pytest.raises(ValueError, match="kind"):
+        middlebrook_ratio(plant, external, kind="output")
+
+    missing_provenance = _synthetic_impedance([2.0])
+    del missing_provenance["provenance"]
+    with pytest.raises(ValueError, match="provenance"):
+        middlebrook_ratio(missing_provenance, external, kind="input")
+
+
+def test_impedance_assumptions_are_deduplicated_and_direction_specific() -> None:
+    model = _buck_model(0.5)
+    input_response = impedance_response(
+        model, kind="input", start_hz=1.0, stop_hz=1e4, points=8
+    )
+    input_assumptions = input_response["provenance"]["assumptions"]
+    assert "load_current_is_injected_at_the_output_node" not in input_assumptions
+    assert len(input_assumptions) == len(set(input_assumptions))
+
+    output_response = impedance_response(
+        model, kind="output", start_hz=1.0, stop_hz=1e4, points=8
+    )
+    output_assumptions = output_response["provenance"]["assumptions"]
+    assert (
+        output_assumptions.count("load_current_is_injected_at_the_output_node")
+        == 1
+    )
+    assert len(output_assumptions) == len(set(output_assumptions))
+
+
+def test_middlebrook_records_the_external_response_source() -> None:
+    plant = _synthetic_impedance([2.0, 2.0])
+    external = _synthetic_impedance([1.0, 1.0])
+    result = middlebrook_ratio(plant, external, kind="input")
+    assert result["external"] == {
+        "kind": "input_impedance",
+        "plant_id": "buck",
+        "method": "analytic",
+        "assumptions": ["ccm_average_model"],
+        "verified_by": ["tests/test_impedance_analysis.py::test_x"],
+    }
+    assert (
+        result["provenance"]["assumptions"].count(
+            "external_impedance_is_caller_declared"
+        )
+        == 1
+    )
+
+    external_without_provenance = _synthetic_impedance([1.0, 1.0])
+    del external_without_provenance["provenance"]
+    bare = middlebrook_ratio(plant, external_without_provenance, kind="input")
+    assert bare["external"] == {
+        "kind": "input_impedance",
+        "plant_id": None,
+        "method": None,
+        "assumptions": [],
+        "verified_by": [],
+    }

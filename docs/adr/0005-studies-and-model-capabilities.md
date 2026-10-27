@@ -205,9 +205,18 @@ provider land in the rest of stage S8; until then `docs/60` C4/C5/C6 stay open.
    `criterion="satisfied"` means `|Zin/Zsource| > 1` (or `|Zload/Zout| > 1`)
    at every sampled frequency. The payload carries
    `criterion_meaning` saying exactly that, records `min_ratio_db`,
-   `first_violation_hz`, and the inherited sweep, and has no `stable` field.
-   The external impedance is caller-declared, so the ratio is only as good as
-   that declaration.
+   `first_violation_hz`, `violation_count`, `total_points`/`evaluated_points`,
+   `min_ratio_scope`, and the inherited sweep, and has no `stable` field.
+   Zero impedance is a determinate answer, not "unknown": a zero numerator is
+   a violation and an infinite ratio is a pass. Because a decibel value of
+   minus infinity cannot be serialised, the exact bound is carried as
+   `min_ratio_db_bound = "negative_infinity"` with `min_ratio_db = null`;
+   `not_evaluable` is reserved for genuinely undefined points (0/0 or NaN). Both
+   responses must declare the same frequency axis **and** the same number of
+   magnitudes — a silent `zip` truncation would let one short array hide a
+   violation. The external impedance's own `kind`/`plant_id`/`method`/
+   `assumptions` are recorded under `external`, because the ratio is only as
+   good as that caller-declared quantity.
 
 ## Consequences
 - The kernel keeps three objects; two layers are added around them. Adding a

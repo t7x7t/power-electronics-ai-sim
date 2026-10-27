@@ -58,7 +58,9 @@
    `Zout = v_out/i_load`（`load_current` 为**注入**输出节点的电流）。
    `middlebrook_ratio` 只回答“在采样频点上 |Zin/Zsrc| 或 |Zload/Zout| 是否大于 1”，
    外部阻抗由调用方声明，`criterion_meaning` 明确写了“必要筛子，不是稳定性证明”，
-   且结果里没有 `stable` 字段。
+   且结果里没有 `stable` 字段。零阻抗是**确定答案**而不是“未知”：分子为零即违反、
+   比值无穷即通过；由于 −∞ dB 无法 JSON 序列化，用 `min_ratio_db_bound` 标记这个边界，
+   `not_evaluable` 只留给真正未定义的 0/0 或非有限点。
 
 **为什么这样设计：** 不变量 I1——约束必须在运行**期间**强制执行，而不是事后重建。
 只有能逐窗口拦截的路线才配 `comparable`；一次性整段求解无法在飞行中拦截，因此

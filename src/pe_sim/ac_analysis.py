@@ -648,6 +648,12 @@ def stability_margins(response: Mapping[str, Any]) -> dict[str, Any]:
         "notes": notes,
         "method": method,
         "assumptions": assumptions,
+        # Same top-level shape as the other two results: ``verified_by`` names
+        # the tests that verify *this* result, ``plant_verified_by`` names the
+        # model's own declaration.  A synthetic response without provenance
+        # yields empty/None rather than an invented chain.
+        "verified_by": list(provenance["verified_by"]) if provenance else [],
+        "plant_verified_by": provenance["plant_verified_by"] if provenance else None,
         "provenance": provenance,
         "interpolation": _INTERPOLATION_DESCRIPTION,
     }

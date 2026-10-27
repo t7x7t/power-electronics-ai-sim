@@ -138,13 +138,20 @@ def impedance_response(
     magnitudes, magnitude_db = magnitude_series(
         values, frequencies, label=f"{kind} impedance"
     )
-    assumptions = list(model.assumptions)
-    if (
-        model.origin == "caller_registered"
-        and "capability_provider_is_caller_registered" not in assumptions
-    ):
+    assumptions = [
+        value
+        for value in model.assumptions
+        if kind != "input"
+        or value != "load_current_is_injected_at_the_output_node"
+    ]
+    if model.origin == "caller_registered":
         assumptions.append("capability_provider_is_caller_registered")
-    assumptions.append("load_current_is_injected_at_the_output_node")
+    if (
+        kind == "output"
+        and "load_current_is_injected_at_the_output_node" not in assumptions
+    ):
+        assumptions.append("load_current_is_injected_at_the_output_node")
+    assumptions = _deduplicate(assumptions)
     sweep = _sweep_block(start, stop, count)
 
     return {
@@ -173,6 +180,18 @@ def impedance_response(
     }
 
 
+def _deduplicate(values: Sequence[str]) -> list[str]:
+    """Return ``values`` without duplicates, preserving first-seen order."""
+
+    unique: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if value not in seen:
+            seen.add(value)
+            unique.append(value)
+    return unique
+
+
 def _require_response(value: Any, label: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise TypeError(f"{label} must be a mapping produced by impedance_response")
@@ -182,6 +201,41 @@ def _require_response(value: Any, label: str) -> Mapping[str, Any]:
         if key not in value:
             raise ValueError(f"{label} is missing {key!r}")
     return value
+
+
+def _ratio_or_none(numerator: float, denominator: float) -> float | None:
+    """Apply IEEE ratio semantics to one sampled point.
+
+    ``+inf`` is a determinate pass (a nonzero numerator over a zero
+    denominator), ``0.0`` is a determinate violation, and ``0/0`` or an
+    otherwise non-finite operand is not evaluable.
+    """
+
+    if math.isnan(numerator) or math.isnan(denominator):
+        return None
+    if denominator == 0.0:
+        if numerator > 0.0:
+            return math.inf
+        return None
+    if numerator == 0.0:
+        if denominator > 0.0:
+            return 0.0
+        return None
+    if not math.isfinite(numerator) or not math.isfinite(denominator):
+        return None
+    return numerator / denominator
+
+
+def _ratio_db(value: float) -> float:
+    """Return ``20 log10(value)``, preserving the ``0 -> -inf`` limit."""
+
+    if value == 0.0:
+        return -math.inf
+    if value > 0.0 and math.isfinite(value):
+        return 20.0 * math.log10(value)
+    if value > 0.0:
+        return math.inf
+    return -math.inf
 
 
 def middlebrook_ratio(
@@ -194,16 +248,53 @@ def middlebrook_ratio(
 
     ``kind="input"`` compares ``Zin`` against a source impedance;
     ``kind="output"`` compares a load impedance against ``Zout``.  Both
-    responses must share the same frequency axis, because a ratio computed on
-    two different grids would silently compare different frequencies.
+    responses must share the same frequency axis and declare matching
+    ``frequencies_hz``/``magnitude_ohm`` lengths, because a ratio computed on
+    two different grids would silently compare different frequencies or drop
+    samples.
     """
 
     kind = _require_kind(kind)
     plant = _require_response(plant_impedance, "plant_impedance")
     external = _require_response(external_impedance, "external_impedance")
 
+    expected_plant_kind = f"{kind}_impedance"
+    if plant.get("kind") != expected_plant_kind:
+        raise ValueError(
+            f"plant_impedance['kind'] must be {expected_plant_kind!r} for "
+            f"kind={kind!r}, got {plant.get('kind')!r}"
+        )
+    plant_provenance = plant.get("provenance")
+    if not isinstance(plant_provenance, Mapping):
+        raise ValueError(
+            "plant_impedance must carry a provenance mapping; an impedance "
+            "result without provenance cannot be used as the plant side"
+        )
+    external_kind = external.get("kind")
+    if not isinstance(external_kind, str) or not external_kind.strip():
+        raise ValueError(
+            "external_impedance['kind'] must be a non-empty string, got "
+            f"{external_kind!r}"
+        )
+
     plant_frequencies = list(plant["frequencies_hz"])
     external_frequencies = list(external["frequencies_hz"])
+    plant_magnitudes = [float(value) for value in plant["magnitude_ohm"]]
+    external_magnitudes = [float(value) for value in external["magnitude_ohm"]]
+
+    lengths = (
+        len(plant_frequencies),
+        len(plant_magnitudes),
+        len(external_frequencies),
+        len(external_magnitudes),
+    )
+    if len(set(lengths)) != 1:
+        raise ValueError(
+            "plant_impedance and external_impedance must have matching "
+            "frequencies_hz and magnitude_ohm lengths; got "
+            f"plant frequencies={lengths[0]}, plant magnitude={lengths[1]}, "
+            f"external frequencies={lengths[2]}, external magnitude={lengths[3]}"
+        )
     if plant_frequencies != external_frequencies:
         raise ValueError(
             "plant_impedance and external_impedance must declare the same "
@@ -211,60 +302,94 @@ def middlebrook_ratio(
             "point count"
         )
 
-    plant_magnitudes = [float(value) for value in plant["magnitude_ohm"]]
-    external_magnitudes = [float(value) for value in external["magnitude_ohm"]]
-
     ratios: list[float | None] = []
     for left, right in zip(plant_magnitudes, external_magnitudes):
         numerator, denominator = (
             (left, right) if kind == "input" else (right, left)
         )
-        if (
-            not math.isfinite(numerator)
-            or not math.isfinite(denominator)
-            or denominator == 0.0
-            or numerator == 0.0
-        ):
-            ratios.append(None)
-        else:
-            ratios.append(numerator / denominator)
+        ratios.append(_ratio_or_none(numerator, denominator))
 
-    notes: list[str] = []
-    if any(value is None for value in ratios):
-        notes.append("non_finite_ratio")
-
-    usable = [
+    evaluated = [
         (frequency, value)
         for frequency, value in zip(plant_frequencies, ratios)
         if value is not None
     ]
+    undefined_count = len(ratios) - len(evaluated)
+
+    notes: list[str] = []
+    if undefined_count:
+        notes.append("non_finite_ratio")
+    min_ratio_scope = (
+        "all_sampled_points" if undefined_count == 0 else "evaluable_subset"
+    )
+    if min_ratio_scope == "evaluable_subset":
+        notes.append("minimum_covers_evaluable_points_only")
+
     min_ratio_db: float | None = None
+    min_ratio_db_bound = "undefined"
     worst_frequency: float | None = None
     first_violation: float | None = None
     violation_count = 0
-    if usable:
-        decibels = [(frequency, 20.0 * math.log10(value)) for frequency, value in usable]
-        worst_frequency, min_ratio_db = min(decibels, key=lambda item: item[1])
-        for frequency, value in usable:
+    if evaluated:
+        decibels = [
+            (frequency, _ratio_db(value)) for frequency, value in evaluated
+        ]
+        worst_frequency, worst_db = min(decibels, key=lambda item: item[1])
+        # A zero ratio is a certain violation and its exact decibel value is
+        # minus infinity, which JSON cannot carry.  Keep the number finite by
+        # reporting the bound instead of writing an infinity into an artifact.
+        if worst_db == -math.inf:
+            min_ratio_db = None
+            min_ratio_db_bound = "negative_infinity"
+        elif worst_db == math.inf:
+            min_ratio_db = None
+            min_ratio_db_bound = "positive_infinity"
+        else:
+            min_ratio_db = worst_db
+            min_ratio_db_bound = "finite"
+        for frequency, value in evaluated:
             if value <= 1.0:
                 violation_count += 1
                 if first_violation is None:
                     first_violation = frequency
 
-    if any(value is None for value in ratios):
-        criterion = "not_evaluable"
-    elif violation_count:
+    if violation_count:
         criterion = "violated"
+    elif undefined_count:
+        criterion = "not_evaluable"
     else:
         criterion = "satisfied"
 
-    inherited = dict(plant.get("provenance") or {})
-    inherited_assumptions = list(inherited.get("assumptions") or [])
+    inherited = dict(plant_provenance)
+    inherited_assumptions = _deduplicate(
+        [
+            value
+            for value in (inherited.get("assumptions") or [])
+            if kind != "input"
+            or value != "load_current_is_injected_at_the_output_node"
+        ]
+    )
     if "external_impedance_is_caller_declared" not in inherited_assumptions:
         inherited_assumptions.append("external_impedance_is_caller_declared")
     inherited["assumptions"] = inherited_assumptions
     inherited["controller"] = None
-    inherited["verified_by"] = [_MIDDLEBROOK_VERIFIED_BY]
+    inherited["verified_by"] = list(_MIDDLEBROOK_VERIFIED_BY)
+
+    external_provenance = external.get("provenance")
+    if isinstance(external_provenance, Mapping):
+        external_plant_id = external_provenance.get("plant_id")
+        external_method = external_provenance.get("method")
+        external_assumptions = list(
+            external_provenance.get("assumptions") or []
+        )
+        external_verified_by = list(
+            external_provenance.get("verified_by") or []
+        )
+    else:
+        external_plant_id = None
+        external_method = None
+        external_assumptions = []
+        external_verified_by = []
 
     return {
         "schema": IMPEDANCE_SCHEMA,
@@ -274,11 +399,22 @@ def middlebrook_ratio(
         "criterion": criterion,
         "threshold_db": 0.0,
         "min_ratio_db": min_ratio_db,
+        "min_ratio_db_bound": min_ratio_db_bound,
         "worst_frequency_hz": worst_frequency,
         "violation_count": violation_count,
         "first_violation_hz": first_violation,
+        "total_points": len(plant_frequencies),
+        "evaluated_points": len(evaluated),
+        "min_ratio_scope": min_ratio_scope,
         "notes": notes,
         "criterion_meaning": _CRITERION_MEANING,
+        "external": {
+            "kind": external_kind,
+            "plant_id": external_plant_id,
+            "method": external_method,
+            "assumptions": external_assumptions,
+            "verified_by": external_verified_by,
+        },
         "provenance": inherited,
     }
 

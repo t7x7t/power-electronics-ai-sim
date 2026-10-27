@@ -200,6 +200,13 @@ def _validate_verified_by(value: Any, label: str = "verified_by") -> str:
             "'tests/test_ac_analysis.py::test_loop_gain_provenance_is_self_contained'), "
             f"got {value!r}"
         )
+    if ".." in value:
+        # A provenance string is a reference, but a consumer may still resolve
+        # it as a path.  Reject parent segments rather than hand out something
+        # that escapes the tests directory when joined.
+        raise ValueError(
+            f"{label} must not contain '..' path segments, got {value!r}"
+        )
     banned = _evidence_tokens(value)
     if banned:
         raise ValueError(
