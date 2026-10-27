@@ -510,15 +510,26 @@ def write_capability_report(
     target = target_dir / _REPORT_FILENAME
     temporary = target_dir / f"{_REPORT_FILENAME}.{os.getpid()}.tmp"
     try:
-        with open(temporary, "w", encoding="utf-8", newline="\n") as stream:
-            stream.write(text)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, target)
+        try:
+            with open(temporary, "w", encoding="utf-8", newline="\n") as stream:
+                stream.write(text)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, target)
+        except OSError as exc:
+            # mkdir succeeded but the write or the atomic rename failed.  The
+            # entry point promises a branchable ``output_error`` reason for
+            # every output failure, so do not let this escape as a bare OSError.
+            raise CapabilityAnalysisError(
+                "output_error", f"cannot write {target}: {exc}"
+            ) from exc
     finally:
         try:
             temporary.unlink()
         except FileNotFoundError:
+            pass
+        except OSError:
+            # Best-effort cleanup; never mask the primary write failure.
             pass
     return target
 

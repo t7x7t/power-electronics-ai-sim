@@ -198,6 +198,15 @@
   ⑧ `origin="builtin"` 只能由内置工厂声明；⑨ S7/S8 新名字以 experimental 身份顶层可达。
   相关 10 个测试文件 **415 passed**；入口测试 `tests/test_capability_cli.py` **9 passed**；
   全量 **1665 passed / 11 skipped**（无 ngspice）。`docs/60` 的 C4/C5/C6 已改为 `covered`。
+- **发布后真实工况端到端复核（2026-10-27，0.16.1）**：三路独立子智能体只读执行，
+  监督者独立复现关键值。正向 54 项断言中 51 项 PASS，3 项经查为验证脚本期望值设定错误
+  （开路 buck 的 `Zin(0)=+R/D²`、`lossy-buck` 自洽工作点非理想 `D·Vin`、`input_sha256`
+  覆盖含输出路径的整份文档），不是实现缺陷；拒绝矩阵 26 项全部 PASS。
+  发现并修复一个真实契约缺口：`write_capability_report` 只包装 `mkdir` 的 `OSError`，
+  `open`/`fsync`/`os.replace` 失败会逸出为无 `reason` 的通用拒绝；现统一映射为
+  `CapabilityAnalysisError("output_error")`，并增加回归测试。新增真实工况 E2E
+  （48 V→12 V/5 A；AC、输入阻抗、损耗三种 kind 同点串联）与写失败回归后，
+  `tests/test_capability_cli.py` **11 passed**。
 
 **S9 — 适配器扩面（A8 A9 A11 B7 B8 B3 D3）**
 

@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from pe_sim.artifacts import canonical_json, sha256_bytes
 from pe_sim.capability_analysis import (
     CAPABILITY_ANALYSIS_SCHEMA,
     CapabilityAnalysisError,
@@ -182,6 +183,27 @@ def test_capability_cli_writes_report_and_prints_it(tmp_path, capsys):
     assert written["results"]["stability_margins"]["margin_positive"] is True
 
 
+def test_report_write_failure_is_an_output_error(tmp_path, capsys):
+    # ``os.replace`` cannot replace a directory, so this drives the same
+    # write-phase failure path as a locked or read-only report file without
+    # relying on platform-specific permission bits.
+    output = tmp_path / "out"
+    output.mkdir()
+    (output / "capability-report.json").mkdir()
+    document = _ac_document()
+    document["output"] = {"directory": str(output)}
+    config = _write(tmp_path, document)
+
+    exit_code = main(["capability", str(config)])
+
+    assert exit_code == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["error_code"] == "invalid_request"
+    assert payload["reason"] == "output_error"
+    assert (output / "capability-report.json").is_dir()
+    assert not list(output.glob("*.tmp"))
+
+
 def test_unknown_plant_is_a_branchable_rejection(tmp_path, capsys):
     document = _ac_document()
     document["plant"] = {"id": "not-a-plant", "config": {}}
@@ -232,3 +254,115 @@ def test_loss_kind_rejects_a_sweep():
     document["sweep"] = _SWEEP
     with pytest.raises(CapabilityAnalysisError, match="must not declare a sweep"):
         parse_capability_document(document)
+
+
+def test_real_operating_condition_end_to_end(tmp_path, capsys):
+    """One 48 V -> 12 V / 5 A operating point through all three kinds."""
+
+    plant = {
+        "id": "buck",
+        "config": {
+            "input_voltage_v": 48.0,
+            "inductance_h": 100e-6,
+            "capacitance_f": 220e-6,
+            "load_resistance_ohm": 2.4,
+            "integration_step_s": 1e-6,
+        },
+    }
+    operating_point = {
+        "duty": 0.25,
+        "input_voltage_v": 48.0,
+        "load_resistance_ohm": 2.4,
+    }
+    sweep = {"start_hz": 10.0, "stop_hz": 100_000.0, "points": 301}
+    controller = {
+        "id": "type2",
+        "config": {"gain": 2.0, "zero_hz": 500.0, "pole_hz": 50_000.0},
+        "control_period_s": 5e-6,
+    }
+    documents = {
+        "ac": {
+            "schema": CAPABILITY_ANALYSIS_SCHEMA,
+            "analysis_id": "real-ac",
+            "kind": "ac",
+            "plant": plant,
+            "operating_point": operating_point,
+            "sweep": sweep,
+            "controller": controller,
+        },
+        "impedance": {
+            "schema": CAPABILITY_ANALYSIS_SCHEMA,
+            "analysis_id": "real-zin",
+            "kind": "impedance",
+            "plant": plant,
+            "operating_point": operating_point,
+            "sweep": sweep,
+            "impedance": {"kind": "input"},
+        },
+        "loss": {
+            "schema": CAPABILITY_ANALYSIS_SCHEMA,
+            "analysis_id": "real-loss",
+            "kind": "loss",
+            "plant": {
+                "id": "lossy-buck",
+                "config": {
+                    "input_voltage_v": 48.0,
+                    "inductance_h": 100e-6,
+                    "capacitance_f": 220e-6,
+                    "load_resistance_ohm": 2.4,
+                    "switch_resistance_ohm": 0.005,
+                    "inductor_resistance_ohm": 0.010,
+                    "diode_forward_voltage_v": 0.4,
+                    "switching_frequency_hz": 200_000.0,
+                    "switch_output_charge_c": 20e-9,
+                    "gate_charge_c": 10e-9,
+                    "gate_drive_voltage_v": 10.0,
+                },
+            },
+            "operating_point": operating_point,
+        },
+    }
+
+    reports: dict[str, dict] = {}
+    for name, document in documents.items():
+        case = tmp_path / name
+        case.mkdir()
+        document["output"] = {"directory": str(case / "out")}
+        config = case / "capability.json"
+        config.write_text(json.dumps(document), encoding="utf-8")
+
+        assert main(["capability", str(config)]) == 0
+        report = json.loads(capsys.readouterr().out)
+        on_disk = json.loads(
+            Path(report["report_path"]).read_text(encoding="utf-8")
+        )
+
+        assert on_disk == {
+            key: value for key, value in report.items() if key != "report_path"
+        }
+        assert on_disk["input_sha256"] == sha256_bytes(canonical_json(document))
+        assert on_disk["status"] == "available"
+        assert on_disk["plant"]["class"] == (
+            "LossyBuckPlant" if name == "loss" else "BuckPlant"
+        )
+        for result in on_disk["results"].values():
+            assert "provenance" in result
+        reports[name] = on_disk
+
+    # Ideal buck control-to-output DC gain is Vin.  At 10 Hz the swept value
+    # must already be within 1 % of that analytic limit.
+    assert reports["ac"]["results"]["frequency_response"]["magnitude"][0] == (
+        pytest.approx(48.0, rel=0.01)
+    )
+    assert reports["ac"]["results"]["stability_margins"]["margin_positive"] is True
+
+    # An open-loop buck presents R / D^2 at low frequency.
+    assert reports["impedance"]["results"]["impedance"]["magnitude_ohm"][0] == (
+        pytest.approx(2.4 / 0.25**2, rel=0.01)
+    )
+
+    breakdown = reports["loss"]["results"]["loss_model"]
+    assert sum(breakdown["terms"].values()) == pytest.approx(
+        breakdown["total_loss_w"], abs=1e-12
+    )
+    assert 0.90 < breakdown["efficiency"] < 0.995
