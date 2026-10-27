@@ -1,0 +1,842 @@
+"""Optional model capabilities below the plant: small-signal and loss models.
+
+This module is the first slice of Seam 2 in ``docs/adr/0005`` and closes the
+model-capability half of ``docs/60`` C4.  It answers questions that
+``PlantAdapter.advance()`` cannot answer without changing the runtime: "what is
+the control-to-output transfer function at this operating point?" and, in a
+later slice, "where does the loss go?".
+
+Design rules implemented here
+-----------------------------
+
+* **Absence is reported, never inferred.**  A plant without a registered
+  provider raises :class:`CapabilityUnavailable` with a machine-readable
+  ``reason``.  There is no ``limited`` result and no silent approximation.
+  An ideal lossless converter therefore has **no** loss model: reporting
+  ``efficiency = 1.0`` would be a misleading claim about a model that has no
+  loss terms at all.
+* **Registration is explicit.**  Built-ins are installed only by
+  :func:`load_builtin_model_capabilities`; importing this module has no side
+  effect.  The loader never overwrites an existing key, so repeated calls are
+  idempotent and a caller-provided override survives a reload.
+* **Lookup order.**  For ``small_signal_model_for`` and ``loss_model_for`` the
+  key is resolved as follows:
+
+  1. ``getattr(plant, "backend_id", None)`` when it is a non-empty string;
+  2. ``type(plant).__name__``;
+  3. if neither key is registered, :class:`CapabilityUnavailable` is raised.
+     The message names both attempted keys.
+
+  The order is intentional: a plant's ``backend_id`` is its declared solve-path
+  identity (for the reference plants these are ``"buck"`` and ``"boost"``),
+  while the class name is only a fallback for duck-typed providers.
+* **The state-space shape is the existing one.**  ``LinearStateSpace`` is
+  imported from ``pe_sim.backends.whole_run_engine``; no second state-space
+  type is introduced.
+* **No evidence levels.**  Capability results self-report ``method``,
+  ``assumptions``, and ``verified_by`` only.  They do not carry
+  ``diagnostic_only`` / ``functional`` / ``limited`` / ``comparable`` and must
+  not be read as a qualification of a run.
+
+Reason codes produced by this module
+------------------------------------
+
+``small_signal_model_not_declared``
+    No small-signal provider is registered for either lookup key.
+``loss_model_not_declared``
+    No loss provider is registered for either lookup key.
+``operating_point_not_declared``
+    The plant has no usable ``analytical_steady_state(duty)`` and the supplied
+    :class:`OperatingPoint` does not declare the voltage/load needed to compute
+    the equilibrium, or the equilibrium is singular (boost at ``duty == 1``).
+``small_signal_parameters_not_declared``
+    A registered analytic provider needs positive ``inductance_h`` and
+    ``capacitance_f`` on the plant and they are absent or invalid.  This is a
+    malformed provider/plant pairing, not a reason to approximate.
+
+Only the Python standard library is used.
+"""
+
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+from types import MappingProxyType
+from typing import Any, Callable, Mapping
+
+from .backends.whole_run_engine import LinearStateSpace
+
+
+CAPABILITY_SCHEMA = "pe-sim.model-capability.v1"
+LINEARIZATION_METHODS = ("analytic", "identified")
+
+#: Capability names reported by :func:`registered_model_capabilities`.
+_SMALL_SIGNAL_CAPABILITY = "small_signal_model"
+_LOSS_CAPABILITY = "loss_model"
+
+
+class CapabilityUnavailable(Exception):
+    """A plant does not declare a capability that was asked for.
+
+    ``reason`` is the machine-readable code; ``str(exc)`` is the human-readable
+    message.  Callers must branch on ``reason`` and must not treat absence as a
+    degraded result.
+    """
+
+    def __init__(self, reason: str, message: str) -> None:
+        if not isinstance(reason, str) or not reason:
+            raise ValueError("reason must be a non-empty string")
+        if not isinstance(message, str) or not message:
+            raise ValueError("message must be a non-empty string")
+        super().__init__(message)
+        self.reason = reason
+        self.message = message
+
+
+# ---------------------------------------------------------------------------
+# Input validation
+# ---------------------------------------------------------------------------
+
+
+def _finite_float(value: Any, label: str) -> float:
+    """Return ``value`` as a finite float or raise ``ValueError``.
+
+    ``bool`` is rejected: a flag is not a measurement and must not silently
+    become ``0.0``/``1.0``.  Numeric strings are rejected for the same reason.
+    """
+
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{label} must be a finite number")
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError(f"{label} must be a finite number")
+    return number
+
+
+def _positive_float(value: Any, label: str) -> float:
+    number = _finite_float(value, label)
+    if number <= 0.0:
+        raise ValueError(f"{label} must be finite and positive")
+    return number
+
+
+def _string_tuple(values: Any, label: str) -> tuple[str, ...]:
+    if isinstance(values, (str, bytes)) or not isinstance(values, (tuple, list)):
+        raise TypeError(f"{label} must be a sequence of strings")
+    items = tuple(values)
+    if not items:
+        raise ValueError(f"{label} must not be empty")
+    if any(not isinstance(item, str) or not item for item in items):
+        raise ValueError(f"{label} must contain only non-empty strings")
+    return items
+
+
+def _freeze_float_mapping(
+    values: Any,
+    label: str,
+    *,
+    required_keys: tuple[str, ...] = (),
+) -> Mapping[str, float]:
+    """Validate a string-to-finite-float mapping and freeze it."""
+
+    if not isinstance(values, Mapping):
+        raise TypeError(f"{label} must be a mapping of string keys to floats")
+    frozen: dict[str, float] = {}
+    for key, value in values.items():
+        if not isinstance(key, str) or not key:
+            raise ValueError(f"{label} keys must be non-empty strings")
+        frozen[key] = _finite_float(value, f"{label}[{key!r}]")
+    missing = [key for key in required_keys if key not in frozen]
+    if missing:
+        raise ValueError(f"{label} must contain {sorted(missing)}")
+    return MappingProxyType(frozen)
+
+
+# ---------------------------------------------------------------------------
+# Value objects
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class OperatingPoint:
+    """The linearization point requested from a capability provider.
+
+    ``duty`` is always required and must be finite in ``[0, 1]``.
+    ``input_voltage_v`` and ``load_resistance_ohm`` are optional declarations
+    used only when the plant itself cannot evaluate
+    ``analytical_steady_state(duty)``.  ``None`` means "not declared"; it must
+    not be read as zero.
+    """
+
+    duty: float
+    input_voltage_v: float | None = None
+    load_resistance_ohm: float | None = None
+
+    def __post_init__(self) -> None:
+        duty = _finite_float(self.duty, "duty")
+        if not 0.0 <= duty <= 1.0:
+            raise ValueError("duty must be finite and in [0, 1]")
+        object.__setattr__(self, "duty", duty)
+
+        voltage = self.input_voltage_v
+        if voltage is not None:
+            voltage = _finite_float(voltage, "input_voltage_v")
+            object.__setattr__(self, "input_voltage_v", voltage)
+
+        resistance = self.load_resistance_ohm
+        if resistance is not None:
+            resistance = _positive_float(resistance, "load_resistance_ohm")
+            object.__setattr__(self, "load_resistance_ohm", resistance)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe copy; ``None`` means "not declared"."""
+
+        return {
+            "duty": self.duty,
+            "input_voltage_v": self.input_voltage_v,
+            "load_resistance_ohm": self.load_resistance_ohm,
+        }
+
+
+def _solve_complex(matrix: list[list[complex]], rhs: list[complex]) -> list[complex]:
+    """Solve ``matrix @ x = rhs`` by Gauss-Jordan elimination.
+
+    The matrices here are tiny (normally 2x2), so a straightforward
+    partial-pivoting elimination is both sufficient and dependency-free.
+    """
+
+    size = len(matrix)
+    augmented = [list(row) + [rhs[index]] for index, row in enumerate(matrix)]
+    for column in range(size):
+        pivot_row = max(range(column, size), key=lambda row: abs(augmented[row][column]))
+        if augmented[pivot_row][column] == 0.0:
+            raise ValueError(
+                "state matrix is singular at this frequency; "
+                "the transfer function is undefined"
+            )
+        if pivot_row != column:
+            augmented[column], augmented[pivot_row] = augmented[pivot_row], augmented[column]
+        pivot = augmented[column][column]
+        for row in range(column + 1, size):
+            factor = augmented[row][column] / pivot
+            if factor != 0.0:
+                for offset in range(column, size + 1):
+                    augmented[row][offset] -= factor * augmented[column][offset]
+
+    solution = [0j] * size
+    for row in range(size - 1, -1, -1):
+        accumulated = augmented[row][size]
+        for column in range(row + 1, size):
+            accumulated -= augmented[row][column] * solution[column]
+        solution[row] = accumulated / augmented[row][row]
+    return solution
+
+
+@dataclass(frozen=True)
+class SmallSignalModel:
+    """A linearized plant ``dx/dt = A x + B u``, ``y = C x + D u``.
+
+    ``u`` is the scalar duty-ratio deviation, so ``input_matrix`` must have
+    exactly one column.  ``output_matrix`` must have exactly one row; ``y`` is
+    the output-voltage deviation.
+
+    The ``operating_point`` mapping must contain ``duty``, ``vout``, and
+    ``il``.  Providers may add keys, but must not omit those three.
+
+    ``method`` distinguishes an analytic derivation from identification.  The
+    value is echoed by every AC result; it is not an evidence level.
+    """
+
+    plant_id: str
+    method: str
+    state_space: LinearStateSpace
+    output_matrix: tuple[tuple[float, ...], ...]
+    feedthrough: float
+    operating_point: Mapping[str, float]
+    parameters: Mapping[str, float]
+    assumptions: tuple[str, ...]
+    verified_by: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.plant_id, str) or not self.plant_id:
+            raise ValueError("plant_id must be a non-empty string")
+        if self.method not in LINEARIZATION_METHODS:
+            raise ValueError(
+                f"method must be one of {LINEARIZATION_METHODS}, got {self.method!r}"
+            )
+        if not isinstance(self.state_space, LinearStateSpace):
+            raise TypeError("state_space must be a LinearStateSpace")
+        if self.state_space.input_size != 1:
+            raise ValueError(
+                "state_space.input_matrix must have exactly one column "
+                "(the scalar duty deviation)"
+            )
+
+        if isinstance(self.output_matrix, (str, bytes)):
+            raise TypeError("output_matrix must be a sequence of rows")
+        rows = tuple(tuple(_finite_float(value, "output_matrix") for value in row)
+                     for row in self.output_matrix)
+        if len(rows) != 1:
+            raise ValueError("output_matrix must have exactly one row")
+        if len(rows[0]) != self.state_space.state_size:
+            raise ValueError(
+                "output_matrix row length must equal state_space.state_size"
+            )
+
+        feedthrough = _finite_float(self.feedthrough, "feedthrough")
+        operating_point = _freeze_float_mapping(
+            self.operating_point,
+            "operating_point",
+            required_keys=("duty", "vout", "il"),
+        )
+        if not 0.0 <= operating_point["duty"] <= 1.0:
+            raise ValueError("operating_point['duty'] must be finite and in [0, 1]")
+        parameters = _freeze_float_mapping(self.parameters, "parameters")
+        assumptions = _string_tuple(self.assumptions, "assumptions")
+        if not isinstance(self.verified_by, str) or not self.verified_by:
+            raise ValueError("verified_by must be a non-empty string")
+
+        object.__setattr__(self, "output_matrix", rows)
+        object.__setattr__(self, "feedthrough", feedthrough)
+        object.__setattr__(self, "operating_point", operating_point)
+        object.__setattr__(self, "parameters", parameters)
+        object.__setattr__(self, "assumptions", assumptions)
+
+    def transfer_function(self, frequency_hz: float) -> complex:
+        """Return ``C (sI - A)^-1 B + D`` at ``s = j 2 pi f``.
+
+        ``frequency_hz`` must be finite and non-negative.  At ``f == 0`` this
+        is the DC control-to-output gain.  A singular ``sI - A`` raises
+        ``ValueError`` rather than returning infinity or a guessed value.
+        """
+
+        frequency = _finite_float(frequency_hz, "frequency_hz")
+        if frequency < 0.0:
+            raise ValueError("frequency_hz must be finite and non-negative")
+
+        s = complex(0.0, 2.0 * math.pi * frequency)
+        size = self.state_space.state_size
+        matrix: list[list[complex]] = []
+        for row in range(size):
+            matrix_row: list[complex] = []
+            for column in range(size):
+                diagonal = s if row == column else 0j
+                matrix_row.append(diagonal - self.state_space.matrix_a[row][column])
+            matrix.append(matrix_row)
+        rhs = [complex(self.state_space.input_matrix[row][0]) for row in range(size)]
+        solution = _solve_complex(matrix, rhs)
+
+        output_row = self.output_matrix[0]
+        value = sum(
+            output_row[column] * solution[column] for column in range(size)
+        ) + self.feedthrough
+        if not math.isfinite(value.real) or not math.isfinite(value.imag):
+            raise ValueError("transfer function is not finite at this frequency")
+        return value
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe, self-describing projection of the model."""
+
+        return {
+            "schema": CAPABILITY_SCHEMA,
+            "kind": "small_signal_model",
+            "plant_id": self.plant_id,
+            "method": self.method,
+            "state_space": {
+                "matrix_a": [list(row) for row in self.state_space.matrix_a],
+                "input_matrix": [list(row) for row in self.state_space.input_matrix],
+            },
+            "output_matrix": [list(row) for row in self.output_matrix],
+            "feedthrough": self.feedthrough,
+            "state_equation": "dx/dt = A x + B u",
+            "output_equation": "y = C x + D u",
+            "input": "duty_deviation",
+            "operating_point": dict(self.operating_point),
+            "parameters": dict(self.parameters),
+            "assumptions": list(self.assumptions),
+            "verified_by": self.verified_by,
+        }
+
+
+@dataclass(frozen=True)
+class LossBreakdown:
+    """Provider-declared loss terms at one operating point.
+
+    The value object does not re-derive ``total_loss_w`` from ``terms`` or
+    ``efficiency`` from the power ratio.  Those are provider statements; a
+    consumer that needs an independent check must recompute them and say so.
+    This slice defines the type only and registers no built-in provider: an
+    ideal averaged converter has no loss terms, so reporting an efficiency of
+    ``1.0`` would be a fabricated claim rather than a measurement.
+    """
+
+    plant_id: str
+    method: str
+    terms: Mapping[str, float]
+    total_loss_w: float
+    output_power_w: float
+    input_power_w: float
+    efficiency: float
+    assumptions: tuple[str, ...]
+    verified_by: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.plant_id, str) or not self.plant_id:
+            raise ValueError("plant_id must be a non-empty string")
+        if not isinstance(self.method, str) or not self.method:
+            raise ValueError("method must be a non-empty string")
+        terms = _freeze_float_mapping(self.terms, "terms")
+        total_loss_w = _finite_float(self.total_loss_w, "total_loss_w")
+        output_power_w = _finite_float(self.output_power_w, "output_power_w")
+        input_power_w = _finite_float(self.input_power_w, "input_power_w")
+        efficiency = _finite_float(self.efficiency, "efficiency")
+        assumptions = _string_tuple(self.assumptions, "assumptions")
+        if not isinstance(self.verified_by, str) or not self.verified_by:
+            raise ValueError("verified_by must be a non-empty string")
+
+        object.__setattr__(self, "terms", terms)
+        object.__setattr__(self, "total_loss_w", total_loss_w)
+        object.__setattr__(self, "output_power_w", output_power_w)
+        object.__setattr__(self, "input_power_w", input_power_w)
+        object.__setattr__(self, "efficiency", efficiency)
+        object.__setattr__(self, "assumptions", assumptions)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe projection; terms are provider-declared."""
+
+        return {
+            "schema": CAPABILITY_SCHEMA,
+            "kind": "loss_model",
+            "plant_id": self.plant_id,
+            "method": self.method,
+            "terms": dict(self.terms),
+            "total_loss_w": self.total_loss_w,
+            "output_power_w": self.output_power_w,
+            "input_power_w": self.input_power_w,
+            "efficiency": self.efficiency,
+            "assumptions": list(self.assumptions),
+            "verified_by": self.verified_by,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Registry
+# ---------------------------------------------------------------------------
+
+SmallSignalFactory = Callable[[Any, OperatingPoint], SmallSignalModel]
+LossFactory = Callable[[Any, OperatingPoint], LossBreakdown]
+
+_SMALL_SIGNAL_REGISTRY: dict[str, SmallSignalFactory] = {}
+_LOSS_REGISTRY: dict[str, LossFactory] = {}
+
+
+def _register(
+    registry: dict[str, Any],
+    plant_id: str,
+    factory: Any,
+    *,
+    replace: bool,
+    capability: str,
+) -> None:
+    if not isinstance(plant_id, str) or not plant_id.strip():
+        raise ValueError("plant_id must be a non-empty string")
+    if not callable(factory):
+        raise TypeError("factory must be callable")
+    if plant_id in registry and not replace:
+        raise ValueError(
+            f"a {capability} is already registered for plant_id {plant_id!r}; "
+            "pass replace=True to override it"
+        )
+    registry[plant_id] = factory
+
+
+def register_small_signal_model(
+    plant_id: str, factory: SmallSignalFactory, *, replace: bool = False
+) -> None:
+    """Register ``factory(plant, operating_point) -> SmallSignalModel``.
+
+    Duplicate registration raises ``ValueError`` unless ``replace=True``.
+    A factory result of the wrong type is rejected by
+    :func:`small_signal_model_for` with ``TypeError``.
+    """
+
+    _register(
+        _SMALL_SIGNAL_REGISTRY,
+        plant_id,
+        factory,
+        replace=replace,
+        capability=_SMALL_SIGNAL_CAPABILITY,
+    )
+
+
+def register_loss_model(
+    plant_id: str, factory: LossFactory, *, replace: bool = False
+) -> None:
+    """Register ``factory(plant, operating_point) -> LossBreakdown``.
+
+    Duplicate registration raises ``ValueError`` unless ``replace=True``.
+    A factory result of the wrong type is rejected by :func:`loss_model_for`
+    with ``TypeError``.
+    """
+
+    _register(
+        _LOSS_REGISTRY,
+        plant_id,
+        factory,
+        replace=replace,
+        capability=_LOSS_CAPABILITY,
+    )
+
+
+def _lookup_keys(plant: Any) -> tuple[str, ...]:
+    """Return the lookup keys in contract order: backend_id, then class name."""
+
+    keys: list[str] = []
+    backend_id = getattr(plant, "backend_id", None)
+    if isinstance(backend_id, str) and backend_id:
+        keys.append(backend_id)
+    class_name = type(plant).__name__
+    if class_name not in keys:
+        keys.append(class_name)
+    return tuple(keys)
+
+
+def _lookup_factory(
+    registry: dict[str, Any],
+    plant: Any,
+    *,
+    capability: str,
+    reason: str,
+) -> Any:
+    keys = _lookup_keys(plant)
+    for key in keys:
+        factory = registry.get(key)
+        if factory is not None:
+            return factory
+    raise CapabilityUnavailable(
+        reason,
+        f"no {capability} is registered for plant {type(plant).__name__}; "
+        f"looked up keys {list(keys)}",
+    )
+
+
+def small_signal_model_for(
+    plant: Any, operating_point: OperatingPoint
+) -> SmallSignalModel:
+    """Return the registered small-signal model at ``operating_point``.
+
+    Lookup order (also documented at module level): ``plant.backend_id`` when
+    it is a non-empty string, then ``type(plant).__name__``.  If neither key is
+    registered, :class:`CapabilityUnavailable` with reason
+    ``"small_signal_model_not_declared"`` is raised.  There is no fallback,
+    approximation, or ``limited`` result.
+    """
+
+    if not isinstance(operating_point, OperatingPoint):
+        raise TypeError("operating_point must be an OperatingPoint")
+    factory = _lookup_factory(
+        _SMALL_SIGNAL_REGISTRY,
+        plant,
+        capability="small-signal model",
+        reason="small_signal_model_not_declared",
+    )
+    model = factory(plant, operating_point)
+    if not isinstance(model, SmallSignalModel):
+        raise TypeError(
+            "small-signal factory returned "
+            f"{type(model).__name__}, expected SmallSignalModel"
+        )
+    return model
+
+
+def loss_model_for(plant: Any, operating_point: OperatingPoint) -> LossBreakdown:
+    """Return the registered loss breakdown at ``operating_point``.
+
+    Lookup order matches :func:`small_signal_model_for`.  If neither key is
+    registered, :class:`CapabilityUnavailable` with reason
+    ``"loss_model_not_declared"`` is raised.  An ideal lossless model must not
+    be reported as an efficiency of ``1.0``.
+    """
+
+    if not isinstance(operating_point, OperatingPoint):
+        raise TypeError("operating_point must be an OperatingPoint")
+    factory = _lookup_factory(
+        _LOSS_REGISTRY,
+        plant,
+        capability="loss model",
+        reason="loss_model_not_declared",
+    )
+    breakdown = factory(plant, operating_point)
+    if not isinstance(breakdown, LossBreakdown):
+        raise TypeError(
+            "loss factory returned "
+            f"{type(breakdown).__name__}, expected LossBreakdown"
+        )
+    return breakdown
+
+
+def registered_model_capabilities() -> dict[str, tuple[str, ...]]:
+    """Return registered plant keys and the capabilities each declares.
+
+    Capability names are a closed pair, in this order:
+    ``"small_signal_model"``, ``"loss_model"``.  Keys are sorted so the result
+    is deterministic and JSON-safe.
+    """
+
+    keys = sorted(set(_SMALL_SIGNAL_REGISTRY) | set(_LOSS_REGISTRY))
+    capabilities: dict[str, tuple[str, ...]] = {}
+    for key in keys:
+        names: list[str] = []
+        if key in _SMALL_SIGNAL_REGISTRY:
+            names.append(_SMALL_SIGNAL_CAPABILITY)
+        if key in _LOSS_REGISTRY:
+            names.append(_LOSS_CAPABILITY)
+        capabilities[key] = tuple(names)
+    return capabilities
+
+
+def clear_model_capabilities() -> None:
+    """Remove every registered small-signal and loss provider."""
+
+    _SMALL_SIGNAL_REGISTRY.clear()
+    _LOSS_REGISTRY.clear()
+
+
+# ---------------------------------------------------------------------------
+# Built-in analytic providers
+# ---------------------------------------------------------------------------
+
+_BUCK_VERIFIED_BY = (
+    "tests/test_model_capabilities.py::"
+    "test_buck_small_signal_model_dc_gain_and_resonance"
+)
+_BOOST_VERIFIED_BY = (
+    "tests/test_model_capabilities.py::test_boost_small_signal_model_dc_gain"
+)
+
+_ANALYTIC_ASSUMPTIONS = (
+    "ccm_average_model",
+    "ideal_components_no_loss",
+    "small_signal_linearization_at_declared_operating_point",
+    "constant_input_voltage_and_load_resistance",
+)
+
+
+def _plant_number(plant: Any, name: str) -> float | None:
+    value = getattr(plant, name, None)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
+def _mapping_number(values: Mapping[str, Any], names: tuple[str, ...]) -> float | None:
+    for name in names:
+        if name in values:
+            value = values[name]
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return None
+            number = float(value)
+            return number if math.isfinite(number) else None
+    return None
+
+
+def _require_positive(value: float | None, message: str, reason: str) -> float:
+    if value is None or not math.isfinite(value) or value <= 0.0:
+        raise CapabilityUnavailable(reason, message)
+    return float(value)
+
+
+def _analytic_converter_model(
+    plant: Any, operating_point: OperatingPoint, *, topology: str
+) -> SmallSignalModel:
+    """Build the ideal CCM averaged control-to-output model."""
+
+    duty = operating_point.duty
+    if topology == "boost" and duty >= 1.0:
+        raise CapabilityUnavailable(
+            "operating_point_not_declared",
+            "the boost equilibrium is singular at duty=1; declare duty < 1",
+        )
+
+    plant_name = type(plant).__name__
+    inductance = _require_positive(
+        _plant_number(plant, "inductance_h"),
+        f"plant {plant_name} must declare a finite positive inductance_h",
+        "small_signal_parameters_not_declared",
+    )
+    capacitance = _require_positive(
+        _plant_number(plant, "capacitance_f"),
+        f"plant {plant_name} must declare a finite positive capacitance_f",
+        "small_signal_parameters_not_declared",
+    )
+
+    steady_state_method = getattr(plant, "analytical_steady_state", None)
+    if callable(steady_state_method):
+        try:
+            steady_state = steady_state_method(duty)
+        except (TypeError, ValueError) as exc:
+            raise CapabilityUnavailable(
+                "operating_point_not_declared",
+                f"plant {plant_name}.analytical_steady_state({duty!r}) failed: {exc}",
+            ) from exc
+        if not isinstance(steady_state, Mapping):
+            raise CapabilityUnavailable(
+                "operating_point_not_declared",
+                f"plant {plant_name}.analytical_steady_state({duty!r}) "
+                "did not return a mapping",
+            )
+        output_voltage = _mapping_number(
+            steady_state, ("output_voltage_v", "vout")
+        )
+        inductor_current = _mapping_number(
+            steady_state, ("inductor_current_a", "inductor_current", "current_a", "il")
+        )
+        if output_voltage is None or inductor_current is None:
+            raise CapabilityUnavailable(
+                "operating_point_not_declared",
+                f"plant {plant_name}.analytical_steady_state({duty!r}) must "
+                "declare vout and il",
+            )
+        input_voltage = _plant_number(plant, "input_voltage_v")
+        if input_voltage is None:
+            input_voltage = operating_point.input_voltage_v
+        load_resistance = _plant_number(plant, "load_resistance_ohm")
+        if load_resistance is None:
+            load_resistance = operating_point.load_resistance_ohm
+        input_voltage = _require_positive(
+            input_voltage,
+            f"plant {plant_name} must declare input_voltage_v or the "
+            "OperatingPoint must provide it",
+            "operating_point_not_declared",
+        )
+        load_resistance = _require_positive(
+            load_resistance,
+            f"plant {plant_name} must declare load_resistance_ohm or the "
+            "OperatingPoint must provide it",
+            "operating_point_not_declared",
+        )
+    else:
+        if (
+            operating_point.input_voltage_v is None
+            or operating_point.load_resistance_ohm is None
+        ):
+            raise CapabilityUnavailable(
+                "operating_point_not_declared",
+                f"plant {plant_name} has no analytical_steady_state; "
+                "OperatingPoint must declare input_voltage_v and "
+                "load_resistance_ohm",
+            )
+        input_voltage = _require_positive(
+            operating_point.input_voltage_v,
+            "input_voltage_v must be finite and positive",
+            "operating_point_not_declared",
+        )
+        load_resistance = _require_positive(
+            operating_point.load_resistance_ohm,
+            "load_resistance_ohm must be finite and positive",
+            "operating_point_not_declared",
+        )
+        if topology == "buck":
+            output_voltage = duty * input_voltage
+            inductor_current = output_voltage / load_resistance
+        else:
+            conduction = 1.0 - duty
+            output_voltage = input_voltage / conduction
+            inductor_current = output_voltage / (conduction * load_resistance)
+
+    if not math.isfinite(output_voltage) or not math.isfinite(inductor_current):
+        raise CapabilityUnavailable(
+            "operating_point_not_declared",
+            f"plant {plant_name} produced a non-finite equilibrium at duty={duty!r}",
+        )
+
+    if topology == "buck":
+        matrix_a = (
+            (0.0, -1.0 / inductance),
+            (1.0 / capacitance, -1.0 / (load_resistance * capacitance)),
+        )
+        input_matrix = ((input_voltage / inductance,), (0.0,))
+    else:
+        conduction = 1.0 - duty
+        matrix_a = (
+            (0.0, -conduction / inductance),
+            (conduction / capacitance, -1.0 / (load_resistance * capacitance)),
+        )
+        input_matrix = (
+            (output_voltage / inductance,),
+            (-inductor_current / capacitance,),
+        )
+
+    return SmallSignalModel(
+        plant_id=topology,
+        method="analytic",
+        state_space=LinearStateSpace(matrix_a, input_matrix),
+        output_matrix=((0.0, 1.0),),
+        feedthrough=0.0,
+        operating_point={
+            "duty": duty,
+            "vout": output_voltage,
+            "il": inductor_current,
+            "vin": input_voltage,
+            "load_resistance_ohm": load_resistance,
+        },
+        parameters={
+            "input_voltage_v": input_voltage,
+            "inductance_h": inductance,
+            "capacitance_f": capacitance,
+            "load_resistance_ohm": load_resistance,
+        },
+        assumptions=_ANALYTIC_ASSUMPTIONS,
+        verified_by=_BUCK_VERIFIED_BY if topology == "buck" else _BOOST_VERIFIED_BY,
+    )
+
+
+def _buck_small_signal_model(
+    plant: Any, operating_point: OperatingPoint
+) -> SmallSignalModel:
+    return _analytic_converter_model(plant, operating_point, topology="buck")
+
+
+def _boost_small_signal_model(
+    plant: Any, operating_point: OperatingPoint
+) -> SmallSignalModel:
+    return _analytic_converter_model(plant, operating_point, topology="boost")
+
+
+_BUILTIN_SMALL_SIGNAL_MODELS: tuple[tuple[str, SmallSignalFactory], ...] = (
+    ("buck", _buck_small_signal_model),
+    ("boost", _boost_small_signal_model),
+)
+
+
+def load_builtin_model_capabilities() -> None:
+    """Install the built-in analytic buck and boost small-signal models.
+
+    Idempotent: an existing registration under the same key is left untouched,
+    so calling this twice never raises and never clobbers a caller-provided
+    ``replace=True`` override.  No loss provider is installed: the built-in
+    models are ideal and lossless, so ``efficiency = 1.0`` would be a
+    fabricated claim rather than a declared loss breakdown.
+    """
+
+    for plant_id, factory in _BUILTIN_SMALL_SIGNAL_MODELS:
+        if plant_id not in _SMALL_SIGNAL_REGISTRY:
+            _SMALL_SIGNAL_REGISTRY[plant_id] = factory
+
+
+__all__ = [
+    "CAPABILITY_SCHEMA",
+    "LINEARIZATION_METHODS",
+    "CapabilityUnavailable",
+    "LossBreakdown",
+    "OperatingPoint",
+    "SmallSignalModel",
+    "clear_model_capabilities",
+    "load_builtin_model_capabilities",
+    "loss_model_for",
+    "register_loss_model",
+    "register_small_signal_model",
+    "registered_model_capabilities",
+    "small_signal_model_for",
+]

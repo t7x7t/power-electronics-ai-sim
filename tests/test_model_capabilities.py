@@ -1,0 +1,400 @@
+"""Tests for the optional model-capability seam (docs/60 C4, first slice).
+
+This module proves the registration/lookup rules and the analytic buck/boost
+small-signal models.  AC sweeps and stability margins are exercised in
+``tests/test_ac_analysis.py``; every capability result here only self-reports
+``method`` / ``assumptions`` / ``verified_by`` and never an evidence level.
+"""
+
+from __future__ import annotations
+
+import json
+import math
+
+import pytest
+
+from pe_sim.backends.whole_run_engine import LinearStateSpace
+from pe_sim.model_capabilities import (
+    CAPABILITY_SCHEMA,
+    CapabilityUnavailable,
+    LossBreakdown,
+    OperatingPoint,
+    SmallSignalModel,
+    clear_model_capabilities,
+    load_builtin_model_capabilities,
+    loss_model_for,
+    register_loss_model,
+    register_small_signal_model,
+    registered_model_capabilities,
+    small_signal_model_for,
+)
+from pe_sim.reference_plants import BoostPlant, BuckPlant
+
+
+@pytest.fixture(autouse=True)
+def _isolated_registry():
+    clear_model_capabilities()
+    yield
+    clear_model_capabilities()
+
+
+def _buck(
+    *,
+    input_voltage_v: float = 12.0,
+    inductance_h: float = 100e-6,
+    capacitance_f: float = 470e-6,
+    load_resistance_ohm: float = 10.0,
+) -> BuckPlant:
+    return BuckPlant(
+        input_voltage_v=input_voltage_v,
+        inductance_h=inductance_h,
+        capacitance_f=capacitance_f,
+        load_resistance_ohm=load_resistance_ohm,
+        integration_step_s=1e-6,
+    )
+
+
+def _boost() -> BoostPlant:
+    return BoostPlant(
+        input_voltage_v=12.0,
+        inductance_h=100e-6,
+        capacitance_f=470e-6,
+        load_resistance_ohm=10.0,
+        integration_step_s=1e-6,
+    )
+
+
+def _operating_point(duty: float = 0.5, **fields: float) -> OperatingPoint:
+    return OperatingPoint(duty=duty, **fields)
+
+
+def _unit_model(plant_id: str) -> SmallSignalModel:
+    """A one-state model ``G(s) = 1/s`` used only to exercise the registry."""
+
+    return SmallSignalModel(
+        plant_id=plant_id,
+        method="analytic",
+        state_space=LinearStateSpace(((0.0,),), ((1.0,),)),
+        output_matrix=((1.0,),),
+        feedthrough=0.0,
+        operating_point={"duty": 0.5, "vout": 1.0, "il": 0.5},
+        parameters={"gain": 1.0},
+        assumptions=("unit_test_fixture",),
+        verified_by="tests/test_model_capabilities.py::_unit_model",
+    )
+
+
+def _unit_loss(plant_id: str) -> LossBreakdown:
+    return LossBreakdown(
+        plant_id=plant_id,
+        method="analytic",
+        terms={"conduction_w": 0.5},
+        total_loss_w=0.5,
+        output_power_w=9.5,
+        input_power_w=10.0,
+        efficiency=0.95,
+        assumptions=("unit_test_fixture",),
+        verified_by="tests/test_model_capabilities.py::_unit_loss",
+    )
+
+
+def _factory(plant_id: str):
+    def factory(plant, operating_point):
+        del plant, operating_point
+        return _unit_model(plant_id)
+
+    return factory
+
+
+class _KeyedPlant:
+    def __init__(self, backend_id: str) -> None:
+        self.backend_id = backend_id
+
+
+def test_unregistered_small_signal_model_fails_closed() -> None:
+    with pytest.raises(CapabilityUnavailable) as caught:
+        small_signal_model_for(_buck(), _operating_point())
+
+    assert caught.value.reason == "small_signal_model_not_declared"
+    assert str(caught.value)
+    assert "BuckPlant" in str(caught.value)
+
+
+def test_unregistered_loss_model_fails_closed() -> None:
+    with pytest.raises(CapabilityUnavailable) as caught:
+        loss_model_for(_buck(), _operating_point())
+
+    assert caught.value.reason == "loss_model_not_declared"
+    assert "BuckPlant" in str(caught.value)
+
+
+def test_duplicate_registration_requires_replace() -> None:
+    register_small_signal_model("fake-key", _factory("first"))
+    plant = _KeyedPlant("fake-key")
+
+    assert small_signal_model_for(plant, _operating_point()).plant_id == "first"
+    with pytest.raises(ValueError):
+        register_small_signal_model("fake-key", _factory("second"))
+
+    register_small_signal_model("fake-key", _factory("second"), replace=True)
+    assert small_signal_model_for(plant, _operating_point()).plant_id == "second"
+
+
+def test_factory_returning_wrong_small_signal_type_raises_type_error() -> None:
+    register_small_signal_model("fake-key", lambda plant, operating_point: object())
+
+    with pytest.raises(TypeError):
+        small_signal_model_for(_KeyedPlant("fake-key"), _operating_point())
+
+
+def test_factory_returning_wrong_loss_type_raises_type_error() -> None:
+    register_loss_model("fake-loss", lambda plant, operating_point: {"efficiency": 1.0})
+
+    with pytest.raises(TypeError):
+        loss_model_for(_KeyedPlant("fake-loss"), _operating_point())
+
+
+def test_builtin_buck_analytic_model_contract() -> None:
+    load_builtin_model_capabilities()
+    plant = _buck()
+    duty = 0.5
+    model = small_signal_model_for(plant, _operating_point(duty))
+
+    assert model.plant_id == "buck"
+    assert model.method == "analytic"
+    assert {"ccm_average_model", "ideal_components_no_loss"}.issubset(model.assumptions)
+    assert isinstance(model.state_space, LinearStateSpace)
+    assert model.state_space.input_size == 1
+    assert len(model.output_matrix) == 1
+    assert len(model.output_matrix[0]) == model.state_space.state_size
+    assert model.feedthrough == 0.0
+
+    inductance = plant.inductance_h
+    capacitance = plant.capacitance_f
+    resistance = plant.load_resistance_ohm
+    matrix_a = model.state_space.matrix_a
+    assert matrix_a[0][0] == pytest.approx(0.0)
+    assert matrix_a[0][1] == pytest.approx(-1.0 / inductance)
+    assert matrix_a[1][0] == pytest.approx(1.0 / capacitance)
+    assert matrix_a[1][1] == pytest.approx(-1.0 / (resistance * capacitance))
+    assert model.state_space.input_matrix[0][0] == pytest.approx(
+        plant.input_voltage_v / inductance
+    )
+    assert model.state_space.input_matrix[1][0] == pytest.approx(0.0)
+    assert model.output_matrix == ((0.0, 1.0),)
+
+    assert model.operating_point["duty"] == pytest.approx(duty)
+    assert model.operating_point["vout"] == pytest.approx(
+        duty * plant.input_voltage_v
+    )
+    assert model.operating_point["il"] == pytest.approx(
+        duty * plant.input_voltage_v / plant.load_resistance_ohm
+    )
+    assert model.parameters["inductance_h"] == pytest.approx(inductance)
+
+
+def test_buck_small_signal_model_dc_gain_and_resonance() -> None:
+    load_builtin_model_capabilities()
+    plant = _buck()
+    model = small_signal_model_for(plant, _operating_point())
+
+    dc = model.transfer_function(0.0)
+    assert dc.imag == pytest.approx(0.0, abs=1e-12)
+    assert dc.real == pytest.approx(plant.input_voltage_v, rel=1e-9)
+
+    resonant_hz = 1.0 / (
+        2.0 * math.pi * math.sqrt(plant.inductance_h * plant.capacitance_f)
+    )
+    peak = abs(model.transfer_function(resonant_hz))
+    assert peak > abs(dc)
+    assert peak > abs(model.transfer_function(100.0 * resonant_hz))
+
+
+def test_boost_small_signal_model_dc_gain() -> None:
+    load_builtin_model_capabilities()
+    plant = _boost()
+    duty = 0.4
+    model = small_signal_model_for(plant, _operating_point(duty))
+
+    independent_dc = plant.input_voltage_v / (1.0 - duty) ** 2
+    dc = model.transfer_function(0.0)
+    assert dc.imag == pytest.approx(0.0, abs=1e-12)
+    assert dc.real == pytest.approx(independent_dc, rel=1e-9)
+
+    steady_state = plant.analytical_steady_state(duty)
+    assert model.operating_point["vout"] == pytest.approx(
+        steady_state["output_voltage_v"]
+    )
+    assert model.operating_point["il"] == pytest.approx(
+        steady_state["inductor_current_a"]
+    )
+    assert model.method == "analytic"
+    assert {"ccm_average_model", "ideal_components_no_loss"}.issubset(model.assumptions)
+
+
+def test_boost_small_signal_matrices_match_linearized_average_equations() -> None:
+    load_builtin_model_capabilities()
+    plant = _boost()
+    duty = 0.4
+    model = small_signal_model_for(plant, _operating_point(duty))
+
+    conduction = 1.0 - duty
+    inductance = plant.inductance_h
+    capacitance = plant.capacitance_f
+    resistance = plant.load_resistance_ohm
+    output_voltage = model.operating_point["vout"]
+    inductor_current = model.operating_point["il"]
+
+    matrix_a = model.state_space.matrix_a
+    assert matrix_a[0][0] == pytest.approx(0.0)
+    assert matrix_a[0][1] == pytest.approx(-conduction / inductance)
+    assert matrix_a[1][0] == pytest.approx(conduction / capacitance)
+    assert matrix_a[1][1] == pytest.approx(-1.0 / (resistance * capacitance))
+    assert model.state_space.input_matrix[0][0] == pytest.approx(
+        output_voltage / inductance
+    )
+    assert model.state_space.input_matrix[1][0] == pytest.approx(
+        -inductor_current / capacitance
+    )
+    assert model.output_matrix == ((0.0, 1.0),)
+
+
+@pytest.mark.parametrize("plant_factory", [_buck, _boost])
+def test_builtin_loss_models_are_unavailable_not_efficiency_one(plant_factory) -> None:
+    load_builtin_model_capabilities()
+
+    with pytest.raises(CapabilityUnavailable) as caught:
+        loss_model_for(plant_factory(), _operating_point(duty=0.4))
+
+    assert caught.value.reason == "loss_model_not_declared"
+    assert "loss" in str(caught.value).lower()
+
+
+class _DuckBuckWithoutSteadyState:
+    backend_id = "buck"
+    input_voltage_v = 12.0
+    inductance_h = 100e-6
+    capacitance_f = 470e-6
+    load_resistance_ohm = 10.0
+
+
+def test_operating_point_fallback_when_plant_has_no_analytical_steady_state() -> None:
+    load_builtin_model_capabilities()
+    model = small_signal_model_for(
+        _DuckBuckWithoutSteadyState(),
+        OperatingPoint(duty=0.4, input_voltage_v=12.0, load_resistance_ohm=10.0),
+    )
+
+    assert model.operating_point["vout"] == pytest.approx(4.8)
+    assert model.operating_point["il"] == pytest.approx(0.48)
+    assert model.transfer_function(0.0).real == pytest.approx(12.0, rel=1e-9)
+
+
+def test_operating_point_fallback_without_declared_voltage_or_load_fails_closed() -> None:
+    load_builtin_model_capabilities()
+
+    with pytest.raises(CapabilityUnavailable) as caught:
+        small_signal_model_for(
+            _DuckBuckWithoutSteadyState(), OperatingPoint(duty=0.4)
+        )
+
+    assert caught.value.reason == "operating_point_not_declared"
+
+
+class _ClassNamedPlant:
+    backend_id = "not-registered-anywhere"
+
+
+class _NowherePlant:
+    backend_id = "nowhere-backend"
+
+
+def test_lookup_falls_back_from_backend_id_to_class_name() -> None:
+    register_small_signal_model("_ClassNamedPlant", _factory("class-named"))
+
+    model = small_signal_model_for(_ClassNamedPlant(), _operating_point())
+    assert model.plant_id == "class-named"
+
+
+def test_unregistered_message_names_both_lookup_keys() -> None:
+    with pytest.raises(CapabilityUnavailable) as caught:
+        small_signal_model_for(_NowherePlant(), _operating_point())
+
+    message = str(caught.value)
+    assert "nowhere-backend" in message
+    assert "_NowherePlant" in message
+
+
+def test_builtin_loader_does_not_overwrite_existing_registration() -> None:
+    register_small_signal_model("buck", _factory("caller-provided"))
+
+    load_builtin_model_capabilities()
+
+    model = small_signal_model_for(_KeyedPlant("buck"), _operating_point())
+    assert model.plant_id == "caller-provided"
+
+
+def test_registered_model_capabilities_is_idempotent_and_clearable() -> None:
+    load_builtin_model_capabilities()
+    first = registered_model_capabilities()
+    load_builtin_model_capabilities()
+
+    assert registered_model_capabilities() == first
+    assert first["buck"] == ("small_signal_model",)
+    assert first["boost"] == ("small_signal_model",)
+
+    register_loss_model("fake-loss", lambda plant, operating_point: _unit_loss("loss"))
+    capabilities = registered_model_capabilities()
+    assert capabilities["fake-loss"] == ("loss_model",)
+
+    clear_model_capabilities()
+    assert registered_model_capabilities() == {}
+
+
+def test_loss_model_for_returns_registered_provider() -> None:
+    register_loss_model("fake-loss", lambda plant, operating_point: _unit_loss("loss"))
+    breakdown = loss_model_for(_KeyedPlant("fake-loss"), _operating_point())
+
+    assert breakdown.plant_id == "loss"
+    assert breakdown.efficiency == pytest.approx(0.95)
+
+
+def test_to_dict_payloads_are_json_serializable() -> None:
+    load_builtin_model_capabilities()
+    model = small_signal_model_for(_buck(), _operating_point())
+    operating_point = OperatingPoint(
+        duty=0.5, input_voltage_v=12.0, load_resistance_ohm=10.0
+    )
+    breakdown = _unit_loss("buck")
+
+    model_payload = model.to_dict()
+    assert model_payload["schema"] == CAPABILITY_SCHEMA
+    assert model_payload["plant_id"] == "buck"
+    assert json.loads(json.dumps(model_payload, allow_nan=False)) == model_payload
+    assert json.loads(
+        json.dumps(operating_point.to_dict(), allow_nan=False)
+    ) == operating_point.to_dict()
+    loss_payload = breakdown.to_dict()
+    assert loss_payload["schema"] == CAPABILITY_SCHEMA
+    assert json.loads(json.dumps(loss_payload, allow_nan=False)) == loss_payload
+
+
+@pytest.mark.parametrize("duty", [-0.1, 1.1, float("nan"), float("inf")])
+def test_operating_point_rejects_invalid_duty(duty: float) -> None:
+    with pytest.raises(ValueError):
+        OperatingPoint(duty=duty)
+
+
+def test_small_signal_model_rejects_non_single_row_output() -> None:
+    with pytest.raises(ValueError):
+        SmallSignalModel(
+            plant_id="invalid",
+            method="analytic",
+            state_space=LinearStateSpace(((0.0,),), ((1.0,),)),
+            output_matrix=((1.0,), (1.0,)),
+            feedthrough=0.0,
+            operating_point={"duty": 0.5, "vout": 1.0, "il": 0.5},
+            parameters={"gain": 1.0},
+            assumptions=("unit_test_fixture",),
+            verified_by="tests/test_model_capabilities.py",
+        )
