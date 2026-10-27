@@ -1,0 +1,36 @@
+{
+  "schema": "pe-sim.capability-analysis.v1",
+  "analysis_id": "buck-ac-example",
+  "kind": "ac",
+  "plant": {
+    "id": "buck",
+    "config": {
+      "input_voltage_v": 48.0,
+      "inductance_h": 470e-6,
+      "capacitance_f": 470e-6,
+      "load_resistance_ohm": 10.0
+    }
+  },
+  "operating_point": {
+    "duty": 0.5,
+    "input_voltage_v": 48.0,
+    "load_resistance_ohm": 10.0
+  },
+  "sweep": {
+    "start_hz": 10.0,
+    "stop_hz": 100000.0,
+    "points": 241
+  },
+  "controller": {
+    "id": "type2",
+    "config": {
+      "gain": 3.0,
+      "zero_hz": 500.0,
+      "pole_hz": 50000.0
+    },
+    "control_period_s": 1e-4
+  },
+  "output": {
+    "directory": "capability-out"
+  }
+}

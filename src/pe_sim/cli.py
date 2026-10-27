@@ -22,6 +22,12 @@ from .runner import RunOptions
 from .runtime import Runner
 from .study import parse_study_document
 from .study_runner import run_study
+from .capability_analysis import (
+    CapabilityAnalysisError,
+    parse_capability_document,
+    run_capability_analysis,
+    write_capability_report,
+)
 from .builtin_controllers import load_builtin_controllers
 from .builtin_plants import PlantBuildContext, load_builtin_plants
 from .controller_registry import ControllerBuildContext, resolve_controller
@@ -178,6 +184,11 @@ def main(argv: list[str] | None = None) -> int:
         default="native",
         help="netlist builder for the ngspice-buck backend; 'pyspice' requires the optional PySpice install",
     )
+    capability = sub.add_parser(
+        "capability",
+        help="run one AC, impedance, or loss analysis from a capability-analysis document",
+    )
+    capability.add_argument("config", type=Path)
     demo = sub.add_parser(
         "demo",
         help="run a bundled reference experiment without writing a configuration first",
@@ -415,6 +426,8 @@ def main(argv: list[str] | None = None) -> int:
             return code
         if args.command == "study":
             return _execute_study(args)
+        if args.command == "capability":
+            return _execute_capability(args)
         elif args.command == "git-status":
             print(json.dumps(analyze_git_worktree(args.path).to_dict(), sort_keys=True))
             return 0
@@ -689,6 +702,49 @@ def main(argv: list[str] | None = None) -> int:
         # violations so they surface as JSON rather than as a traceback.
         code = exc.code if isinstance(exc, RequestRejected) else "invalid_request"
         _emit_rejection("CONFIG_REJECTED", code, str(exc))
+        return 2
+
+
+def _execute_capability(args) -> int:
+    """Run one capability-analysis document and print its JSON report."""
+
+    try:
+        document = json.loads(Path(args.config).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        _emit_rejection(
+            "CONFIG_REJECTED",
+            "invalid_request",
+            str(exc),
+            reason="invalid_document",
+        )
+        return 2
+    try:
+        plan = parse_capability_document(document)
+        report = run_capability_analysis(plan)
+        if plan.output_dir is not None:
+            report_path = write_capability_report(report, plan.output_dir)
+            report = {**report, "report_path": str(report_path)}
+        print(json.dumps(report, sort_keys=True, allow_nan=False))
+        return 0
+    except CapabilityAnalysisError as exc:
+        code = "unknown_plant" if exc.reason == "unknown_plant" else "invalid_request"
+        _emit_rejection("CONFIG_REJECTED", code, str(exc), reason=exc.reason)
+        return 2
+    except CapabilityUnavailable as exc:
+        _emit_rejection(
+            "CONFIG_REJECTED",
+            "invalid_request",
+            str(exc),
+            reason=exc.reason,
+        )
+        return 2
+    except (TypeError, ValueError) as exc:
+        _emit_rejection(
+            "CONFIG_REJECTED",
+            "invalid_request",
+            str(exc),
+            reason="invalid_plan",
+        )
         return 2
 
 

@@ -445,6 +445,19 @@ EXPERIMENTAL_API: frozenset[str] = frozenset(
         # declared lossy converter adapter and its opt-in registration.
         "LossyBuckPlant",
         "register_loss_provider",
+        # user-facing capability-analysis document and runner.
+        "CAPABILITY_ANALYSIS_REASONS",
+        "CAPABILITY_ANALYSIS_SCHEMA",
+        "CAPABILITY_KINDS",
+        "CAPABILITY_REPORT_SCHEMA",
+        "CapabilityAnalysisError",
+        "CapabilityAnalysisPlan",
+        "ControllerSpec",
+        "ImpedanceSpec",
+        "SweepSpec",
+        "parse_capability_document",
+        "run_capability_analysis",
+        "write_capability_report",
     }
 )
 

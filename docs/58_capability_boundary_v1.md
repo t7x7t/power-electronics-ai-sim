@@ -70,6 +70,12 @@
    `LossyBuckPlant` 必须显式声明 `Rds`/`DCR`/`Vf`/`Qoss`/`Qg`，并按固定的五项分项报；
    它按平均 `IL²` 计导通损耗（无纹波修正）、低边用固定压降、开关损耗只含 `Qoss·Vin·fsw`，
    不建模磁芯损耗与温度。全零损耗时必顶 `declared_lossless=True`，效率 1.0 只能是“声明”而不是推断。
+9. **能力分析入口是 `pe-sim capability`，不是 study kind。** 文档
+   `pe-sim.capability-analysis.v1` 声明 `plant`（注册植物或能力专用的 `lossy-buck`）、
+   一个显式 `operating_point`、`sweep`、可选 `controller` 与 `impedance`；输出
+   `pe-sim.capability-report.v1`，可原子写入 `output.directory/capability-report.json`。
+   AC/阻抗/损耗三类结果复用同一批库函数，入口不复制数学，也不要求伪造 `base_experiment`；
+   结果仍不携带证据等级。`lossy-buck` 只作为能力植物构造，不注册为 runner 植物。
 
 **为什么这样设计：** 不变量 I1——约束必须在运行**期间**强制执行，而不是事后重建。
 只有能逐窗口拦截的路线才配 `comparable`；一次性整段求解无法在飞行中拦截，因此

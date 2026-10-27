@@ -1,0 +1,29 @@
+{
+  "schema": "pe-sim.capability-analysis.v1",
+  "analysis_id": "lossy-buck-loss-example",
+  "kind": "loss",
+  "plant": {
+    "id": "lossy-buck",
+    "config": {
+      "input_voltage_v": 48.0,
+      "inductance_h": 470e-6,
+      "capacitance_f": 470e-6,
+      "load_resistance_ohm": 10.0,
+      "switch_resistance_ohm": 0.05,
+      "inductor_resistance_ohm": 0.02,
+      "diode_forward_voltage_v": 0.4,
+      "switching_frequency_hz": 200000.0,
+      "switch_output_charge_c": 20e-9,
+      "gate_charge_c": 10e-9,
+      "gate_drive_voltage_v": 10.0
+    }
+  },
+  "operating_point": {
+    "duty": 0.5,
+    "input_voltage_v": 48.0,
+    "load_resistance_ohm": 10.0
+  },
+  "output": {
+    "directory": "capability-out"
+  }
+}

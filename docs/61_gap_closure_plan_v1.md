@@ -30,7 +30,7 @@
 | S5 | 0.13.0 | —（已完成：相位连续与变更点） | `kernel-impl` | S3 | 已交付：pin 记录已更新；ADR 0004 两条验收通过 |
 | S6 | 0.14.1 | —（已完成：控制器 seam） | `controller` seam | S5 | 已交付：B2 注册表/Type II-III（0.14.0）；B9/A7 保护与短路恢复（0.14.1） |
 | S7 | 0.15.0 | —（已完成：study 计划层） | `study` seam | S1 | 已交付：A10 C3 C9 闭合；聚合恒为 `per-point`，不自动继承 `comparable` |
-| S8 | 0.16.0 | C4 C5 C6 | `capability` seam | S7 | 缺失能力 = 不可用（不是 `limited`）；AC/阻抗方法必须自报 |
+| S8 | 0.16.0 | —（已完成：capability 入口） | `capability` seam | S7 | 已交付：C4 C5 C6 闭合；缺失能力 = 不可用（不是 `limited`）；AC/阻抗方法必须自报 |
 | S9 | 0.17.0 | A8 A9 A11 B7 B8 B3 D3 | `adapter` 扩面 + 比较器事件 | S5 | T1 仍然成立：新能力是注册，不是内核分支 |
 | S10 | 0.18.0 | —（收口与发布） | 发布 | S1–S9 | `docs/60` 无 `kernel_gap` / `expressible` 残留 |
 
@@ -151,9 +151,8 @@
   `method`/`assumptions`/`verified_by` 与完整 `provenance`，不携带证据等级。
   独立校验后加固：`origin` 区分内置/调用方注册、`verified_by` 必须指向真实测试 id、
   `assumptions` 禁用证据等级词、`plant_id` 与查找键必须一致、margins 保留扫频与插值方法、
-  `LossBreakdown` 强制功率/损耗/效率一致性。**C4/C5/C6 仍为 `kernel_gap`**：三片库级
-  实现（AC、阻抗/Middlebrook、损耗/效率）均已交付，但仍缺 CLI/study 入口；入口落地前
-  不关闭，避免把“有函数但用户调不到”当成可用。
+  `LossBreakdown` 强制功率/损耗/效率一致性。三片库级实现（AC、阻抗/Middlebrook、
+  损耗/效率）均已交付；**C4/C5/C6 已在 0.16.0 由 `pe-sim capability` 入口关闭**。
 - 已交付（第二片）：`SmallSignalModel` 端口具名化（`duty`/`vin`/`load_current` →
   `vout`/`input_current`，旧单端口视图保持不变）、`src/pe_sim/impedance_analysis.py`
   （`Zin`/`Zout` 扇帚与 Middlebrook 幅度判据）、`src/pe_sim/frequency_domain.py`
@@ -178,6 +177,13 @@
   输入/输出阻抗与 Middlebrook 判据；效率与损耗分解。
 - 验收：未实现能力的植物报告"不可用"而非 `limited`；每个结果记录线性化方法与验证方式；
   实现方式（解析 vs 辨识）出现在工件里。
+- 已交付（入口，0.16.0）：`src/pe_sim/capability_analysis.py` + `pe-sim capability <config.json>`。
+  独立文档 `pe-sim.capability-analysis.v1`（不伪装成 study 的 `base_experiment`）：声明
+  `plant`（注册植物，或能力专用的 `lossy-buck`）、`operating_point`、`sweep`、可选
+  `controller`（loop gain）、`impedance.kind`/`external`；输出 `pe-sim.capability-report.v1`，
+  可原子写入 `output.directory/capability-report.json`。三类结果分别复用 AC/阻抗/损耗的
+  既有实现，不复制数学；`CapabilityUnavailable` 与文档错误映射到既有拒绝码。
+  入口测试 `tests/test_capability_cli.py`（AC、阻抗/Middlebrook、损耗、CLI 工件与拒绝框）。
 - **入口前独立评审与加固（2026-10-27，未提升版本）**：4 个独立子智能体分别审查
   架构/需求、buck-boost 与阻抗、Middlebrook/裕度、损耗，监督者逐条复现。已修：
   ① `run_study` 把 `exit_code`/执行失败写入 `StudyPointRecord`，`aggregate_study` 仅当
@@ -190,8 +196,8 @@
   非有限/非递增频率与非法 provenance；⑥ `LossBreakdown` 拒绝负输出功率、负效率与
   “声明无损但有损耗项”；⑦ `CapabilityUnavailable` 理由码封闭并映射 CLI `invalid_request`；
   ⑧ `origin="builtin"` 只能由内置工厂声明；⑨ S7/S8 新名字以 experimental 身份顶层可达。
-  相关 10 个测试文件 **415 passed**；全量 **1656 passed / 11 skipped**（无 ngspice）。
-  入口与 `docs/60` 状态仍未改动。
+  相关 10 个测试文件 **415 passed**；入口测试 `tests/test_capability_cli.py` **9 passed**；
+  全量 **1665 passed / 11 skipped**（无 ngspice）。`docs/60` 的 C4/C5/C6 已改为 `covered`。
 
 **S9 — 适配器扩面（A8 A9 A11 B7 B8 B3 D3）**
 

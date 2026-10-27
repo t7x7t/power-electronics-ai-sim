@@ -309,6 +309,20 @@ from .impedance_analysis import (
     middlebrook_ratio,
 )
 from .lossy_converter import LossyBuckPlant, register_loss_provider
+from .capability_analysis import (
+    CAPABILITY_ANALYSIS_REASONS,
+    CAPABILITY_ANALYSIS_SCHEMA,
+    CAPABILITY_KINDS,
+    CAPABILITY_REPORT_SCHEMA,
+    CapabilityAnalysisError,
+    CapabilityAnalysisPlan,
+    ControllerSpec,
+    ImpedanceSpec,
+    SweepSpec,
+    parse_capability_document,
+    run_capability_analysis,
+    write_capability_report,
+)
 
 from .public_api import EXPERIMENTAL_API, STABLE_API
 

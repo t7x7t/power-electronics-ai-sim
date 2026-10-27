@@ -58,9 +58,9 @@
 | C1 | 时域瞬态（开关级/平均） | very-common | yes | covered | kernel+adapter | `tests/test_ngspice_plant_contract.py`, `tests/test_stage15_buck_boost_acceptance.py` |
 | C2 | 解析稳态/平衡点判定 | very-common | yes | covered | kernel | `tests/test_stage15_buck_boost_acceptance.py`（`analytical_steady_state` + 稳态规则） |
 | C3 | 周期稳态解（PSS） | very-common | yes | covered | kernel | `tests/test_study_cli.py`（averaged buck 上时长扩展至收敛；对末次运行 `samples.json` 独立复算与报告数值一致）；上限 `per-point`、`pss_convergence_is_tolerance_based` |
-| C4 | AC 小信号 / 环路增益（Bode、PM、GM） | very-common | partial | kernel_gap | kernel | 库级已提供：`pe_sim.model_capabilities` 的解析 buck/boost 小信号 + `pe_sim.ac_analysis`（Bode、Tustin 等效回路增益、PM/GM），`tests/test_ac_analysis.py`；**缺 CLI/study 入口**，故仍未关闭；`GAP-01` |
-| C5 | 阻抗扇帚（输入/输出、Middlebrook） | common | partial | kernel_gap | kernel | 库级已提供：`pe_sim.impedance_analysis`（`Zin`/`Zout` 扇帚 + Middlebrook 比，`tests/test_impedance_analysis.py`）；**缺 CLI/study 入口**，且 Middlebrook 仅幅度判据（无相位裕度形式）；`GAP-02` |
-| C6 | 效率与损耗分解 | very-common | partial | kernel_gap | adapter+kernel | 库级已提供：`pe_sim.lossy_converter`（声明 `Rds/DCR/Vf/Qoss/Qg` 的 averaged buck + `loss_model()`，`tests/test_lossy_converter.py`）；内置理想 buck/boost **不声明** loss provider（效率 1.0 会是假声明）；缺 CLI/study 入口；`GAP-03` |
+| C4 | AC 小信号 / 环路增益（Bode、PM、GM） | very-common | yes | covered | kernel | `pe-sim capability`（`pe_sim/capability_analysis.py`）+ `tests/test_capability_cli.py`、`tests/test_ac_analysis.py`；解析 buck/boost 小信号、Tustin 等效回路增益、PM/GM，±180° 平坦相位诚实报 `None`；`GAP-01` 已关闭 |
+| C5 | 阻抗扇帚（输入/输出、Middlebrook） | common | yes | covered | kernel | `pe-sim capability`（`impedance` kind）+ `tests/test_capability_cli.py`、`tests/test_impedance_analysis.py`；`Zin`/`Zout` 扇帚与 Middlebrook 幅度筛子（仍**不是**稳定性证明）；`GAP-02` 已关闭 |
+| C6 | 效率与损耗分解 | very-common | yes | covered | adapter+kernel | `pe-sim capability`（`loss` kind）+ `tests/test_capability_cli.py`、`tests/test_lossy_converter.py`；声明 `Rds/DCR/Vf/Qoss/Qg` 的 averaged buck + `loss_model()`；内置理想 buck/boost **不声明** loss provider（效率 1.0 会是假声明）；`GAP-03` 已关闭 |
 | C7 | 纹波频谱 / THD / PF | very-common | partial | covered | kernel | `tests/test_derived_metrics.py`（Hann 频谱、THD、PF；边界样本上限已声明） |
 | C8 | 电热 / 热网络 | common | no | out_of_scope | adapter | `docs/43`（器件/热模型非内核工作）；`no_thermal_state_modelled` |
 | C9 | Monte Carlo / 容差 / 最坏情况 | very-common | yes | covered | kernel | `tests/test_study_plan.py`、`tests/test_study_cli.py`（同 seed 逐点可复现；点参数逐点等于 `draws`，且 `draws_sha256` 与独立复算一致）；上限 `per-point`、`aggregate_does_not_inherit_comparable` |
@@ -87,6 +87,8 @@
 | GAP-02 | 阻抗扫描：无输入/输出阻抗与 Middlebrook 判据 | C5 | 内核（依赖 GAP-01） |
 | GAP-03 | 效率与损耗分解：无导通/开关/磁性损耗模型与派生指标 | C6 | 适配器提供损耗模型 + 内核提供派生指标 |
 
+**GAP-01..03 已在 0.16.0 由 `pe-sim capability` 关闭**：AC、阻抗/Middlebrook、损耗/效率三类分析均有文档入口、JSON 工件与端到端测试。
+
 ### 2.2 按"关闭它需要动哪一层"分类
 
 这决定了架构是否适配：**能否在不改 `PlantAdapter` / `ControllerAdapter` / Runner 循环的前提下
@@ -94,13 +96,13 @@
 
 | 类别 | 行 | 含义 |
 | --- | --- | --- |
-| `closed` | A1, A2, A3, A4, A5, A6, A7, A10, B1, B2, B4, B5, B6, B9, C1, C2, C3, C7, C9, C10, D1, D2, D4, D5 | 今天可用且已有测试 |
+| `closed` | A1, A2, A3, A4, A5, A6, A7, A10, B1, B2, B4, B5, B6, B9, C1, C2, C3, C4, C5, C6, C7, C9, C10, D1, D2, D4, D5 | 今天可用且已有测试 |
 | `test-only` | —（当前为空：可表达性行已在 0.10.0 闭合） | 今天已能表达，只缺用例 |
 | `postprocess` | —（当前为空：派生指标已在 0.12.0 闭合） | 单次运行样本上的派生指标 |
 | `adapter` | A8, A9, A11, B7 | 新模型或新网表模板，零内核改动（T1） |
 | `controller` | —（当前为空：保护在 0.14.1 闭合） | 新控制器或保护状态机 |
 | `study` | —（当前为空：study 计划层已在 0.15.0 闭合） | 需要在单次运行之上编排（ADR 0005 Seam 1） |
-| `capability` | C4, C5, C6 | 需要模型回答 `advance()` 答不了的问题（ADR 0005 Seam 2） |
+| `capability` | —（0.16.0 已由 `pe-sim capability` 闭合） | 需要模型回答 `advance()` 答不了的问题（ADR 0005 Seam 2） |
 | `kernel-impl` | B3, D3 | 内核实现改动，**不改协议** |
 | `contract` | B8 | 真正需要改契约，且已由 ADR 决定（ADR 0004）；A6（ADR 0006）与 B2（ADR 0007）曾属此类，已关闭并转入 `closed` |
 | `never` | C8 | 已声明不做 |
@@ -120,7 +122,7 @@
 | --- | --- | --- |
 | 用平均模型判断 DCM/纹波（A8） | `uncheckable_rules` 已声明，但报告里不显眼 | 保持声明；在 `docs/58` 增加对应行 |
 | 把 `whole-run` 结果当实时拦截证据（A11） | 已由证据上限 `limited` 阻断 | 已闭合 |
-| 需要 AC 环路裕度却只看瞬态（C4） | 不会报错，用户可能误判稳定性 | 在 `docs/58` 明确"无 AC 分析"；C4 落地前不得暗示 |
+| 需要 AC 环路裕度却只看瞬态（C4） | 已由 `pe-sim capability` 的 AC 入口闭合；仍不得把瞬态结果当 AC 裕度 | 用 `pe-sim capability` 明确声明工作点与扫频；结果不携带证据等级 |
 | 需要比较器级事件（B3/D3） | 外部输入变更点已按声明时刻求解；比较器/器件事件仍只在求解段边界 | 保持为 `kernel_gap`；由 `docs/61` S9 处理，落地前文档不得暗示逐周期保护 |
 
 已消除的两个静默缺口（保留在此备查）：A4 窗口内负载阶跃（ADR 0004 步骤 2，0.13.0）与
