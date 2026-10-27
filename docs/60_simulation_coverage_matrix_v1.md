@@ -60,7 +60,7 @@
 | C3 | 周期稳态解（PSS） | very-common | yes | covered | kernel | `tests/test_study_cli.py`（averaged buck 上时长扩展至收敛；对末次运行 `samples.json` 独立复算与报告数值一致）；上限 `per-point`、`pss_convergence_is_tolerance_based` |
 | C4 | AC 小信号 / 环路增益（Bode、PM、GM） | very-common | partial | kernel_gap | kernel | 库级已提供：`pe_sim.model_capabilities` 的解析 buck/boost 小信号 + `pe_sim.ac_analysis`（Bode、Tustin 等效回路增益、PM/GM），`tests/test_ac_analysis.py`；**缺 CLI/study 入口**，故仍未关闭；`GAP-01` |
 | C5 | 阻抗扇帚（输入/输出、Middlebrook） | common | partial | kernel_gap | kernel | 库级已提供：`pe_sim.impedance_analysis`（`Zin`/`Zout` 扇帚 + Middlebrook 比，`tests/test_impedance_analysis.py`）；**缺 CLI/study 入口**，且 Middlebrook 仅幅度判据（无相位裕度形式）；`GAP-02` |
-| C6 | 效率与损耗分解 | very-common | no | kernel_gap | adapter+kernel | `LossBreakdown` 类型与不变量已就位（terms 求和/功率平衡/效率一致性/`declared_lossless`），但**无任何植物声明 loss provider**——理想平均模型给效率 1.0 会是假声明；待 S8c；`GAP-03` |
+| C6 | 效率与损耗分解 | very-common | partial | kernel_gap | adapter+kernel | 库级已提供：`pe_sim.lossy_converter`（声明 `Rds/DCR/Vf/Qoss/Qg` 的 averaged buck + `loss_model()`，`tests/test_lossy_converter.py`）；内置理想 buck/boost **不声明** loss provider（效率 1.0 会是假声明）；缺 CLI/study 入口；`GAP-03` |
 | C7 | 纹波频谱 / THD / PF | very-common | partial | covered | kernel | `tests/test_derived_metrics.py`（Hann 频谱、THD、PF；边界样本上限已声明） |
 | C8 | 电热 / 热网络 | common | no | out_of_scope | adapter | `docs/43`（器件/热模型非内核工作）；`no_thermal_state_modelled` |
 | C9 | Monte Carlo / 容差 / 最坏情况 | very-common | yes | covered | kernel | `tests/test_study_plan.py`、`tests/test_study_cli.py`（同 seed 逐点可复现；点参数逐点等于 `draws`，且 `draws_sha256` 与独立复算一致）；上限 `per-point`、`aggregate_does_not_inherit_comparable` |

@@ -217,6 +217,21 @@ provider land in the rest of stage S8; until then `docs/60` C4/C5/C6 stay open.
    violation. The external impedance's own `kind`/`plant_id`/`method`/
    `assumptions` are recorded under `external`, because the ratio is only as
    good as that caller-declared quantity.
+10. **A loss model must be declared, never inferred.** `LossyBuckPlant` carries
+    explicit `switch_resistance_ohm`, `inductor_resistance_ohm`,
+    `diode_forward_voltage_v`, `switching_frequency_hz`, `switch_output_charge_c`,
+    `gate_charge_c`, and `gate_drive_voltage_v`. Its breakdown uses fixed term
+    names (switch/inductor/diode conduction, `Qoss` switching, gate drive), and
+    its assumptions state the three approximations that matter: conduction loss
+    is evaluated at the average `IL²` (no ripple correction), the low-side
+    device is a fixed forward drop (a synchronous rectifier would need a
+    low-side resistance instead), and switching loss contains only
+    `Qoss · Vin · fsw` (no crossover, no soft-switching credit, no core loss, no
+    temperature dependence). The ideal `BuckPlant`/`BoostPlant` deliberately
+    declare **no** loss provider: their efficiency would be exactly `1.0`, and
+    that number presented as an efficiency would be a fabricated claim. A
+    breakdown at or above unity efficiency requires `declared_lossless=True`,
+    so even that case is an explicit statement rather than an inference.
 
 ## Consequences
 - The kernel keeps three objects; two layers are added around them. Adding a

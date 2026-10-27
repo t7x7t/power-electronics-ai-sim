@@ -165,6 +165,14 @@
   零分母（正分子）判通过、0/0 才 `not_evaluable`；`min_ratio_scope`/`total_points`/`evaluated_points`
   显式化；−∞ dB 用 `min_ratio_db_bound` 表达以保持 JSON 有限；外部阻抗来源记入 `external`；
   `verified_by` 修正为扁平字符串列表（曾误为嵌套列表）。
+- 已交付（第三片）：`src/pe_sim/lossy_converter.py`——带声明损耗参数的 averaged
+  CCM buck（`Rds`/`DCR`/`Vf`/`Qoss`/`Qg`）+ 解析 `analytical_steady_state` + `loss_model()`
+  返回 `LossBreakdown`；损耗分项固定为开关导通、电感导通、低边导通、`Qoss` 开关、栅驱动。
+  全零损耗时必须显式 `declared_lossless=True`（否则 `LossBreakdown` 拒绝），这条已单独测试。
+  该模型**不注册为 runner 植物**，只注册 loss provider；身份摘要通过既有 `register_solve_path`
+  取得，`review_status` 为 `not_pinned`，未碰 `reviewed_identities.json`。
+- 已知近似（已写进 `assumptions`）：按平均 `IL²` 计导通损耗（无纹波修正）、低边用固定 `Vf`
+  （同步整流应改用低边 `Rds`）、开关损耗仅含 `Qoss·Vin·fsw`（无交越/软开关）、不建模磁芯损耗与温度。
 - 交付：可选 `small_signal_model(op)` 与 `loss_model()`；AC 扫频 / Bode / PM / GM；
   输入/输出阻抗与 Middlebrook 判据；效率与损耗分解。
 - 验收：未实现能力的植物报告"不可用"而非 `limited`；每个结果记录线性化方法与验证方式；
