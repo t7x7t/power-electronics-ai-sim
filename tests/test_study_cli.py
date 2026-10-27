@@ -8,6 +8,7 @@ required.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from importlib import resources
 from pathlib import Path
@@ -15,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from pe_sim.cli import main
-from pe_sim.study import STUDY_SCHEMA
+from pe_sim.study import STUDY_SCHEMA, evaluate_periodicity
 
 
 def _template_document(duration_s: float = 2e-4) -> dict:
@@ -270,3 +271,110 @@ def test_formal_comparison_of_a_whole_run_study_is_rejected_before_any_run(tmp_p
     assert rejection["error_code"] == "formal_comparison_rejected"
     assert not output.exists()
     assert not any(tmp_path.glob("**/runs"))
+
+
+# ---------------------------------------------------------------------------
+# Adversarial end-to-end regressions
+# ---------------------------------------------------------------------------
+
+
+def test_sweep_over_a_plant_numeric_leaf_runs(tmp_path, capsys):
+    output = tmp_path / "study"
+    plan = {
+        "parameters": [
+            {
+                "path": "plant_config.load_resistance_ohm",
+                "values": [10.0, 5.0],
+            }
+        ]
+    }
+    path = _write_study(
+        tmp_path / "study.json",
+        kind="parameter_sweep",
+        plan=plan,
+        output=output,
+    )
+
+    assert main(["study", str(path)]) == 0
+    capsys.readouterr()
+    report = _read_report(output)
+
+    assert len(report["points"]) == 2
+    assert [
+        point["parameters"]["plant_config.load_resistance_ohm"]
+        for point in report["points"]
+    ] == [10.0, 5.0]
+    assert all(
+        point["status"] in {"RUN_OK", "QUALIFIED"}
+        for point in report["points"]
+    )
+
+
+def test_periodicity_comparison_matches_independent_evaluation(tmp_path, capsys):
+    output = tmp_path / "study"
+    plan = _periodicity_plan()
+    path = _write_study(
+        tmp_path / "study.json",
+        kind="periodicity",
+        plan=plan,
+        base=_periodicity_base(),
+        output=output,
+    )
+
+    assert main(["study", str(path)]) == 0
+    capsys.readouterr()
+    report = _read_report(output)
+
+    comparison = report["kind_result"]["comparison"]
+    last_point = report["points"][-1]
+    samples = json.loads(
+        (Path(last_point["run_dir"]) / "samples.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    independent = evaluate_periodicity(
+        samples,
+        signals=plan["signals"],
+        compare_period=plan["compare_period"],
+        compare_windows=plan["compare_windows"],
+        tolerance_relative=plan["tolerance_relative"],
+    )
+
+    assert comparison["converged"] is True
+    assert comparison["converged"] == independent["converged"]
+    assert comparison["compared_pairs"] == independent["compared_pairs"]
+    assert comparison["method"] == independent["method"]
+    assert comparison["worst_relative_difference"] == pytest.approx(
+        independent["worst_relative_difference"]
+    )
+    assert comparison["signal_differences"] == pytest.approx(
+        independent["signal_differences"]
+    )
+    if independent["sampling_interval_s"] is None:
+        assert comparison["sampling_interval_s"] is None
+    else:
+        assert comparison["sampling_interval_s"] == pytest.approx(
+            independent["sampling_interval_s"]
+        )
+
+
+def test_monte_carlo_draws_match_points_and_independent_hash(tmp_path, capsys):
+    output = tmp_path / "study"
+    path = _write_study(
+        tmp_path / "study.json",
+        kind="monte_carlo",
+        plan=_monte_carlo_plan(),
+        output=output,
+    )
+
+    assert main(["study", str(path)]) == 0
+    capsys.readouterr()
+    report = _read_report(output)
+
+    draws = report["kind_result"]["draws"]
+    assert [point["parameters"] for point in report["points"]] == draws
+    canonical = json.dumps(
+        draws, sort_keys=True, separators=(",", ":"), allow_nan=False
+    )
+    expected = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    assert report["kind_result"]["draws_sha256"] == expected

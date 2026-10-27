@@ -119,9 +119,9 @@
 **S7 — Study seam（A10 C3 C9）**
 
 - 已交付（0.15.0）：`src/pe_sim/study.py`（纯计划层：文档解析、扫掠/采样展开、描述统计、
-  容差式周期性判定、聚合规则、报告）与 `src/pe_sim/study_runner.py`（编排：逐点落盘
-  `points/pNN/config.json` → 调用注入的执行器 → 读回该点 `manifest.json`/`samples.json`）；
-  `pe-sim study` 子命令（参数与 `run` 同集合，不加新开关）。
+  容差式周期性判定、聚合规则、报告）与 `src/pe_sim/study_runner.py`（编排：执行每个点时
+  才落盘 `points/pNN/config.json` → 调用注入的执行器 → 读回该点 `manifest.json`/`samples.json`）；
+  `pe-sim study` 子命令（与 `run` 相同的六个选项，不含 `--progress`/`--cancel-file`）。
 - 验收：duty/kp 扫掠生成参数曲线；固定 seed 的 Monte Carlo 可复现（同时记录 `draws_sha256`）；
   buck 的 periodicity 收敛判定可达（`kp=0.02`、时长 2 ms → 16 ms → 128 ms 时第三轮收敛）；
   聚合结果不自动获得 `comparable`：`aggregate.evidence_level` 恒为 `per-point`，
@@ -131,8 +131,17 @@
   （`mean`/`min`/`max`/`rms`/`peak_to_peak`/`last`/`ratio_of_means`），并登记
   `descriptive_statistics_only_no_loss_claim`。
 - 实施教训（供后续阶段参考）：比例通道 + `duty∈[0,1]` 限幅会产生继电式极限环
-  （`kp=0.2`、`vref=5 V` 时 1.02 s 后相对差仍为 2.1e-2），因此“收敛”验收必须选择
-  执行器全程不撞限幅的工况；`periodicity` 判定只声称容差内重复，不声称物理稳态。
+  （`kp=0.2`、`vref=5 V` 时 1.02 s 后相对差实测约 `1.4e-2`，索引 lag=1），因此“收敛”验收
+  必须选择执行器全程不撞限幅的工况；`periodicity` 判定只声称容差内重复，不声称物理稳态。
+- 独立校验（只读子智能体）判定 FAIL 并已修复：① 重复参数 `path` 会静默丢轴并产出重复点，
+  使聚合可 `claimed` → 计划层拒绝 `duplicate_parameter_path`，聚合要求 `run_id`/`index` 唯一、
+  身份字段为非空字符串（新增理由码 `duplicate_points`/`point_identity_incomplete`/`empty_study`，
+  空点不再用 `single_point_study`）；② 坏或缺失 `manifest.json`/`samples.json` 曾静默 exit 0 →
+  现在记入 `details.manifest_error`/`statistics_error` 并失败（报告仍写）；大小写外异常也按点
+  记录（`executor_error`）不中断其余点；③ 有限但过大的 `sigma` 可溢出为非有限 draw 并在写盘后
+  裸崩 → 计划阶段即 `invalid_draw`，且 `config.json` 改为逐点、序列化先行；④ 附带修正：
+  `write_study_report` 临时名加 pid、`run_study` 删除 `output_dir` 覆盖参数（唯一输出根是
+  `plan.output_dir`）、`evaluate_periodicity` 增加 `sampling_interval_s` 与索引 lag 说明。
 
 **S8 — 模型能力 seam（C4 C5 C6）**
 

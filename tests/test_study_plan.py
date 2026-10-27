@@ -215,6 +215,9 @@ def test_study_constants_are_closed_and_stable():
             "point_route_not_declared",
             "point_evidence_level_not_declared",
             "single_point_study",
+            "empty_study",
+            "duplicate_points",
+            "point_identity_incomplete",
         }
     )
 
@@ -1146,7 +1149,8 @@ def test_aggregate_empty_study_has_a_diagnostic_ceiling():
     assert result["inherited_ceiling"] == "diagnostic_only"
     assert result["point_evidence_levels"] == {}
     assert result["cross_point_comparability"] == "not_claimed"
-    assert result["comparability_reasons"] == ["single_point_study"]
+    # F1: zero points is ``empty_study``; one point is ``single_point_study``.
+    assert result["comparability_reasons"] == ["empty_study"]
 
 
 def test_aggregate_extra_added_is_whitelisted_and_sorted():
@@ -1325,3 +1329,200 @@ def test_study_plan_to_dict_round_trips_and_copies():
 
     value["base_experiment"]["controller_config"]["kp"] = 999.0
     assert parsed.base_experiment["controller_config"]["kp"] == 0.2
+
+
+# ---------------------------------------------------------------------------
+# Adversarial regressions: duplicate paths, overflowing draws, point identity
+# ---------------------------------------------------------------------------
+
+
+def test_duplicate_sweep_parameter_path_is_rejected():
+    plan = {
+        "parameters": [
+            {"path": "controller_config.kp", "values": [0.1, 0.2]},
+            {"path": "controller_config.kp", "values": [0.2, 0.4]},
+        ]
+    }
+
+    with pytest.raises(StudyPlanError) as info:
+        parse_study_document(_study("parameter_sweep", plan))
+
+    assert info.value.reason == "duplicate_parameter_path"
+    assert "controller_config.kp" in str(info.value)
+    assert "once" in str(info.value)
+
+
+def test_duplicate_monte_carlo_parameter_path_is_rejected():
+    plan = _mc_plan(
+        parameters=[
+            _uniform_parameter(),
+            _uniform_parameter(low=1e-4, high=2e-4),
+        ],
+        samples=2,
+    )
+
+    with pytest.raises(StudyPlanError) as info:
+        parse_study_document(_study("monte_carlo", plan))
+
+    assert info.value.reason == "duplicate_parameter_path"
+    assert "plant_config.inductance_h" in str(info.value)
+    assert "once" in str(info.value)
+
+
+_OVERFLOW_MC_PARAMETERS = [
+    {
+        "path": "plant_config.inductance_h",
+        "distribution": "normal",
+        "mean": 0.0,
+        "sigma": 1e308,
+    }
+]
+
+
+def test_monte_carlo_non_finite_draw_is_rejected_before_planning():
+    # Seed 12345 deterministically produces one overflowing draw for
+    # sigma=1e308, so this regression is not probabilistic.
+    with pytest.raises(StudyPlanError) as info:
+        monte_carlo_draws(_OVERFLOW_MC_PARAMETERS, 8, 12345)
+
+    assert info.value.reason == "invalid_draw"
+    assert "plant_config.inductance_h" in str(info.value)
+    assert "sigma" in str(info.value)
+
+    plan = _mc_plan(
+        parameters=_OVERFLOW_MC_PARAMETERS,
+        samples=8,
+        seed=12345,
+    )
+
+    with pytest.raises(StudyPlanError) as info:
+        parse_study_document(_study("monte_carlo", plan))
+
+    assert info.value.reason == "invalid_draw"
+
+
+def _record_with_run_id(index: int, run_id: str) -> StudyPointRecord:
+    return StudyPointRecord(
+        index=index,
+        run_id=run_id,
+        run_dir=f"study-out/runs/{index:02d}",
+        parameters={"controller_config.kp": 0.1},
+        manifest=_manifest(),
+        statistics=None,
+        details=None,
+    )
+
+
+def test_aggregate_duplicate_run_ids_are_not_comparable():
+    records = [
+        _record_with_run_id(0, "study-p00"),
+        _record_with_run_id(1, "study-p00"),
+    ]
+
+    result = aggregate_study(records)
+
+    assert result["cross_point_comparability"] == "not_claimed"
+    assert "duplicate_points" in result["comparability_reasons"]
+
+
+def test_aggregate_duplicate_indices_are_not_comparable():
+    records = [
+        _record_with_run_id(0, "study-p00"),
+        _record_with_run_id(0, "study-p01"),
+    ]
+
+    result = aggregate_study(records)
+
+    assert result["cross_point_comparability"] == "not_claimed"
+    assert "duplicate_points" in result["comparability_reasons"]
+
+
+def test_aggregate_empty_study_uses_the_empty_study_reason():
+    result = aggregate_study([])
+
+    assert result["point_count"] == 0
+    assert result["comparability_reasons"] == ["empty_study"]
+    assert "empty_study" in STUDY_COMPARABILITY_REASONS
+
+
+def test_aggregate_single_point_uses_the_single_point_reason():
+    result = aggregate_study([_record(0, _manifest())])
+
+    assert result["comparability_reasons"] == ["single_point_study"]
+
+
+@pytest.mark.parametrize("identity_value", ["", 7])
+@pytest.mark.parametrize(
+    "field",
+    [
+        "run_mode",
+        "plant_id",
+        "route_time_model",
+        "route_control_location",
+        "route_event_granularity",
+    ],
+)
+def test_aggregate_incomplete_point_identity_is_not_comparable(
+    field, identity_value
+):
+    manifest = _manifest()
+    if field == "run_mode":
+        manifest["run_mode"] = identity_value
+    elif field == "plant_id":
+        manifest["plant"]["id"] = identity_value
+    else:
+        manifest["route"][field.removeprefix("route_")] = identity_value
+
+    result = aggregate_study([_record(0, _manifest()), _record(1, manifest)])
+
+    assert result["cross_point_comparability"] == "not_claimed"
+    assert "point_identity_incomplete" in result["comparability_reasons"]
+
+
+def test_evaluate_periodicity_uses_index_lag_and_reports_sampling_interval():
+    period = 3
+    windows = 4
+    samples = _periodic_rows(
+        {"vout": [1.0, 2.0, 3.0]},
+        period=period,
+        windows=windows,
+    )
+
+    result = evaluate_periodicity(
+        samples,
+        signals=["vout"],
+        compare_period=period,
+        compare_windows=windows,
+        tolerance_relative=1e-6,
+    )
+
+    assert result["converged"] is True
+    assert result["compared_pairs"] == 10
+    assert result["compared_pairs"] == period * (windows - 1) + 1
+    assert result["sampling_interval_s"] == pytest.approx(1e-3)
+
+    # Every row is validated, not only the trailing window: a non-finite row
+    # before the tail still fails closed.
+    prefix = [{"time_s": -1e-3, "vout": float("nan")}]
+    with pytest.raises(StudyPlanError) as info:
+        evaluate_periodicity(
+            prefix + samples,
+            signals=["vout"],
+            compare_period=period,
+            compare_windows=windows,
+            tolerance_relative=1e-6,
+        )
+    assert info.value.reason == "missing_sample_key"
+
+    # A non-increasing time base keeps the comparison but cannot report a
+    # single sampling interval.
+    irregular = [dict(row) for row in samples]
+    irregular[4]["time_s"] = irregular[3]["time_s"]
+    irregular_result = evaluate_periodicity(
+        irregular,
+        signals=["vout"],
+        compare_period=period,
+        compare_windows=windows,
+        tolerance_relative=1e-6,
+    )
+    assert irregular_result["sampling_interval_s"] is None

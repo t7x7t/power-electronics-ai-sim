@@ -1,10 +1,14 @@
 """Study execution layer: run every planned point and publish one report.
 
 The pure planning rules live in :mod:`pe_sim.study`; this module owns only the
-orchestration around them.  For every planned point it writes the point's
-experiment document under ``<output>/points/<label>/config.json`` *before* the
-point runs, delegates the run to an injected executor, then reads the
-published ``manifest.json`` and ``samples.json`` back from the run package.
+orchestration around them.  For every point it actually executes, it writes
+the point's experiment document under ``<output>/points/<label>/config.json``
+*immediately before* that point runs (never for points that are skipped),
+delegates the run to an injected executor, then reads the published
+``manifest.json`` and ``samples.json`` back from the run package.  An
+unreadable manifest, a manifest status outside the success set, or missing
+samples for declared statistics fails the point but never suppresses the
+study report or the remaining points.
 
 The module deliberately knows nothing about Plants, controllers, backends, the
 runtime, or the CLI.  Execution is an injected callable, so the same runner
@@ -50,6 +54,9 @@ _KIND_EXTRA_ADDED: dict[str, tuple[str, ...]] = {
 }
 
 _RUN_DIR_MISSING = "run_dir_missing"
+_MANIFEST_READ_ERROR = "manifest.json is missing or not a JSON object"
+_SAMPLES_READ_ERROR = "samples.json is missing or not an array of objects"
+_MANIFEST_OK_STATUSES = frozenset({"RUN_OK", "QUALIFIED"})
 
 
 @dataclass(frozen=True)
@@ -57,8 +64,9 @@ class StudyRunResult:
     """Terminal outcome of one study run.
 
     ``report`` is the exact object written to ``study-report.json``;
-    ``executed_points`` counts executor calls and ``skipped_points`` counts
-    planned points that were never run because periodicity converged.
+    ``executed_points`` counts points the runner attempted (including points
+    whose config could not be written) and ``skipped_points`` counts planned
+    points that were never attempted because periodicity converged.
     """
 
     report: Mapping[str, Any]
@@ -72,15 +80,18 @@ def run_study(
     plan: StudyPlan,
     *,
     execute_point: PointExecutor,
-    output_dir: str | Path | None = None,
     created_utc: str | None = None,
 ) -> StudyRunResult:
     """Execute every planned point and publish ``study-report.json``.
 
-    Points run in ``plan.points`` order.  A point whose payload has no usable
-    ``run_dir`` is recorded as ``run_dir_missing`` and the study continues; a
-    periodicity study stops after the first point whose samples converge
-    within the declared relative tolerance.
+    Points run in ``plan.points`` order, and each point's config is written
+    only when that point is about to run.  A config-write failure, an executor
+    exception, a payload without a usable ``run_dir``, an unreadable manifest,
+    a manifest status outside ``RUN_OK``/``QUALIFIED``, or missing samples for
+    declared statistics fails the point (``exit_code=1``) but the report is
+    still published and later points still run.  A periodicity study stops
+    after the first point whose samples converge within the declared relative
+    tolerance.
     """
 
     if not isinstance(plan, StudyPlan):
@@ -90,7 +101,7 @@ def run_study(
     if not callable(execute_point):
         raise TypeError("execute_point must be callable")
 
-    base_dir = Path(output_dir) if output_dir is not None else Path(plan.output_dir)
+    base_dir = Path(plan.output_dir)
     if plan.kind == "monte_carlo":
         # The plan and the report must describe the same draws.  Recomputing
         # them here makes a planning bug fail before any run starts instead of
@@ -107,7 +118,6 @@ def run_study(
                 "monte carlo points do not match the draws replayed from the "
                 "declared seed",
             )
-    config_paths = _write_point_configs(plan, base_dir)
 
     periodicity = plan.kind == "periodicity"
     records: list[StudyPointRecord] = []
@@ -121,13 +131,32 @@ def run_study(
             # The first converged point is the convergence point; later
             # planned runs are explicitly skipped rather than silently dropped.
             break
-        exit_code, payload = execute_point(point, config_paths[point.index])
-        exit_code = int(exit_code)
+        # The point is committed to execution as soon as the loop reaches it;
+        # a config-write or executor failure still counts as executed, not as
+        # skipped.
         executed += 1
+        details: dict[str, Any] = dict(point.details)
+        try:
+            config_path = _write_point_config(point, base_dir)
+        except Exception as exc:  # noqa: BLE001 - recorded in the report
+            all_points_ok = False
+            details["config_error"] = f"{type(exc).__name__}: {exc}"
+            records.append(_failed_point_record(point, details))
+            continue
+
+        try:
+            exit_code, payload = execute_point(point, config_path)
+            exit_code = int(exit_code)
+        except Exception as exc:  # noqa: BLE001 - recorded, not re-raised
+            # KeyboardInterrupt/SystemExit are BaseException, so they still
+            # propagate; ordinary executor failures become failed points.
+            all_points_ok = False
+            details["executor_error"] = f"{type(exc).__name__}: {exc}"
+            records.append(_failed_point_record(point, details))
+            continue
         if exit_code != 0:
             all_points_ok = False
 
-        details: dict[str, Any] = dict(point.details)
         run_dir = _payload_run_dir(payload)
         if run_dir is None or not run_dir.is_dir():
             # A payload without a usable package is a failed point even when
@@ -147,16 +176,37 @@ def run_study(
             )
             continue
 
-        manifest = _read_manifest(run_dir)
+        manifest, manifest_error = _read_manifest(run_dir)
+        if manifest_error is not None:
+            all_points_ok = False
+            details["manifest_error"] = manifest_error
+        elif manifest.get("status") not in _MANIFEST_OK_STATUSES:
+            all_points_ok = False
+            details["manifest_error"] = (
+                f"manifest status is {manifest.get('status')!r}"
+            )
+
         samples = _read_samples(run_dir)
-        statistics, statistics_error = _point_statistics(
-            samples, plan.plan.get("statistics", [])
-        )
-        if statistics_error is not None:
-            # A declared statistic that cannot be computed is recorded, not
-            # swallowed: the point is still evidence, but the reason its
-            # statistic is missing must survive in the report.
-            details["statistics_error"] = statistics_error
+        declared_statistics = plan.plan.get("statistics", [])
+        if samples is None and declared_statistics:
+            # Declared statistics make samples required evidence.  Recording
+            # ``statistics=None`` silently would publish the point as if the
+            # statistics had never been requested.
+            all_points_ok = False
+            details["statistics_error"] = _SAMPLES_READ_ERROR
+            statistics = None
+        else:
+            statistics, statistics_error = _point_statistics(
+                samples, declared_statistics
+            )
+            if statistics_error is not None:
+                # A declared statistic that cannot be computed is recorded, not
+                # swallowed: the point is still evidence, but the reason its
+                # statistic is missing must survive in the report.  It is also a
+                # failed point, because the study promised an analysis it could
+                # not deliver.
+                all_points_ok = False
+                details["statistics_error"] = statistics_error
 
         if periodicity:
             details["duration_s"] = _point_duration_s(point)
@@ -216,32 +266,47 @@ def run_study(
 # ---------------------------------------------------------------------------
 
 
-def _write_point_configs(plan: StudyPlan, base_dir: Path) -> dict[int, Path]:
-    """Write every point document under ``<output>/points/<label>/``.
+def _write_point_config(point: StudyPoint, base_dir: Path) -> Path:
+    """Write one point document immediately before that point executes.
 
     The document is written byte-for-byte as planned (canonical JSON) so the
     file is the reproducible input of that point, including its stated
-    ``output.directory`` under the study's ``runs`` root.
+    ``output.directory`` under the study's ``runs`` root.  Serialization
+    happens before the directory is created, so a non-finite document fails
+    without leaving a half-written point directory.
     """
 
-    paths: dict[int, Path] = {}
-    for point in plan.points:
-        directory = base_dir / "points" / point.label
-        directory.mkdir(parents=True, exist_ok=True)
-        config_path = directory / "config.json"
-        text = (
-            json.dumps(
-                dict(point.document),
-                sort_keys=True,
-                indent=2,
-                allow_nan=False,
-            )
-            + "\n"
+    text = (
+        json.dumps(
+            dict(point.document),
+            sort_keys=True,
+            indent=2,
+            allow_nan=False,
         )
-        with open(config_path, "w", encoding="utf-8", newline="\n") as stream:
-            stream.write(text)
-        paths[point.index] = config_path
-    return paths
+        + "\n"
+    )
+    directory = base_dir / "points" / point.label
+    directory.mkdir(parents=True, exist_ok=True)
+    config_path = directory / "config.json"
+    with open(config_path, "w", encoding="utf-8", newline="\n") as stream:
+        stream.write(text)
+    return config_path
+
+
+def _failed_point_record(
+    point: StudyPoint, details: dict[str, Any]
+) -> StudyPointRecord:
+    """Build the record for a point that never produced a run package."""
+
+    return StudyPointRecord(
+        index=point.index,
+        run_id=point.run_id,
+        run_dir="",
+        parameters=dict(point.parameters),
+        manifest={},
+        statistics=None,
+        details=details,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -258,9 +323,13 @@ def _read_json(path: Path) -> Any:
         return None
 
 
-def _read_manifest(run_dir: Path) -> dict[str, Any]:
+def _read_manifest(run_dir: Path) -> tuple[dict[str, Any], str | None]:
+    """Return the published manifest and why it could not be read, if so."""
+
     value = _read_json(run_dir / "manifest.json")
-    return dict(value) if isinstance(value, Mapping) else {}
+    if not isinstance(value, Mapping):
+        return {}, _MANIFEST_READ_ERROR
+    return dict(value), None
 
 
 def _read_samples(run_dir: Path) -> list[dict[str, Any]] | None:

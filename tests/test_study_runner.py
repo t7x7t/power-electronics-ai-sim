@@ -16,6 +16,8 @@ import pytest
 
 from pe_sim.study import (
     STUDY_SCHEMA,
+    StudyPlan,
+    StudyPoint,
     monte_carlo_draws,
     monte_carlo_draws_sha256,
     parse_study_document,
@@ -436,3 +438,217 @@ def test_report_round_trips_through_json_without_nan(tmp_path):
     assert result.report_path == Path(plan.output_dir) / "study-report.json"
     assert result.report["schema"] == "pe-sim.study-report.v1"
     assert result.report["study_id"] == "runner-study"
+
+
+# ---------------------------------------------------------------------------
+# Adversarial regressions: unreadable packages, executor failures, config IO
+# ---------------------------------------------------------------------------
+
+
+def _write_run_package(
+    run_dir: Path,
+    *,
+    manifest: dict | None = None,
+    manifest_text: str | None = None,
+    samples: list[dict] | None = None,
+    samples_text: str | None = None,
+) -> None:
+    run_dir.mkdir(parents=True, exist_ok=True)
+    if manifest_text is not None:
+        (run_dir / "manifest.json").write_text(manifest_text, encoding="utf-8")
+    elif manifest is not None:
+        (run_dir / "manifest.json").write_text(
+            json.dumps(manifest), encoding="utf-8"
+        )
+    if samples_text is not None:
+        (run_dir / "samples.json").write_text(samples_text, encoding="utf-8")
+    elif samples is not None:
+        (run_dir / "samples.json").write_text(
+            json.dumps(samples), encoding="utf-8"
+        )
+
+
+@pytest.mark.parametrize("manifest_text", ["{not json", "[]"])
+def test_unreadable_manifest_fails_the_study_but_keeps_the_point(
+    tmp_path, manifest_text
+):
+    plan = _plan(tmp_path)
+    runs_root = Path(plan.output_dir) / "runs"
+    calls: list[int] = []
+
+    def executor(point, config_path):
+        assert Path(config_path).is_file()
+        calls.append(point.index)
+        run_dir = runs_root / point.run_id
+        if point.index == 0:
+            _write_run_package(
+                run_dir, manifest_text=manifest_text, samples=_samples()
+            )
+        else:
+            _write_run_package(
+                run_dir, manifest=_manifest(), samples=_samples()
+            )
+        return 0, {"run_dir": str(run_dir)}
+
+    result = run_study(plan, execute_point=executor)
+
+    assert calls == [0, 1]
+    assert result.exit_code == 1
+    assert result.report_path.is_file()
+    assert result.report["aggregate"]["point_count"] == 2
+    first = result.report["points"][0]
+    assert (
+        first["details"]["manifest_error"]
+        == "manifest.json is missing or not a JSON object"
+    )
+    assert first["status"] is None
+    assert result.report["points"][1]["status"] == "QUALIFIED"
+
+
+def test_manifest_status_outside_the_success_set_fails_the_study(tmp_path):
+    plan = _plan(tmp_path)
+    executor = _FakeExecutor(
+        Path(plan.output_dir) / "runs",
+        manifests={0: _manifest(status="FAILED"), 1: _manifest()},
+    )
+
+    result = _run(plan, executor)
+
+    assert executor.calls == [0, 1]
+    assert result.exit_code == 1
+    assert result.report_path.is_file()
+    first = result.report["points"][0]
+    assert first["details"]["manifest_error"] == "manifest status is 'FAILED'"
+    assert result.report["points"][1]["status"] == "QUALIFIED"
+
+
+@pytest.mark.parametrize("samples_text", [None, "[1, 2]"])
+def test_declared_statistics_without_readable_samples_fail_the_study(
+    tmp_path, samples_text
+):
+    plan = _plan(
+        tmp_path,
+        plan={
+            "parameters": [
+                {"path": "controller_config.kp", "values": [0.2, 0.4]}
+            ],
+            "statistics": [
+                {"name": "vout_mean", "sample_key": "vout", "reducer": "mean"}
+            ],
+        },
+    )
+    runs_root = Path(plan.output_dir) / "runs"
+    calls: list[int] = []
+
+    def executor(point, config_path):
+        assert Path(config_path).is_file()
+        calls.append(point.index)
+        run_dir = runs_root / point.run_id
+        _write_run_package(
+            run_dir, manifest=_manifest(), samples_text=samples_text
+        )
+        return 0, {"run_dir": str(run_dir)}
+
+    result = run_study(plan, execute_point=executor)
+
+    assert calls == [0, 1]
+    assert result.exit_code == 1
+    assert result.report_path.is_file()
+    first = result.report["points"][0]
+    assert (
+        first["details"]["statistics_error"]
+        == "samples.json is missing or not an array of objects"
+    )
+    assert first["statistics"] is None
+
+
+def test_executor_exception_fails_the_study_but_later_points_still_run(tmp_path):
+    plan = _plan(
+        tmp_path,
+        plan={
+            "parameters": [
+                {"path": "controller_config.kp", "values": [0.2, 0.4, 0.6]}
+            ]
+        },
+    )
+    runs_root = Path(plan.output_dir) / "runs"
+    calls: list[int] = []
+
+    def executor(point, config_path):
+        assert Path(config_path).is_file()
+        calls.append(point.index)
+        if point.index == 0:
+            raise RuntimeError("executor exploded")
+        run_dir = runs_root / point.run_id
+        _write_run_package(run_dir, manifest=_manifest(), samples=_samples())
+        return 0, {"run_dir": str(run_dir)}
+
+    result = run_study(plan, execute_point=executor)
+
+    assert calls == [0, 1, 2]
+    assert result.exit_code == 1
+    assert result.report_path.is_file()
+    first = result.report["points"][0]
+    assert "RuntimeError" in first["details"]["executor_error"]
+    assert "executor exploded" in first["details"]["executor_error"]
+    assert result.report["points"][1]["status"] == "QUALIFIED"
+    assert result.report["points"][2]["status"] == "QUALIFIED"
+
+
+def test_periodicity_writes_configs_only_for_executed_points(tmp_path):
+    plan = _periodicity_plan(tmp_path, max_runs=4)
+    constant = _samples([5.0, 5.0, 5.0, 5.0, 5.0, 5.0])
+    executor = _FakeExecutor(
+        Path(plan.output_dir) / "runs", samples={0: constant}
+    )
+
+    result = _run(plan, executor)
+
+    assert executor.calls == [0]
+    points_dir = Path(plan.output_dir) / "points"
+    assert (points_dir / "p00" / "config.json").is_file()
+    assert not (points_dir / "p01" / "config.json").exists()
+    assert result.report["kind_result"]["skipped_indices"] == [1, 2, 3]
+
+
+def test_config_write_failure_is_recorded_and_later_points_still_run(tmp_path):
+    plan = _plan(
+        tmp_path,
+        plan={
+            "parameters": [
+                {"path": "controller_config.kp", "values": [0.2, 0.4]}
+            ]
+        },
+    )
+    broken_document = dict(plan.points[0].document)
+    broken_document["controller_config"] = {"kp": float("nan")}
+    broken_point = StudyPoint(
+        index=plan.points[0].index,
+        label=plan.points[0].label,
+        run_id=plan.points[0].run_id,
+        parameters=plan.points[0].parameters,
+        document=broken_document,
+        details={},
+    )
+    broken_plan = StudyPlan(
+        study_id=plan.study_id,
+        kind=plan.kind,
+        base_experiment=plan.base_experiment,
+        plan=plan.plan,
+        output_dir=plan.output_dir,
+        points=(broken_point, plan.points[1]),
+        limitations=plan.limitations,
+    )
+    executor = _FakeExecutor(Path(plan.output_dir) / "runs")
+
+    result = run_study(broken_plan, execute_point=executor)
+
+    assert executor.calls == [1]
+    assert result.exit_code == 1
+    assert result.report_path.is_file()
+    first = result.report["points"][0]
+    assert "ValueError" in first["details"]["config_error"]
+    assert result.report["points"][1]["status"] == "QUALIFIED"
+    assert not (
+        Path(plan.output_dir) / "points" / "p00" / "config.json"
+    ).exists()

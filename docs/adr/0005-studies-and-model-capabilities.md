@@ -113,13 +113,22 @@ not options: a study that cannot express its result under them is out of scope.
    the point's package is published under `<output>/runs/<study>-pNN`. The
    document — not the study report — is the reproducible input of that point.
 2. **Aggregates are `per-point`, never `comparable`.**
-   `aggregate.evidence_level` is the literal string `per-point`. The aggregate
-   also reports `inherited_ceiling` (the weakest level any point published) and
-   `cross_point_comparability`, which is `claimed` only when every point is
-   `QUALIFIED`, every point is itself `comparable`, and all points share the
-   same `run_mode`, `plant.id`, and route triple. Otherwise it is
-   `not_claimed` with a closed set of reason codes. Every aggregate carries the
-   limitation `aggregate_does_not_inherit_comparable`.
+   `aggregate.evidence_level` is the literal string `per-point`.
+   `inherited_ceiling` is the weakest level any point **published**; it looks
+   only at the level, never at qualification, and an unrecognised or missing
+   level counts as `undeclared` and is ranked as `diagnostic_only`. Whether the
+   study may be read across points is answered only by
+   `cross_point_comparability`, which is `claimed` only when all of these hold:
+   at least two records with unique `run_id` and unique `index`; every point
+   `QUALIFIED`; every point itself `comparable`; and identical non-empty
+   `run_mode`, `plant.id`, and route triple. Otherwise it is `not_claimed` with
+   codes from a closed set (`empty_study`, `single_point_study`,
+   `duplicate_points`, `point_not_qualified`, `points_not_all_comparable`,
+   `point_route_not_declared`, `point_identity_incomplete`,
+   `point_evidence_level_not_declared`, `route_identity_differs`). Every
+   aggregate carries the limitation `aggregate_does_not_inherit_comparable`,
+   and a parameter path may appear only once per plan: a repeated path would
+   silently collapse an axis while still publishing duplicate points.
 3. **Points are read, never re-derived.** Per-point `status`,
    `evidence_level`, and `manifest_sha256` come from the published
    `manifest.json`. The study layer re-derives no evidence level and recomputes
@@ -131,10 +140,14 @@ not options: a study that cannot express its result under them is out of scope.
    planning bug fails before any point executes.
 5. **`periodicity` is a tolerance-based repetition test, not a PSS solver.**
    Each point lengthens the transient (`duration × extend_factor^k`); within one
-   point the trailing `compare_windows` samples are compared pairwise with a lag
-   of `compare_period` control periods. Convergence is a declared-tolerance
-   statement (`pss_convergence_is_tolerance_based`), and the report keeps the
-   per-point numbers even when the study ends without converging.
+   point the trailing `compare_period × compare_windows + 1` samples are
+   compared pairwise with an **index** lag of `compare_period` (not a time lag),
+   giving `compare_period × (compare_windows − 1) + 1` pairs. All rows are
+   validated, not only the tail, and the result records
+   `sampling_interval_s` so a reader can see the assumption. Convergence is a
+   declared-tolerance statement (`pss_convergence_is_tolerance_based`), and the
+   report keeps the per-point numbers even when the study ends without
+   converging.
 6. **Statistics are descriptive.** `mean`/`min`/`max`/`rms`/`peak_to_peak`/
    `last`/`ratio_of_means` over recorded samples are labelled
    `descriptive_statistics_only_no_loss_claim`. Power, efficiency, and loss

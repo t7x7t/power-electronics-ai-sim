@@ -41,9 +41,10 @@
 5. **study 层是运行之上的编排，不是新的证据等级。** `pe-sim study` 把每个点展开成一份
    普通实验文档（`<output>/points/pNN/config.json`）并各自发布运行包；报告里每点的
    `status`/`evidence_level`/`manifest_sha256` 都从该点自己的 `manifest.json` 读出。
-   聚合恒报 `per-point`，并单列 `inherited_ceiling`（各点最弱等级）与
-   `cross_point_comparability`（只有全部点都 `comparable`、同一 `run_mode`、同一
-   `plant.id`、同一路线三元组时才 `claimed`）。`periodicity` 只声称“在声明的相对容差内
+   聚合恒报 `per-point`，并单列 `inherited_ceiling`（各点**已发布**等级的最弱者，
+   不看资格）与 `cross_point_comparability`（只有全部点 `QUALIFIED` 且都 `comparable`、
+   同一非空 `run_mode`、同一非空 `plant.id`、同一路线三元组、且 `run_id`/`index`
+   互不重复时才 `claimed`）。`periodicity` 只声称“在声明的相对容差内
    重复”，不声称物理周期稳态；统计量只描述样本，不构成效率或损耗结论——那是
    C6/S8 的可选 `loss_model`。
 

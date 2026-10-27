@@ -80,6 +80,9 @@ STUDY_COMPARABILITY_REASONS = frozenset(
         "point_route_not_declared",
         "point_evidence_level_not_declared",
         "single_point_study",
+        "empty_study",
+        "duplicate_points",
+        "point_identity_incomplete",
     }
 )
 
@@ -104,7 +107,6 @@ _PATH_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
 _STATISTIC_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 _REPORT_FILENAME = "study-report.json"
-_REPORT_TEMP_FILENAME = "study-report.json.tmp"
 _RELATIVE_DIFFERENCE_FLOOR = 1e-9
 _PERIODICITY_METHOD = "trailing_window_pairwise_relative_difference"
 
@@ -633,6 +635,12 @@ def _parse_parameter_sweep(
                 "'path' and 'values'",
             )
         path = _validate_path_grammar(item["path"])
+        if path in paths:
+            raise StudyPlanError(
+                "duplicate_parameter_path",
+                f"parameter path {path!r} appears more than once; each path "
+                "may appear only once in parameter_sweep.plan.parameters",
+            )
         _resolve_path_parent(base, path)
 
         raw_values = item["values"]
@@ -732,7 +740,15 @@ def _parse_monte_carlo(
         label="monte_carlo.plan",
     )
     parameters = _normalize_mc_parameters(plan["parameters"])
+    seen_paths: set[str] = set()
     for entry in parameters:
+        if entry["path"] in seen_paths:
+            raise StudyPlanError(
+                "duplicate_parameter_path",
+                f"parameter path {entry['path']!r} appears more than once; "
+                "each path may appear only once in monte_carlo.plan.parameters",
+            )
+        seen_paths.add(entry["path"])
         _resolve_path_parent(base, entry["path"])
     samples = _samples_in_range(plan["samples"])
     seed = _seed_value(plan["seed"])
@@ -1044,6 +1060,16 @@ def monte_carlo_draws(
                     2.0 * math.pi * u2
                 )
                 value = entry["mean"] + entry["sigma"] * z
+            if not math.isfinite(value):
+                # A draw that overflows (for example ``sigma=1e308``) would
+                # otherwise become ``inf`` in the point document, pass the
+                # planning layer, and crash only when the config is written.
+                raise StudyPlanError(
+                    "invalid_draw",
+                    f"monte carlo draw for path {entry['path']!r} is not "
+                    f"finite: {value!r}; a distribution parameter such as "
+                    "sigma is too large",
+                )
             draw[entry["path"]] = float(value)
         draws.append(draw)
     return tuple(draws)
@@ -1118,13 +1144,22 @@ def evaluate_periodicity(
     compare_windows: int,
     tolerance_relative: float,
 ) -> dict[str, Any]:
-    """Compare the trailing window pairs separated by ``compare_period``.
+    """Compare trailing window pairs separated by an **index** lag.
 
     The comparison is descriptive and tolerance-based: it says whether the
     recorded samples repeat within the declared relative tolerance, not
-    whether a physical steady state was reached.  Missing or non-finite rows
-    fail closed with ``missing_sample_key``; too few rows fail with
-    ``insufficient_samples``.
+    whether a physical steady state was reached.  ``compare_period`` is an
+    index lag (a number of sample rows), never a time lag.
+
+    Every input row is validated, not only the trailing window: a missing or
+    non-finite ``time_s`` or signal fails closed with ``missing_sample_key``,
+    and too few rows fail with ``insufficient_samples``.  The trailing window
+    keeps ``compare_period * compare_windows + 1`` samples and reports
+    ``compared_pairs = compare_period * (compare_windows - 1) + 1`` pairs.
+
+    ``sampling_interval_s`` is the median ``time_s`` step when every row has
+    a finite ``time_s`` and the sequence is strictly increasing; otherwise it
+    is ``None``.
     """
 
     signal_names = _parse_signals(signals)
@@ -1154,9 +1189,10 @@ def evaluate_periodicity(
             f"got {len(rows)}",
         )
 
+    times: list[float] = []
     values: dict[str, list[float]] = {signal: [] for signal in signal_names}
     for row_index, row in enumerate(rows):
-        _sample_number(row, "time_s", row_index)
+        times.append(_sample_number(row, "time_s", row_index))
         for signal in signal_names:
             values[signal].append(_sample_number(row, signal, row_index))
 
@@ -1190,8 +1226,24 @@ def evaluate_periodicity(
         "signal_differences": signal_differences,
         "compared_pairs": pair_count,
         "windows_examined": windows,
+        "sampling_interval_s": _sampling_interval(times),
         "method": _PERIODICITY_METHOD,
     }
+
+
+def _sampling_interval(times: Sequence[float]) -> float | None:
+    """Return the median time step, or ``None`` if the grid is not uniform."""
+
+    steps = [second - first for first, second in zip(times, times[1:])]
+    if not steps:
+        return None
+    if any(not math.isfinite(step) or step <= 0.0 for step in steps):
+        return None
+    ordered = sorted(steps)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return float(ordered[middle])
+    return float((ordered[middle - 1] + ordered[middle]) / 2.0)
 
 
 # ---------------------------------------------------------------------------
@@ -1320,11 +1372,28 @@ def _validate_extra_added(extra_added: Any) -> tuple[str, ...]:
     return tuple(validated)
 
 
+def _nonempty_string(value: Any) -> bool:
+    return isinstance(value, str) and bool(value)
+
+
 def aggregate_study(
     records: Sequence[StudyPointRecord],
     extra_added: Sequence[str] = (),
 ) -> dict[str, Any]:
     """Aggregate per-point records without ever claiming ``comparable``.
+
+    ``inherited_ceiling`` is derived only from each point's *published*
+    ``evidence_level``: an undeclared or unknown level counts as
+    ``diagnostic_only`` for that ranking.  ``manifest.status`` is deliberately
+    ignored when computing the ceiling; it only feeds the cross-point
+    comparability decision.
+
+    Cross-point comparability is exposed only through
+    ``cross_point_comparability`` and ``comparability_reasons``.  It is
+    claimed only when every point has a unique, non-empty ``run_id`` and
+    ``index`` and a complete identity (non-empty string ``run_mode``,
+    ``plant.id``, and all three route values).  The aggregate
+    ``evidence_level`` stays ``per-point`` regardless.
 
     ``extra_added`` is an explicit declaration by the caller.  The function
     never infers a grid resolution, sampling method, or duration extension
@@ -1343,10 +1412,15 @@ def aggregate_study(
     run_mode_declared: list[bool] = []
     plant_ids: list[Any] = []
     plant_id_declared: list[bool] = []
+    run_ids: list[Any] = []
+    indices: list[Any] = []
+    identity_incomplete = False
     counts = {level: 0 for level in RUNTIME_EVIDENCE_LEVELS}
     undeclared_count = 0
 
     for record in record_list:
+        run_ids.append(record.run_id)
+        indices.append(record.index)
         manifest = record.manifest if isinstance(record.manifest, Mapping) else {}
         level = manifest.get("evidence_level")
         if level not in RUNTIME_EVIDENCE_LEVELS:
@@ -1368,10 +1442,17 @@ def aggregate_study(
         else:
             routes.append(None)
             route_declared.append(False)
+        if not (
+            isinstance(route, Mapping)
+            and all(_nonempty_string(route.get(key)) for key in route_keys)
+        ):
+            identity_incomplete = True
 
         run_mode = manifest.get("run_mode")
         run_modes.append(_identity(run_mode))
         run_mode_declared.append("run_mode" in manifest and run_mode is not None)
+        if not _nonempty_string(run_mode):
+            identity_incomplete = True
 
         plant = manifest.get("plant")
         plant_id = plant.get("id") if isinstance(plant, Mapping) else None
@@ -1379,6 +1460,8 @@ def aggregate_study(
         plant_id_declared.append(
             isinstance(plant, Mapping) and "id" in plant and plant_id is not None
         )
+        if not _nonempty_string(plant_id):
+            identity_incomplete = True
 
     point_evidence_levels = {
         level: counts[level]
@@ -1397,8 +1480,16 @@ def aggregate_study(
     else:
         inherited_ceiling = RUNTIME_EVIDENCE_LEVELS[0]
 
+    duplicate_points = (
+        not all(_nonempty_string(run_id) for run_id in run_ids)
+        or len({_identity(run_id) for run_id in run_ids}) != len(run_ids)
+        or len({_identity(index) for index in indices}) != len(indices)
+    )
+
     claimed = (
         len(record_list) >= 2
+        and not duplicate_points
+        and not identity_incomplete
         and all(status == "QUALIFIED" for status in statuses)
         and all(level == "comparable" for level in levels)
         and all(run_mode_declared)
@@ -1410,8 +1501,14 @@ def aggregate_study(
     )
 
     reasons: set[str] = set()
-    if len(record_list) < 2:
+    if not record_list:
+        reasons.add("empty_study")
+    elif len(record_list) == 1:
         reasons.add("single_point_study")
+    if duplicate_points:
+        reasons.add("duplicate_points")
+    if identity_incomplete:
+        reasons.add("point_identity_incomplete")
     if any(status != "QUALIFIED" for status in statuses):
         reasons.add("point_not_qualified")
     if any(level != "comparable" for level in levels):
@@ -1601,7 +1698,9 @@ def write_study_report(
     target_dir = Path(directory)
     target_dir.mkdir(parents=True, exist_ok=True)
     target = target_dir / _REPORT_FILENAME
-    temporary = target_dir / _REPORT_TEMP_FILENAME
+    # Two concurrent studies may publish into the same directory; a shared
+    # temp name would let one process replace the other's half-written file.
+    temporary = target_dir / f"{_REPORT_FILENAME}.{os.getpid()}.tmp"
     try:
         with open(temporary, "w", encoding="utf-8", newline="\n") as stream:
             stream.write(text)
