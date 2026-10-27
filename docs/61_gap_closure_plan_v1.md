@@ -145,6 +145,14 @@
 
 **S8 — 模型能力 seam（C4 C5 C6）**
 
+- 已交付（第一片，未提升版本）：`src/pe_sim/model_capabilities.py`（能力注册表、
+  `OperatingPoint`/`SmallSignalModel`/`LossBreakdown`、buck/boost 解析模型）与
+  `src/pe_sim/ac_analysis.py`（Bode、Tustin 连续等效回路增益、PM/GM）；结果只自报
+  `method`/`assumptions`/`verified_by` 与完整 `provenance`，不携带证据等级。
+  独立校验后加固：`origin` 区分内置/调用方注册、`verified_by` 必须指向真实测试 id、
+  `assumptions` 禁用证据等级词、`plant_id` 与查找键必须一致、margins 保留扫频与插值方法、
+  `LossBreakdown` 强制功率/损耗/效率一致性。**C4/C5/C6 均未关闭**：缺阻抗与 Middlebrook
+  （C5）、缺 loss provider 与效率分解（C6）、缺 CLI/study 入口。
 - 交付：可选 `small_signal_model(op)` 与 `loss_model()`；AC 扫频 / Bode / PM / GM；
   输入/输出阻抗与 Middlebrook 判据；效率与损耗分解。
 - 验收：未实现能力的植物报告"不可用"而非 `limited`；每个结果记录线性化方法与验证方式；

@@ -15,6 +15,7 @@ import pytest
 
 from pe_sim.backends.whole_run_engine import LinearStateSpace
 from pe_sim.model_capabilities import (
+    CAPABILITY_ORIGINS,
     CAPABILITY_SCHEMA,
     CapabilityUnavailable,
     LossBreakdown,
@@ -29,6 +30,7 @@ from pe_sim.model_capabilities import (
     small_signal_model_for,
 )
 from pe_sim.reference_plants import BoostPlant, BuckPlant
+from pe_sim.time_model import RUNTIME_EVIDENCE_LEVELS
 
 
 @pytest.fixture(autouse=True)
@@ -68,7 +70,9 @@ def _operating_point(duty: float = 0.5, **fields: float) -> OperatingPoint:
     return OperatingPoint(duty=duty, **fields)
 
 
-def _unit_model(plant_id: str) -> SmallSignalModel:
+def _unit_model(
+    plant_id: str, *, provider_marker: float = 1.0
+) -> SmallSignalModel:
     """A one-state model ``G(s) = 1/s`` used only to exercise the registry."""
 
     return SmallSignalModel(
@@ -78,7 +82,7 @@ def _unit_model(plant_id: str) -> SmallSignalModel:
         output_matrix=((1.0,),),
         feedthrough=0.0,
         operating_point={"duty": 0.5, "vout": 1.0, "il": 0.5},
-        parameters={"gain": 1.0},
+        parameters={"gain": 1.0, "provider_marker": provider_marker},
         assumptions=("unit_test_fixture",),
         verified_by="tests/test_model_capabilities.py::_unit_model",
     )
@@ -98,10 +102,10 @@ def _unit_loss(plant_id: str) -> LossBreakdown:
     )
 
 
-def _factory(plant_id: str):
+def _factory(plant_id: str, *, provider_marker: float = 1.0):
     def factory(plant, operating_point):
         del plant, operating_point
-        return _unit_model(plant_id)
+        return _unit_model(plant_id, provider_marker=provider_marker)
 
     return factory
 
@@ -129,15 +133,23 @@ def test_unregistered_loss_model_fails_closed() -> None:
 
 
 def test_duplicate_registration_requires_replace() -> None:
-    register_small_signal_model("fake-key", _factory("first"))
+    register_small_signal_model("fake-key", _factory("fake-key", provider_marker=1.0))
     plant = _KeyedPlant("fake-key")
 
-    assert small_signal_model_for(plant, _operating_point()).plant_id == "first"
+    first = small_signal_model_for(plant, _operating_point())
+    assert first.plant_id == "fake-key"
+    assert first.parameters["provider_marker"] == 1.0
     with pytest.raises(ValueError):
-        register_small_signal_model("fake-key", _factory("second"))
+        register_small_signal_model(
+            "fake-key", _factory("fake-key", provider_marker=2.0)
+        )
 
-    register_small_signal_model("fake-key", _factory("second"), replace=True)
-    assert small_signal_model_for(plant, _operating_point()).plant_id == "second"
+    register_small_signal_model(
+        "fake-key", _factory("fake-key", provider_marker=2.0), replace=True
+    )
+    second = small_signal_model_for(plant, _operating_point())
+    assert second.plant_id == "fake-key"
+    assert second.parameters["provider_marker"] == 2.0
 
 
 def test_factory_returning_wrong_small_signal_type_raises_type_error() -> None:
@@ -310,10 +322,10 @@ class _NowherePlant:
 
 
 def test_lookup_falls_back_from_backend_id_to_class_name() -> None:
-    register_small_signal_model("_ClassNamedPlant", _factory("class-named"))
+    register_small_signal_model("_ClassNamedPlant", _factory("_ClassNamedPlant"))
 
     model = small_signal_model_for(_ClassNamedPlant(), _operating_point())
-    assert model.plant_id == "class-named"
+    assert model.plant_id == "_ClassNamedPlant"
 
 
 def test_unregistered_message_names_both_lookup_keys() -> None:
@@ -326,12 +338,13 @@ def test_unregistered_message_names_both_lookup_keys() -> None:
 
 
 def test_builtin_loader_does_not_overwrite_existing_registration() -> None:
-    register_small_signal_model("buck", _factory("caller-provided"))
+    register_small_signal_model("buck", _factory("buck", provider_marker=7.0))
 
     load_builtin_model_capabilities()
 
     model = small_signal_model_for(_KeyedPlant("buck"), _operating_point())
-    assert model.plant_id == "caller-provided"
+    assert model.plant_id == "buck"
+    assert model.parameters["provider_marker"] == 7.0
 
 
 def test_registered_model_capabilities_is_idempotent_and_clearable() -> None:
@@ -352,10 +365,12 @@ def test_registered_model_capabilities_is_idempotent_and_clearable() -> None:
 
 
 def test_loss_model_for_returns_registered_provider() -> None:
-    register_loss_model("fake-loss", lambda plant, operating_point: _unit_loss("loss"))
+    register_loss_model(
+        "fake-loss", lambda plant, operating_point: _unit_loss("fake-loss")
+    )
     breakdown = loss_model_for(_KeyedPlant("fake-loss"), _operating_point())
 
-    assert breakdown.plant_id == "loss"
+    assert breakdown.plant_id == "fake-loss"
     assert breakdown.efficiency == pytest.approx(0.95)
 
 
@@ -398,3 +413,203 @@ def test_small_signal_model_rejects_non_single_row_output() -> None:
             assumptions=("unit_test_fixture",),
             verified_by="tests/test_model_capabilities.py",
         )
+
+
+# ---------------------------------------------------------------------------
+# Provider origin and self-certification boundary
+# ---------------------------------------------------------------------------
+
+
+def _model_kwargs(**overrides):
+    values = dict(
+        plant_id="unit",
+        method="analytic",
+        state_space=LinearStateSpace(((0.0,),), ((1.0,),)),
+        output_matrix=((1.0,),),
+        feedthrough=0.0,
+        operating_point={"duty": 0.5, "vout": 1.0, "il": 0.5},
+        parameters={"gain": 1.0},
+        assumptions=("unit_test_fixture",),
+        verified_by="tests/test_model_capabilities.py::_unit_model",
+    )
+    values.update(overrides)
+    return values
+
+
+@pytest.mark.parametrize("verified_by", ["comparable", "tests/nope.py", ""])
+def test_small_signal_model_rejects_unshapeable_verified_by(verified_by: str) -> None:
+    with pytest.raises(ValueError, match="tests/<file>\\.py::<test_name>"):
+        SmallSignalModel(**_model_kwargs(verified_by=verified_by))
+
+
+def test_verified_by_rejects_evidence_level_tokens() -> None:
+    for test_name in ("test_comparable_case", "test_diagnostic_only_case"):
+        with pytest.raises(ValueError, match="evidence-level"):
+            SmallSignalModel(
+                **_model_kwargs(
+                    verified_by=f"tests/test_model_capabilities.py::{test_name}"
+                )
+            )
+
+
+def test_verified_by_allows_words_that_contain_evidence_levels() -> None:
+    model = SmallSignalModel(
+        **_model_kwargs(
+            verified_by="tests/test_model_capabilities.py::test_unlimited_registry_case"
+        )
+    )
+
+    assert "unlimited" in model.verified_by
+
+
+@pytest.mark.parametrize("evidence_level", RUNTIME_EVIDENCE_LEVELS)
+def test_small_signal_model_rejects_evidence_level_assumptions(
+    evidence_level: str,
+) -> None:
+    with pytest.raises(ValueError, match="evidence-level"):
+        SmallSignalModel(**_model_kwargs(assumptions=(evidence_level,)))
+
+
+def test_small_signal_model_origin_defaults_to_caller_registered() -> None:
+    model = _unit_model("origin-default")
+
+    assert model.origin == "caller_registered"
+    assert model.origin in CAPABILITY_ORIGINS
+
+
+def test_builtin_small_signal_models_declare_builtin_origin() -> None:
+    load_builtin_model_capabilities()
+
+    buck = small_signal_model_for(_buck(), _operating_point())
+    boost = small_signal_model_for(_boost(), _operating_point(duty=0.4))
+
+    assert buck.origin == "builtin"
+    assert boost.origin == "builtin"
+
+
+def test_small_signal_model_rejects_unknown_origin() -> None:
+    with pytest.raises(ValueError, match="origin must be one of"):
+        SmallSignalModel(**_model_kwargs(origin="certified"))
+
+
+# ---------------------------------------------------------------------------
+# Plant identity consistency
+# ---------------------------------------------------------------------------
+
+
+def test_small_signal_model_plant_id_mismatch_fails_closed() -> None:
+    register_small_signal_model("declared-key", _factory("other-plant"))
+
+    with pytest.raises(CapabilityUnavailable) as caught:
+        small_signal_model_for(_KeyedPlant("declared-key"), _operating_point())
+
+    assert caught.value.reason == "model_plant_id_mismatch"
+    assert "declared-key" in str(caught.value)
+    assert "other-plant" in str(caught.value)
+
+
+def test_loss_model_plant_id_mismatch_fails_closed() -> None:
+    register_loss_model(
+        "loss-key", lambda plant, operating_point: _unit_loss("other-loss")
+    )
+
+    with pytest.raises(CapabilityUnavailable) as caught:
+        loss_model_for(_KeyedPlant("loss-key"), _operating_point())
+
+    assert caught.value.reason == "model_plant_id_mismatch"
+    assert "loss-key" in str(caught.value)
+    assert "other-loss" in str(caught.value)
+
+
+# ---------------------------------------------------------------------------
+# LossBreakdown invariants
+# ---------------------------------------------------------------------------
+
+
+def _loss_kwargs(**overrides):
+    values = dict(
+        plant_id="loss-invariant",
+        method="analytic",
+        terms={"conduction_w": 0.5},
+        total_loss_w=0.5,
+        output_power_w=9.5,
+        input_power_w=10.0,
+        efficiency=0.95,
+        assumptions=("unit_test_fixture",),
+        verified_by="tests/test_model_capabilities.py::_unit_loss",
+    )
+    values.update(overrides)
+    return values
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        # total_loss_w does not equal sum(terms).
+        {"total_loss_w": 0.6, "output_power_w": 9.4, "efficiency": 0.94},
+        # input_power_w does not equal output_power_w + total_loss_w.
+        {"output_power_w": 9.4, "efficiency": 0.94},
+        # efficiency does not equal output_power_w / input_power_w.
+        {"efficiency": 0.90},
+        # method is outside LINEARIZATION_METHODS.
+        {"method": "certified"},
+        # efficiency == 1.0 without declared_lossless.
+        {
+            "terms": {"ideal_w": 0.0},
+            "total_loss_w": 0.0,
+            "output_power_w": 10.0,
+            "efficiency": 1.0,
+        },
+    ],
+)
+def test_loss_breakdown_rejects_inconsistent_values(overrides) -> None:
+    with pytest.raises(ValueError):
+        LossBreakdown(**_loss_kwargs(**overrides))
+
+
+def test_loss_breakdown_accepts_consistent_values() -> None:
+    breakdown = LossBreakdown(**_loss_kwargs())
+
+    assert breakdown.efficiency == pytest.approx(0.95)
+    assert breakdown.declared_lossless is False
+    assert breakdown.to_dict()["declared_lossless"] is False
+
+
+def test_loss_breakdown_accepts_declared_lossless() -> None:
+    breakdown = LossBreakdown(
+        **_loss_kwargs(
+            terms={"ideal_w": 0.0},
+            total_loss_w=0.0,
+            output_power_w=10.0,
+            efficiency=1.0,
+            declared_lossless=True,
+        )
+    )
+
+    assert breakdown.declared_lossless is True
+
+
+# ---------------------------------------------------------------------------
+# Steady-state failure normalization
+# ---------------------------------------------------------------------------
+
+
+class _ExplodingSteadyStatePlant:
+    backend_id = "buck"
+    input_voltage_v = 12.0
+    inductance_h = 100e-6
+    capacitance_f = 470e-6
+    load_resistance_ohm = 10.0
+
+    def analytical_steady_state(self, duty: float):
+        raise ZeroDivisionError(f"singular equilibrium at duty={duty!r}")
+
+
+def test_analytical_steady_state_exception_becomes_capability_unavailable() -> None:
+    load_builtin_model_capabilities()
+
+    with pytest.raises(CapabilityUnavailable) as caught:
+        small_signal_model_for(_ExplodingSteadyStatePlant(), _operating_point())
+
+    assert caught.value.reason == "operating_point_not_declared"
+    assert "ZeroDivisionError" in str(caught.value)

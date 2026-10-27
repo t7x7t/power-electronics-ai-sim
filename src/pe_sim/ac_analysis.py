@@ -21,8 +21,18 @@ Three boundaries are load-bearing:
   Tustin (bilinear) continuous equivalent ``s = (2/T)(z-1)/(z+1)`` and records
   ``mapping`` plus the assumption ``tustin_continuous_equivalent``.  Sampling
   delay, zero-order hold phase, and discrete-time aliasing are **not** modeled;
-  the assumption ``loop_gain_excludes_sampling_delay`` is recorded for the same
-  reason.
+  the assumptions ``loop_gain_excludes_sampling_delay``,
+  ``zero_order_hold_phase_not_modelled``, and
+  ``discrete_time_aliasing_not_modelled`` are recorded for the same reason.
+* **Provenance is self-contained.**  Every result carries ``provenance`` with
+  the plant identity, linearization point, method, capability origin,
+  assumptions, the plant's own ``verified_by``, the recomputable controller
+  coefficients, the sweep, and the test ids that produced *this* result.  A
+  loop-gain result never reuses the plant's test id as its own; the plant's id
+  stays in ``provenance["plant_verified_by"]``.  :func:`stability_margins`
+  inherits the input provenance (including the sweep, so a reader can see that
+  a margin depends on the declared resolution) and records the interpolation
+  convention at the top level.
 
 ``phase_deg`` is unwrapped across the sweep and uses ``atan2(Im, Re)`` with
 degrees increasing counter-clockwise.  With this convention a first-order
@@ -47,7 +57,16 @@ AC_RESULT_SCHEMA = "pe-sim.ac-analysis.v1"
 
 _MIN_POINTS = 2
 _MAX_POINTS = 512
+_COARSE_SWEEP_POINTS = 32
 _CONTROLLER_REASON = "controller_transfer_function_not_declared"
+_INTERPOLATION_DESCRIPTION = "log10_frequency_linear_db_and_degrees"
+_FREQUENCY_RESPONSE_VERIFIED_BY = (
+    "tests/test_ac_analysis.py::"
+    "test_frequency_response_declares_self_contained_provenance",
+)
+_LOOP_GAIN_VERIFIED_BY = (
+    "tests/test_ac_analysis.py::test_loop_gain_provenance_is_self_contained",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -127,19 +146,44 @@ def _unwrapped_phase_deg(values: Sequence[complex]) -> list[float]:
     return phases
 
 
-def _magnitude_series(values: Sequence[complex]) -> tuple[list[float], list[float]]:
+def _magnitude_series(
+    values: Sequence[complex], frequencies: Sequence[float]
+) -> tuple[list[float], list[float]]:
+    if len(values) != len(frequencies):
+        raise ValueError("values and frequencies must have equal length")
     magnitudes: list[float] = []
     decibels: list[float] = []
-    for value in values:
+    for value, frequency in zip(values, frequencies):
         magnitude = abs(value)
         if not math.isfinite(magnitude) or magnitude <= 0.0:
             raise ValueError(
-                "transfer function magnitude is zero or non-finite at a sweep "
-                "point; a finite Bode magnitude cannot be reported"
+                "transfer function magnitude is zero or non-finite at "
+                f"{frequency!r} Hz; a finite Bode magnitude cannot be reported"
             )
         magnitudes.append(magnitude)
         decibels.append(20.0 * math.log10(magnitude))
     return magnitudes, decibels
+
+
+def _result_provenance(
+    model: SmallSignalModel,
+    *,
+    sweep: Mapping[str, Any],
+    verified_by: Sequence[str],
+    controller: Mapping[str, Any] | None,
+    assumptions: Sequence[str],
+) -> dict[str, Any]:
+    return {
+        "plant_id": model.plant_id,
+        "linearization_point": dict(model.operating_point),
+        "method": model.method,
+        "capability_origin": model.origin,
+        "assumptions": list(assumptions),
+        "plant_verified_by": model.verified_by,
+        "controller": dict(controller) if controller is not None else None,
+        "sweep": dict(sweep),
+        "verified_by": list(verified_by),
+    }
 
 
 def _response_payload(
@@ -151,8 +195,26 @@ def _response_payload(
     points: int,
     frequencies: list[float],
     values: Sequence[complex],
+    verified_by: Sequence[str],
+    controller: Mapping[str, Any] | None,
+    extra_assumptions: Sequence[str] = (),
 ) -> dict[str, Any]:
-    magnitudes, magnitude_db = _magnitude_series(values)
+    assumptions = list(model.assumptions)
+    if (
+        model.origin == "caller_registered"
+        and "capability_provider_is_caller_registered" not in assumptions
+    ):
+        assumptions.append("capability_provider_is_caller_registered")
+    for item in extra_assumptions:
+        if item not in assumptions:
+            assumptions.append(item)
+    sweep = {
+        "start_hz": start_hz,
+        "stop_hz": stop_hz,
+        "points": points,
+        "spacing": "log10",
+    }
+    magnitudes, magnitude_db = _magnitude_series(values, frequencies)
     return {
         "schema": AC_RESULT_SCHEMA,
         "status": "available",
@@ -160,14 +222,16 @@ def _response_payload(
         "plant_id": model.plant_id,
         "method": model.method,
         "linearization_point": dict(model.operating_point),
-        "assumptions": list(model.assumptions),
+        "assumptions": list(assumptions),
         "verified_by": model.verified_by,
-        "sweep": {
-            "start_hz": start_hz,
-            "stop_hz": stop_hz,
-            "points": points,
-            "spacing": "log10",
-        },
+        "sweep": dict(sweep),
+        "provenance": _result_provenance(
+            model,
+            sweep=sweep,
+            verified_by=verified_by,
+            controller=controller,
+            assumptions=assumptions,
+        ),
         "frequencies_hz": list(frequencies),
         "magnitude": magnitudes,
         "magnitude_db": magnitude_db,
@@ -208,6 +272,8 @@ def frequency_response(
         points=count,
         frequencies=frequencies,
         values=values,
+        verified_by=_FREQUENCY_RESPONSE_VERIFIED_BY,
+        controller=None,
     )
 
 
@@ -227,19 +293,28 @@ def _coefficient_list(value: Any, label: str, *, allow_empty: bool = False) -> t
 
 def _controller_polynomials(
     controller: Any,
-) -> tuple[tuple[float, ...], tuple[float, ...], float]:
-    """Return z-domain descending-power coefficients and the sample period.
+) -> tuple[
+    tuple[float, ...],
+    tuple[float, ...],
+    float,
+    tuple[float, ...],
+    tuple[float, ...],
+    str,
+]:
+    """Return evaluation polynomials, declared coefficients, and the shape.
 
-    Accepted shapes:
+    The first two entries are normalized for evaluation; the next two are the
+    coefficients exactly as the controller declared them.  Accepted shapes:
 
     * ``{"numerator": [...], "denominator": [...]}`` -- both descending powers
       of ``z`` (the contract shape);
     * ``{"b": [...], "a": [...]}`` -- the difference-equation shape exposed by
       ``DiscreteCompensator``: ``b`` is ``b0..bN`` and ``a`` is ``a1..aN`` with
-      an implicit leading ``1``.  Both lists are already descending powers of
-      ``z`` once the implicit ``1`` is prepended to ``a``.
+      an implicit leading ``1``.  The implicit ``1.0`` is **not** inserted into
+      the declared ``a``; ``coefficient_shape`` names the convention instead.
 
-    A missing mapping or a missing ``sample_period_s`` is a capability gap and
+    Declaring both shapes at once is ambiguous and raises ``ValueError``.  A
+    missing mapping or a missing ``sample_period_s`` is a capability gap and
     raises :class:`CapabilityUnavailable`.  A declared but malformed
     coefficient list is a caller error and raises ``ValueError``.
     """
@@ -262,27 +337,38 @@ def _controller_polynomials(
     if sample_period <= 0.0:
         raise ValueError("sample_period_s must be finite and positive")
 
-    if "numerator" in coefficients or "denominator" in coefficients:
+    declares_fraction = "numerator" in coefficients or "denominator" in coefficients
+    declares_difference = "b" in coefficients or "a" in coefficients
+    if declares_fraction and declares_difference:
+        raise ValueError(
+            "controller coefficients are ambiguous: declare either "
+            "'numerator'/'denominator' or 'b'/'a', not both"
+        )
+
+    if declares_fraction:
         if "numerator" not in coefficients or "denominator" not in coefficients:
             raise ValueError(
                 "coefficients must declare both 'numerator' and 'denominator'"
             )
-        numerator = _coefficient_list(
+        declared_b = _coefficient_list(
             coefficients["numerator"], "coefficients['numerator']"
         )
-        denominator = _coefficient_list(
+        declared_a = _coefficient_list(
             coefficients["denominator"], "coefficients['denominator']"
         )
-    elif "b" in coefficients or "a" in coefficients:
+        numerator = declared_b
+        denominator = declared_a
+        coefficient_shape = "numerator_denominator"
+    elif declares_difference:
         if "b" not in coefficients or "a" not in coefficients:
             raise ValueError("coefficients must declare both 'b' and 'a'")
-        numerator = _coefficient_list(coefficients["b"], "coefficients['b']")
-        denominator = (
-            1.0,
-            *_coefficient_list(
-                coefficients["a"], "coefficients['a']", allow_empty=True
-            ),
+        declared_b = _coefficient_list(coefficients["b"], "coefficients['b']")
+        declared_a = _coefficient_list(
+            coefficients["a"], "coefficients['a']", allow_empty=True
         )
+        numerator = declared_b
+        denominator = (1.0, *declared_a)
+        coefficient_shape = "b_a"
     else:
         raise CapabilityUnavailable(
             _CONTROLLER_REASON,
@@ -299,7 +385,14 @@ def _controller_polynomials(
     denominator = tuple(value / leading for value in denominator)
     if not all(math.isfinite(value) for value in numerator + denominator):
         raise ValueError("controller coefficients must remain finite after normalization")
-    return numerator, denominator, sample_period
+    return (
+        numerator,
+        denominator,
+        sample_period,
+        declared_b,
+        declared_a,
+        coefficient_shape,
+    )
 
 
 def _polyval_desc(coefficients: Sequence[float], z: complex) -> complex:
@@ -341,17 +434,25 @@ def loop_gain_response(
     """Return ``L(jw) = G_plant(jw) * C_tustin(jw)`` on the declared sweep.
 
     The controller's discrete coefficients are evaluated with the Tustin
-    continuous equivalent ``s = (2/T)(z-1)/(z+1)``.  Sampling delay is excluded
-    and the response records both facts in ``assumptions``.  ``controller``
+    continuous equivalent ``s = (2/T)(z-1)/(z+1)``.  Sampling delay, zero-order
+    hold phase, and discrete-time aliasing are excluded; the response records
+    all four facts in ``assumptions``.  The legacy top-level ``controller``
     carries the class name, ``sample_period_s``, and the literal ``mapping``
-    value so a reader can tell an analytic plant model from a mapped discrete
-    controller.
+    value; ``provenance["controller"]`` additionally carries the declared
+    coefficients and ``coefficient_shape`` so the loop gain can be recomputed.
     """
 
     if not isinstance(model, SmallSignalModel):
         raise TypeError("model must be a SmallSignalModel")
     start, stop, count = _validate_sweep(start_hz, stop_hz, points)
-    numerator, denominator, sample_period = _controller_polynomials(controller)
+    (
+        numerator,
+        denominator,
+        sample_period,
+        declared_b,
+        declared_a,
+        coefficient_shape,
+    ) = _controller_polynomials(controller)
 
     frequencies = _log_frequencies(start, stop, count)
     plant_values = _complex_values(model, frequencies)
@@ -361,6 +462,16 @@ def loop_gain_response(
         for plant_value, frequency in zip(plant_values, frequencies)
     ]
 
+    controller_provenance = {
+        "class": type(controller).__name__,
+        "sample_period_s": sample_period,
+        "mapping": "tustin_continuous_equivalent",
+        "coefficients": {
+            "b": list(declared_b),
+            "a": list(declared_a),
+        },
+        "coefficient_shape": coefficient_shape,
+    }
     payload = _response_payload(
         model,
         kind="loop_gain",
@@ -369,15 +480,15 @@ def loop_gain_response(
         points=count,
         frequencies=frequencies,
         values=loop_values,
+        verified_by=_LOOP_GAIN_VERIFIED_BY,
+        controller=controller_provenance,
+        extra_assumptions=(
+            "tustin_continuous_equivalent",
+            "loop_gain_excludes_sampling_delay",
+            "zero_order_hold_phase_not_modelled",
+            "discrete_time_aliasing_not_modelled",
+        ),
     )
-    assumptions = list(payload["assumptions"])
-    for item in (
-        "tustin_continuous_equivalent",
-        "loop_gain_excludes_sampling_delay",
-    ):
-        if item not in assumptions:
-            assumptions.append(item)
-    payload["assumptions"] = assumptions
     payload["controller"] = {
         "class": type(controller).__name__,
         "sample_period_s": sample_period,
@@ -443,6 +554,16 @@ def _count_crossings(values: Sequence[float], target: float) -> int:
     return count
 
 
+def _copy_json_like(value: Any) -> Any:
+    """Return a recursively copied mapping/list so results stay self-contained."""
+
+    if isinstance(value, Mapping):
+        return {key: _copy_json_like(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_copy_json_like(item) for item in value]
+    return value
+
+
 def stability_margins(response: Mapping[str, Any]) -> dict[str, Any]:
     """Return crossover frequencies and signed margins for a loop-gain sweep.
 
@@ -459,7 +580,13 @@ def stability_margins(response: Mapping[str, Any]) -> dict[str, Any]:
     ``margin_positive`` is a three-state sign, not a stability verdict: see the
     module docstring.  Missing crossings set the corresponding fields to
     ``None`` and add ``"no_gain_crossover"`` / ``"no_phase_crossover"`` to
-    ``notes``.
+    ``notes``.  A sweep with fewer than 32 points also adds
+    ``"phase_unwrap_may_alias_when_sweep_is_coarse"``.
+
+    ``provenance`` is inherited from the input response, including its
+    ``sweep``; ``interpolation`` records the convention used to locate
+    crossovers.  A synthetic response that declares no provenance yields
+    ``provenance = None`` rather than an invented chain.
     """
 
     if not isinstance(response, Mapping):
@@ -498,6 +625,18 @@ def stability_margins(response: Mapping[str, Any]) -> dict[str, Any]:
 
     notes: list[str] = []
 
+    sweep = response.get("sweep")
+    declared_points = (
+        sweep.get("points") if isinstance(sweep, Mapping) else None
+    )
+    if (
+        isinstance(declared_points, bool)
+        or not isinstance(declared_points, int)
+    ):
+        declared_points = len(frequencies)
+    if declared_points < _COARSE_SWEEP_POINTS:
+        notes.append("phase_unwrap_may_alias_when_sweep_is_coarse")
+
     gain_crossing = _first_crossing(frequencies, magnitude_db, 0.0)
     if gain_crossing is None:
         gain_crossover_hz = None
@@ -531,6 +670,12 @@ def stability_margins(response: Mapping[str, Any]) -> dict[str, Any]:
         if value is not None and not math.isfinite(value):
             raise ValueError("stability margin interpolation produced a non-finite value")
 
+    inherited = response.get("provenance")
+    if isinstance(inherited, Mapping):
+        provenance: dict[str, Any] | None = _copy_json_like(inherited)
+    else:
+        provenance = None
+
     return {
         "schema": AC_RESULT_SCHEMA,
         "status": "available",
@@ -543,6 +688,8 @@ def stability_margins(response: Mapping[str, Any]) -> dict[str, Any]:
         "notes": notes,
         "method": method,
         "assumptions": assumptions,
+        "provenance": provenance,
+        "interpolation": _INTERPOLATION_DESCRIPTION,
     }
 
 

@@ -153,6 +153,47 @@ not options: a study that cannot express its result under them is out of scope.
    `descriptive_statistics_only_no_loss_claim`. Power, efficiency, and loss
    decomposition require a `loss_model()` and stay in Seam 2.
 
+## Seam 2 — implementation notes (0.16.0, first slice)
+
+`pe_sim.model_capabilities` and `pe_sim.ac_analysis` implement the declaration
+side of Seam 2. The analysis entry points (CLI, study kind) and the loss
+provider land in the rest of stage S8; until then `docs/60` C4/C5/C6 stay open.
+
+1. **Capabilities live in a registry, not on the plants.** A lookup resolves
+   `plant.backend_id` first and the class name second. `reference_plants.py` is
+   not touched: its module source digest is part of every published reference
+   run's plant identity, so adding methods there would silently rewrite the
+   provenance of packages that already exist.
+2. **Absence is `CapabilityUnavailable("<capability>_not_declared")`.** There is
+   no `limited` fallback and no optimistic default. In particular the built-in
+   averaged plants declare **no** loss model: with ideal components the honest
+   efficiency would be `1.0`, which is a fabricated claim rather than a declared
+   loss breakdown.
+3. **Results never carry an evidence level.** They self-report `method`
+   (`analytic` / `identified`), `assumptions`, and `verified_by`, and nothing
+   else: the ladder has one producer (ADR 0004 rule 2) and this is not it.
+4. **A declaration cannot smuggle evidence words.** `verified_by` must be
+   `tests/<file>.py::<name>`; every `assumption` must be a snake_case token and
+   may not be one of the evidence levels; caller-registered providers are
+   marked `origin="caller_registered"` and add the assumption
+   `capability_provider_is_caller_registered`. A provider whose `plant_id`
+   disagrees with the lookup key is refused (`model_plant_id_mismatch`).
+5. **Every AC result carries a self-contained `provenance` block**: plant id,
+   linearization point, method, origin, assumptions, the plant model's own
+   `verified_by`, the controller coefficients actually used (with the declared
+   `a` form, never a silently inserted `1.0`), the sweep, and the AC result's
+   own `verified_by`. `stability_margins` inherits it and keeps the sweep,
+   because the gain margin **depends on the sweep resolution** (measured
+   26.79 / 25.46 / 25.81 dB at 241 / 401 / 512 points on the reference loop).
+6. **`margin_positive=None` means “not evaluable”, not “stable”.** There is no
+   `stable`/`unstable` field, phases are unwrapped and warn with
+   `phase_unwrap_may_alias_when_sweep_is_coarse` below 32 points, and the loop
+   gain is a Tustin continuous equivalent that explicitly excludes sampling
+   delay, zero-order-hold phase, and aliasing.
+7. Known limitation: `pe-sim.model-capability.v1` and `pe-sim.ac-analysis.v1`
+   are versioned identifiers, not JSON Schema documents under `schemas/`.
+   Treating them as published schemas would overstate what exists.
+
 ## Consequences
 - The kernel keeps three objects; two layers are added around them. Adding a
   scenario means adding an adapter, a controller, a study, or a capability —

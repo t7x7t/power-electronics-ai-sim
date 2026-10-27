@@ -13,6 +13,7 @@ never a ``stable``/``unstable`` label.
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 import pytest
 
@@ -22,15 +23,18 @@ from pe_sim.ac_analysis import (
     loop_gain_response,
     stability_margins,
 )
+from pe_sim.backends.whole_run_engine import LinearStateSpace
 from pe_sim.controllers import Type2Controller
 from pe_sim.model_capabilities import (
     CapabilityUnavailable,
     OperatingPoint,
+    SmallSignalModel,
     clear_model_capabilities,
     load_builtin_model_capabilities,
+    register_small_signal_model,
     small_signal_model_for,
 )
-from pe_sim.reference_plants import BuckPlant
+from pe_sim.reference_plants import BoostPlant, BuckPlant
 from pe_sim.runtime import FakePIController
 
 
@@ -68,6 +72,35 @@ def _type2_controller() -> Type2Controller:
         zero_hz=500.0,
         pole_hz=50_000.0,
         control_period_s=1e-4,
+    )
+
+
+def _boost() -> BoostPlant:
+    return BoostPlant(
+        input_voltage_v=12.0,
+        inductance_h=100e-6,
+        capacitance_f=470e-6,
+        load_resistance_ohm=10.0,
+        integration_step_s=1e-6,
+    )
+
+
+class _KeyedPlant:
+    def __init__(self, backend_id: str) -> None:
+        self.backend_id = backend_id
+
+
+def _caller_unit_model(plant_id: str) -> SmallSignalModel:
+    return SmallSignalModel(
+        plant_id=plant_id,
+        method="analytic",
+        state_space=LinearStateSpace(((0.0,),), ((1.0,),)),
+        output_matrix=((1.0,),),
+        feedthrough=0.0,
+        operating_point={"duty": 0.5, "vout": 1.0, "il": 0.5},
+        parameters={"gain": 1.0},
+        assumptions=("unit_test_fixture",),
+        verified_by="tests/test_ac_analysis.py::_caller_unit_model",
     )
 
 
@@ -476,4 +509,237 @@ def test_loop_gain_response_validates_the_same_sweep() -> None:
     with pytest.raises(ValueError, match="start_hz|stop_hz|points"):
         loop_gain_response(
             _buck_model(), _type2_controller(), start_hz=0.0, stop_hz=1_000.0, points=10
+        )
+
+
+# ---------------------------------------------------------------------------
+# Provenance chain
+# ---------------------------------------------------------------------------
+
+
+def test_frequency_response_declares_self_contained_provenance() -> None:
+    model = _buck_model()
+    response = frequency_response(
+        model, start_hz=10.0, stop_hz=10_000.0, points=10
+    )
+    provenance = response["provenance"]
+
+    assert provenance["plant_id"] == "buck"
+    assert provenance["linearization_point"] == dict(model.operating_point)
+    assert provenance["method"] == model.method
+    assert provenance["capability_origin"] == "builtin"
+    assert provenance["assumptions"] == list(model.assumptions)
+    assert provenance["plant_verified_by"] == model.verified_by
+    assert provenance["controller"] is None
+    assert provenance["sweep"] == {
+        "start_hz": 10.0,
+        "stop_hz": 10_000.0,
+        "points": 10,
+        "spacing": "log10",
+    }
+    assert provenance["verified_by"] == [
+        "tests/test_ac_analysis.py::"
+        "test_frequency_response_declares_self_contained_provenance"
+    ]
+
+
+def test_loop_gain_provenance_is_self_contained() -> None:
+    model = _buck_model()
+    controller = _type2_controller()
+    response = loop_gain_response(
+        model, controller, start_hz=10.0, stop_hz=100_000.0, points=241
+    )
+    provenance = response["provenance"]
+
+    assert provenance["verified_by"] == [
+        "tests/test_ac_analysis.py::test_loop_gain_provenance_is_self_contained"
+    ]
+    assert provenance["plant_verified_by"] == model.verified_by
+    assert provenance["verified_by"] != [provenance["plant_verified_by"]]
+    assert provenance["capability_origin"] == "builtin"
+    assert provenance["sweep"] == {
+        "start_hz": 10.0,
+        "stop_hz": 100_000.0,
+        "points": 241,
+        "spacing": "log10",
+    }
+
+    controller_record = provenance["controller"]
+    assert controller_record["class"] == "Type2Controller"
+    assert controller_record["sample_period_s"] == pytest.approx(1e-4)
+    assert controller_record["mapping"] == "tustin_continuous_equivalent"
+    assert controller_record["coefficient_shape"] == "b_a"
+    assert controller_record["coefficients"]["b"] == list(
+        controller.coefficients["b"]
+    )
+    # The declared ``a`` is preserved; the implicit leading 1.0 is not inserted.
+    assert controller_record["coefficients"]["a"] == list(
+        controller.coefficients["a"]
+    )
+    assert len(controller_record["coefficients"]["a"]) == len(
+        controller.coefficients["b"]
+    ) - 1
+
+    for item in (
+        "tustin_continuous_equivalent",
+        "loop_gain_excludes_sampling_delay",
+        "zero_order_hold_phase_not_modelled",
+        "discrete_time_aliasing_not_modelled",
+    ):
+        assert item in provenance["assumptions"]
+
+
+def test_provenance_records_capability_origin() -> None:
+    builtin_response = frequency_response(
+        _buck_model(), start_hz=10.0, stop_hz=1_000.0, points=10
+    )
+    assert builtin_response["provenance"]["capability_origin"] == "builtin"
+    assert (
+        "capability_provider_is_caller_registered"
+        not in builtin_response["provenance"]["assumptions"]
+    )
+
+    register_small_signal_model(
+        "caller-origin",
+        lambda plant, operating_point: _caller_unit_model("caller-origin"),
+    )
+    caller_model = small_signal_model_for(
+        _KeyedPlant("caller-origin"), OperatingPoint(duty=0.5)
+    )
+    caller_response = frequency_response(
+        caller_model, start_hz=10.0, stop_hz=1_000.0, points=10
+    )
+
+    assert caller_response["provenance"]["capability_origin"] == "caller_registered"
+    assert (
+        "capability_provider_is_caller_registered"
+        in caller_response["provenance"]["assumptions"]
+    )
+    assert (
+        "capability_provider_is_caller_registered"
+        in caller_response["assumptions"]
+    )
+
+
+def test_stability_margins_inherits_provenance_and_records_interpolation() -> None:
+    loop = loop_gain_response(
+        _buck_model(), _type2_controller(), start_hz=10.0, stop_hz=100_000.0, points=241
+    )
+    margins = stability_margins(loop)
+
+    assert margins["provenance"] == loop["provenance"]
+    assert margins["provenance"]["sweep"] == loop["provenance"]["sweep"]
+    assert margins["provenance"]["controller"] == loop["provenance"]["controller"]
+    assert margins["interpolation"] == "log10_frequency_linear_db_and_degrees"
+    assert "phase_unwrap_may_alias_when_sweep_is_coarse" not in margins["notes"]
+
+    coarse_loop = loop_gain_response(
+        _buck_model(), _type2_controller(), start_hz=10.0, stop_hz=100_000.0, points=8
+    )
+    coarse_margins = stability_margins(coarse_loop)
+
+    assert "phase_unwrap_may_alias_when_sweep_is_coarse" in coarse_margins["notes"]
+    assert coarse_margins["provenance"]["sweep"]["points"] == 8
+
+
+def test_gain_margin_depends_on_sweep_resolution_but_is_recorded() -> None:
+    model = _buck_model()
+    controller = _type2_controller()
+    coarse = loop_gain_response(
+        model, controller, start_hz=1.0, stop_hz=1_000_000.0, points=241
+    )
+    fine = loop_gain_response(
+        model, controller, start_hz=1.0, stop_hz=1_000_000.0, points=512
+    )
+
+    coarse_margins = stability_margins(coarse)
+    fine_margins = stability_margins(fine)
+
+    assert coarse_margins["gain_margin_db"] is not None
+    assert fine_margins["gain_margin_db"] is not None
+    assert coarse_margins["gain_margin_db"] != fine_margins["gain_margin_db"]
+    assert coarse_margins["provenance"]["sweep"]["points"] == 241
+    assert fine_margins["provenance"]["sweep"]["points"] == 512
+
+
+# ---------------------------------------------------------------------------
+# Controller shape ambiguity and error messages
+# ---------------------------------------------------------------------------
+
+
+def test_loop_gain_rejects_ambiguous_coefficient_shapes() -> None:
+    class _AmbiguousController:
+        sample_period_s = 1e-4
+        coefficients = {
+            "numerator": [1.0, 0.0],
+            "denominator": [1.0, -0.5],
+            "b": [1.0, 0.0],
+            "a": [-0.5],
+        }
+
+    with pytest.raises(ValueError, match="ambiguous"):
+        loop_gain_response(
+            _buck_model(),
+            _AmbiguousController(),
+            start_hz=10.0,
+            stop_hz=1_000.0,
+            points=10,
+        )
+
+
+def test_frequency_response_zero_magnitude_error_names_the_frequency() -> None:
+    model = SmallSignalModel(
+        plant_id="zero-gain",
+        method="analytic",
+        state_space=LinearStateSpace(((0.0,),), ((1.0,),)),
+        output_matrix=((0.0,),),
+        feedthrough=0.0,
+        operating_point={"duty": 0.5, "vout": 1.0, "il": 0.5},
+        parameters={"gain": 0.0},
+        assumptions=("unit_test_fixture",),
+        verified_by=(
+            "tests/test_ac_analysis.py::"
+            "test_frequency_response_zero_magnitude_error_names_the_frequency"
+        ),
+    )
+
+    with pytest.raises(ValueError, match="10\\.0 Hz"):
+        frequency_response(model, start_hz=10.0, stop_hz=100.0, points=2)
+
+
+# ---------------------------------------------------------------------------
+# Declared verification ids
+# ---------------------------------------------------------------------------
+
+
+def test_declared_verified_by_identifiers_exist() -> None:
+    repository_root = Path(__file__).resolve().parents[1]
+    identifiers: set[str] = set()
+
+    for plant, duty in ((_buck(), 0.5), (_boost(), 0.4)):
+        model = small_signal_model_for(plant, OperatingPoint(duty=duty))
+        identifiers.add(model.verified_by)
+
+        response = frequency_response(
+            model, start_hz=10.0, stop_hz=1_000.0, points=10
+        )
+        identifiers.update(response["provenance"]["verified_by"])
+
+        loop = loop_gain_response(
+            model, _type2_controller(), start_hz=10.0, stop_hz=10_000.0, points=24
+        )
+        identifiers.update(loop["provenance"]["verified_by"])
+
+        margins = stability_margins(loop)
+        identifiers.update(margins["provenance"]["verified_by"])
+
+    for identifier in sorted(identifiers):
+        path_part, separator, test_name = identifier.partition("::")
+        assert separator and test_name, identifier
+        path = repository_root / path_part
+        assert path.is_file(), f"{identifier} points at a missing file {path}"
+        source = path.read_text(encoding="utf-8")
+        base_name = test_name.split("[", 1)[0]
+        assert f"def {base_name}(" in source, (
+            f"{identifier} points at a missing test"
         )

@@ -33,10 +33,24 @@ Design rules implemented here
 * **The state-space shape is the existing one.**  ``LinearStateSpace`` is
   imported from ``pe_sim.backends.whole_run_engine``; no second state-space
   type is introduced.
-* **No evidence levels.**  Capability results self-report ``method``,
-  ``assumptions``, and ``verified_by`` only.  They do not carry
-  ``diagnostic_only`` / ``functional`` / ``limited`` / ``comparable`` and must
-  not be read as a qualification of a run.
+* **No evidence levels, and no evidence-level words.**  Capability results
+  self-report ``method``, ``assumptions``, ``verified_by``, and (for
+  small-signal models) ``origin``.  They do not carry ``diagnostic_only`` /
+  ``functional`` / ``limited`` / ``comparable``; those words are rejected as
+  tokens in ``method`` and ``verified_by`` and as whole assumption entries, so
+  a capability string cannot be mistaken for a run qualification.  Token
+  comparison is deliberate: ``unlimited_...`` does not contain the evidence
+  level ``limited``.
+* **Origin is explicit.**  ``origin`` is ``"builtin"`` only for providers
+  installed by :func:`load_builtin_model_capabilities`; every provider that a
+  caller registers defaults to ``"caller_registered"``.  AC results record the
+  origin and add the assumption
+  ``capability_provider_is_caller_registered`` in that case.
+* **The provider must answer for the key it was found under.**  A provider
+  registered under a lookup key that returns a model with a different
+  ``plant_id`` raises :class:`CapabilityUnavailable` with reason
+  ``model_plant_id_mismatch``; a provider cannot silently answer for another
+  plant.
 
 Reason codes produced by this module
 ------------------------------------
@@ -53,6 +67,9 @@ Reason codes produced by this module
     A registered analytic provider needs positive ``inductance_h`` and
     ``capacitance_f`` on the plant and they are absent or invalid.  This is a
     malformed provider/plant pairing, not a reason to approximate.
+``model_plant_id_mismatch``
+    The provider found under a lookup key returned a model whose ``plant_id``
+    is different from that key.  The message names both values.
 
 Only the Python standard library is used.
 """
@@ -60,15 +77,26 @@ Only the Python standard library is used.
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Callable, Mapping
 
 from .backends.whole_run_engine import LinearStateSpace
+from .time_model import RUNTIME_EVIDENCE_LEVELS
 
 
 CAPABILITY_SCHEMA = "pe-sim.model-capability.v1"
 LINEARIZATION_METHODS = ("analytic", "identified")
+CAPABILITY_ORIGINS = ("builtin", "caller_registered")
+
+_VERIFIED_BY_PATTERN = re.compile(
+    r"^tests/[A-Za-z0-9_./-]+\.py::[A-Za-z0-9_\[\].-]+$"
+)
+_ASSUMPTION_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
+_WORD_PATTERN = re.compile(r"[A-Za-z0-9]+")
+_EVIDENCE_LEVELS = frozenset(RUNTIME_EVIDENCE_LEVELS)
+_RELATIVE_TOLERANCE = 1e-9
 
 #: Capability names reported by :func:`registered_model_capabilities`.
 _SMALL_SIGNAL_CAPABILITY = "small_signal_model"
@@ -129,6 +157,82 @@ def _string_tuple(values: Any, label: str) -> tuple[str, ...]:
     if any(not isinstance(item, str) or not item for item in items):
         raise ValueError(f"{label} must contain only non-empty strings")
     return items
+
+
+def _evidence_tokens(value: str) -> list[str]:
+    """Return evidence-level words that occur as identifier tokens.
+
+    Matching whole tokens instead of substrings keeps legitimate words such as
+    ``unlimited_authority`` from being mistaken for the evidence level
+    ``limited``.  Adjacent words are also checked as an underscore-joined pair
+    so the multi-word level ``diagnostic_only`` is still caught when it appears
+    inside an identifier such as ``test_diagnostic_only_case``.
+    """
+
+    words = _WORD_PATTERN.findall(value)
+    found = {word for word in words if word in _EVIDENCE_LEVELS}
+    for left, right in zip(words, words[1:]):
+        pair = f"{left}_{right}"
+        if pair in _EVIDENCE_LEVELS:
+            found.add(pair)
+    return sorted(found)
+
+
+def _validate_method(value: Any, label: str = "method") -> str:
+    if not isinstance(value, str) or value not in LINEARIZATION_METHODS:
+        raise ValueError(
+            f"{label} must be one of {LINEARIZATION_METHODS}, got {value!r}"
+        )
+    banned = _evidence_tokens(value)
+    if banned:
+        raise ValueError(
+            f"{label} must not contain evidence-level tokens {banned}; "
+            "a linearization method is not an evidence level"
+        )
+    return value
+
+
+def _validate_verified_by(value: Any, label: str = "verified_by") -> str:
+    if not isinstance(value, str) or not _VERIFIED_BY_PATTERN.match(value):
+        raise ValueError(
+            f"{label} must match 'tests/<file>.py::<test_name>' "
+            "(for example "
+            "'tests/test_ac_analysis.py::test_loop_gain_provenance_is_self_contained'), "
+            f"got {value!r}"
+        )
+    banned = _evidence_tokens(value)
+    if banned:
+        raise ValueError(
+            f"{label} must not contain evidence-level tokens {banned}; "
+            "capability provenance is not an evidence level"
+        )
+    return value
+
+
+def _validate_assumptions(values: Any, label: str = "assumptions") -> tuple[str, ...]:
+    items = _string_tuple(values, label)
+    for item in items:
+        if not _ASSUMPTION_PATTERN.match(item):
+            raise ValueError(
+                f"{label} entries must be snake_case identifiers matching "
+                f"^[a-z][a-z0-9_]*$, got {item!r}"
+            )
+        if item in _EVIDENCE_LEVELS:
+            raise ValueError(
+                f"{label} entries must not be evidence-level words "
+                f"{sorted(_EVIDENCE_LEVELS)}; got {item!r}"
+            )
+    return items
+
+
+def _require_consistent(actual: float, expected: float, label: str) -> None:
+    if not math.isclose(
+        actual, expected, rel_tol=_RELATIVE_TOLERANCE, abs_tol=0.0
+    ):
+        raise ValueError(
+            f"{label} (relative tolerance {_RELATIVE_TOLERANCE}): "
+            f"got {actual!r}, expected {expected!r}"
+        )
 
 
 def _freeze_float_mapping(
@@ -245,6 +349,10 @@ class SmallSignalModel:
 
     ``method`` distinguishes an analytic derivation from identification.  The
     value is echoed by every AC result; it is not an evidence level.
+
+    ``origin`` distinguishes a model installed by
+    :func:`load_builtin_model_capabilities` (``"builtin"``) from one a caller
+    registered (``"caller_registered"``, the default).
     """
 
     plant_id: str
@@ -256,14 +364,12 @@ class SmallSignalModel:
     parameters: Mapping[str, float]
     assumptions: tuple[str, ...]
     verified_by: str
+    origin: str = "caller_registered"
 
     def __post_init__(self) -> None:
         if not isinstance(self.plant_id, str) or not self.plant_id:
             raise ValueError("plant_id must be a non-empty string")
-        if self.method not in LINEARIZATION_METHODS:
-            raise ValueError(
-                f"method must be one of {LINEARIZATION_METHODS}, got {self.method!r}"
-            )
+        _validate_method(self.method)
         if not isinstance(self.state_space, LinearStateSpace):
             raise TypeError("state_space must be a LinearStateSpace")
         if self.state_space.input_size != 1:
@@ -292,15 +398,19 @@ class SmallSignalModel:
         if not 0.0 <= operating_point["duty"] <= 1.0:
             raise ValueError("operating_point['duty'] must be finite and in [0, 1]")
         parameters = _freeze_float_mapping(self.parameters, "parameters")
-        assumptions = _string_tuple(self.assumptions, "assumptions")
-        if not isinstance(self.verified_by, str) or not self.verified_by:
-            raise ValueError("verified_by must be a non-empty string")
+        assumptions = _validate_assumptions(self.assumptions)
+        verified_by = _validate_verified_by(self.verified_by)
+        if self.origin not in CAPABILITY_ORIGINS:
+            raise ValueError(
+                f"origin must be one of {CAPABILITY_ORIGINS}, got {self.origin!r}"
+            )
 
         object.__setattr__(self, "output_matrix", rows)
         object.__setattr__(self, "feedthrough", feedthrough)
         object.__setattr__(self, "operating_point", operating_point)
         object.__setattr__(self, "parameters", parameters)
         object.__setattr__(self, "assumptions", assumptions)
+        object.__setattr__(self, "verified_by", verified_by)
 
     def transfer_function(self, frequency_hz: float) -> complex:
         """Return ``C (sI - A)^-1 B + D`` at ``s = j 2 pi f``.
@@ -355,6 +465,7 @@ class SmallSignalModel:
             "parameters": dict(self.parameters),
             "assumptions": list(self.assumptions),
             "verified_by": self.verified_by,
+            "origin": self.origin,
         }
 
 
@@ -362,12 +473,15 @@ class SmallSignalModel:
 class LossBreakdown:
     """Provider-declared loss terms at one operating point.
 
-    The value object does not re-derive ``total_loss_w`` from ``terms`` or
-    ``efficiency`` from the power ratio.  Those are provider statements; a
-    consumer that needs an independent check must recompute them and say so.
-    This slice defines the type only and registers no built-in provider: an
-    ideal averaged converter has no loss terms, so reporting an efficiency of
-    ``1.0`` would be a fabricated claim rather than a measurement.
+    The value object enforces the arithmetic it projects: every term is finite
+    and non-negative, ``total_loss_w`` equals their sum, input power equals
+    output power plus total loss, and ``efficiency`` equals the power ratio
+    (all within ``1e-9`` relative tolerance).  A breakdown at or above
+    ``1 - 1e-12`` efficiency must declare ``declared_lossless=True`` and at
+    least one assumption; a lossless claim is never inferred.  No built-in
+    provider is registered: an ideal averaged converter has no loss terms, so
+    reporting an efficiency of ``1.0`` would be a fabricated claim rather than
+    a measurement.
     """
 
     plant_id: str
@@ -379,20 +493,59 @@ class LossBreakdown:
     efficiency: float
     assumptions: tuple[str, ...]
     verified_by: str
+    declared_lossless: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.plant_id, str) or not self.plant_id:
             raise ValueError("plant_id must be a non-empty string")
-        if not isinstance(self.method, str) or not self.method:
-            raise ValueError("method must be a non-empty string")
+        _validate_method(self.method)
         terms = _freeze_float_mapping(self.terms, "terms")
+        negative_terms = sorted(key for key, value in terms.items() if value < 0.0)
+        if negative_terms:
+            raise ValueError(
+                "terms values must be finite and non-negative; got negative "
+                f"values for {negative_terms}"
+            )
         total_loss_w = _finite_float(self.total_loss_w, "total_loss_w")
         output_power_w = _finite_float(self.output_power_w, "output_power_w")
         input_power_w = _finite_float(self.input_power_w, "input_power_w")
         efficiency = _finite_float(self.efficiency, "efficiency")
-        assumptions = _string_tuple(self.assumptions, "assumptions")
-        if not isinstance(self.verified_by, str) or not self.verified_by:
-            raise ValueError("verified_by must be a non-empty string")
+        assumptions = _validate_assumptions(self.assumptions)
+        verified_by = _validate_verified_by(self.verified_by)
+        declared_lossless = self.declared_lossless
+        if not isinstance(declared_lossless, bool):
+            raise ValueError("declared_lossless must be a bool")
+
+        if input_power_w <= 0.0:
+            raise ValueError(
+                "input_power_w must be finite and positive so efficiency is defined"
+            )
+        _require_consistent(
+            total_loss_w,
+            sum(terms.values()),
+            "total_loss_w must equal sum(terms.values())",
+        )
+        _require_consistent(
+            input_power_w,
+            output_power_w + total_loss_w,
+            "input_power_w must equal output_power_w + total_loss_w",
+        )
+        _require_consistent(
+            efficiency,
+            output_power_w / input_power_w,
+            "efficiency must equal output_power_w / input_power_w",
+        )
+        if efficiency >= 1.0 - 1e-12:
+            if not declared_lossless:
+                raise ValueError(
+                    "efficiency >= 1 - 1e-12 requires declared_lossless=True; "
+                    "a lossless breakdown must be declared, not inferred"
+                )
+            if not assumptions:
+                raise ValueError(
+                    "a declared_lossless breakdown must declare at least one "
+                    "assumption"
+                )
 
         object.__setattr__(self, "terms", terms)
         object.__setattr__(self, "total_loss_w", total_loss_w)
@@ -400,9 +553,11 @@ class LossBreakdown:
         object.__setattr__(self, "input_power_w", input_power_w)
         object.__setattr__(self, "efficiency", efficiency)
         object.__setattr__(self, "assumptions", assumptions)
+        object.__setattr__(self, "verified_by", verified_by)
+        object.__setattr__(self, "declared_lossless", declared_lossless)
 
     def to_dict(self) -> dict[str, Any]:
-        """Return a JSON-safe projection; terms are provider-declared."""
+        """Return a JSON-safe projection of the validated breakdown."""
 
         return {
             "schema": CAPABILITY_SCHEMA,
@@ -414,6 +569,7 @@ class LossBreakdown:
             "output_power_w": self.output_power_w,
             "input_power_w": self.input_power_w,
             "efficiency": self.efficiency,
+            "declared_lossless": self.declared_lossless,
             "assumptions": list(self.assumptions),
             "verified_by": self.verified_by,
         }
@@ -507,16 +663,29 @@ def _lookup_factory(
     *,
     capability: str,
     reason: str,
-) -> Any:
+) -> tuple[Any, str]:
     keys = _lookup_keys(plant)
     for key in keys:
         factory = registry.get(key)
         if factory is not None:
-            return factory
+            return factory, key
     raise CapabilityUnavailable(
         reason,
         f"no {capability} is registered for plant {type(plant).__name__}; "
         f"looked up keys {list(keys)}",
+    )
+
+
+def _require_plant_id_matches(
+    declared_plant_id: str, lookup_key: str, capability: str
+) -> None:
+    if declared_plant_id == lookup_key:
+        return
+    raise CapabilityUnavailable(
+        "model_plant_id_mismatch",
+        f"{capability} registered for lookup key {lookup_key!r} returned "
+        f"plant_id {declared_plant_id!r}; the requested key and the "
+        "provider's declared plant_id must agree",
     )
 
 
@@ -528,13 +697,15 @@ def small_signal_model_for(
     Lookup order (also documented at module level): ``plant.backend_id`` when
     it is a non-empty string, then ``type(plant).__name__``.  If neither key is
     registered, :class:`CapabilityUnavailable` with reason
-    ``"small_signal_model_not_declared"`` is raised.  There is no fallback,
+    ``"small_signal_model_not_declared"`` is raised.  If the provider found
+    under a key returns a model whose ``plant_id`` is a different key, the
+    reason is ``"model_plant_id_mismatch"``.  There is no fallback,
     approximation, or ``limited`` result.
     """
 
     if not isinstance(operating_point, OperatingPoint):
         raise TypeError("operating_point must be an OperatingPoint")
-    factory = _lookup_factory(
+    factory, lookup_key = _lookup_factory(
         _SMALL_SIGNAL_REGISTRY,
         plant,
         capability="small-signal model",
@@ -546,6 +717,7 @@ def small_signal_model_for(
             "small-signal factory returned "
             f"{type(model).__name__}, expected SmallSignalModel"
         )
+    _require_plant_id_matches(model.plant_id, lookup_key, "small-signal model")
     return model
 
 
@@ -554,13 +726,14 @@ def loss_model_for(plant: Any, operating_point: OperatingPoint) -> LossBreakdown
 
     Lookup order matches :func:`small_signal_model_for`.  If neither key is
     registered, :class:`CapabilityUnavailable` with reason
-    ``"loss_model_not_declared"`` is raised.  An ideal lossless model must not
-    be reported as an efficiency of ``1.0``.
+    ``"loss_model_not_declared"`` is raised; a ``plant_id`` mismatch raises
+    ``"model_plant_id_mismatch"``.  An ideal lossless model must not be
+    reported as an efficiency of ``1.0`` without ``declared_lossless=True``.
     """
 
     if not isinstance(operating_point, OperatingPoint):
         raise TypeError("operating_point must be an OperatingPoint")
-    factory = _lookup_factory(
+    factory, lookup_key = _lookup_factory(
         _LOSS_REGISTRY,
         plant,
         capability="loss model",
@@ -572,6 +745,7 @@ def loss_model_for(plant: Any, operating_point: OperatingPoint) -> LossBreakdown
             "loss factory returned "
             f"{type(breakdown).__name__}, expected LossBreakdown"
         )
+    _require_plant_id_matches(breakdown.plant_id, lookup_key, "loss model")
     return breakdown
 
 
@@ -675,10 +849,11 @@ def _analytic_converter_model(
     if callable(steady_state_method):
         try:
             steady_state = steady_state_method(duty)
-        except (TypeError, ValueError) as exc:
+        except Exception as exc:
             raise CapabilityUnavailable(
                 "operating_point_not_declared",
-                f"plant {plant_name}.analytical_steady_state({duty!r}) failed: {exc}",
+                f"plant {plant_name}.analytical_steady_state({duty!r}) raised "
+                f"{type(exc).__name__}: {exc}",
             ) from exc
         if not isinstance(steady_state, Mapping):
             raise CapabilityUnavailable(
@@ -789,6 +964,7 @@ def _analytic_converter_model(
         },
         assumptions=_ANALYTIC_ASSUMPTIONS,
         verified_by=_BUCK_VERIFIED_BY if topology == "buck" else _BOOST_VERIFIED_BY,
+        origin="builtin",
     )
 
 
@@ -826,6 +1002,7 @@ def load_builtin_model_capabilities() -> None:
 
 
 __all__ = [
+    "CAPABILITY_ORIGINS",
     "CAPABILITY_SCHEMA",
     "LINEARIZATION_METHODS",
     "CapabilityUnavailable",
