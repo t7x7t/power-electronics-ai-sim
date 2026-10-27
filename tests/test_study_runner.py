@@ -271,6 +271,32 @@ def test_missing_run_dir_is_recorded_and_other_points_continue(tmp_path):
     assert result.report["points"][1]["status"] == "QUALIFIED"
 
 
+def test_non_finite_samples_fail_a_point_without_declared_statistics(
+    tmp_path,
+):
+    plan = _plan(tmp_path)
+    runs_root = Path(plan.output_dir) / "runs"
+
+    def executor(point, config_path):
+        run_dir = runs_root / point.run_id
+        _write_run_package(
+            run_dir,
+            manifest=_manifest(run_id=point.run_id),
+            samples_text='[{"time_s": 0.0, "vout": NaN}]',
+        )
+        return 0, {"run_dir": str(run_dir)}
+
+    result = run_study(plan, execute_point=executor)
+
+    assert result.exit_code == 1
+    first = result.report["points"][0]
+    assert first["analysis_ok"] is False
+    assert first["failure_reason"] == "samples_error"
+    assert first["details"]["samples_error"] == (
+        "samples.json is missing or not an array of objects"
+    )
+
+
 def test_failed_execution_cannot_claim_comparability_from_stale_manifests(
     tmp_path,
 ):

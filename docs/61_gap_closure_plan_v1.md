@@ -183,13 +183,14 @@
   ① `run_study` 把 `exit_code`/执行失败写入 `StudyPointRecord`，`aggregate_study` 仅当
   全部点 `execution_ok` 且 `analysis_ok` 才允许 `cross_point_comparability="claimed"`；
   ② periodicity 前点错误不再被后点收敛掩盖；③ `study_runner` 校验 manifest `run_id`、
-  `plant_id` 与 `manifest_sha256`（存在 `package_sha256` 时调用既有 `verify_package`）；
+  `plant_id` 与 `manifest_sha256`（存在 `package_sha256` 时调用既有 `verify_package`），
+  且 `samples.json` 无论是否声明统计量都必须存在且只含有限数；
   ④ `stability_margins` 把 ±180° 视为同角，相位平坦在 −180° 时 GM 不猜值，并拒绝
   `status="failed"`/`schema` 不符/sweep 点数不符的输入；⑤ `middlebrook_ratio` 拒绝负幅值、
   非有限/非递增频率与非法 provenance；⑥ `LossBreakdown` 拒绝负输出功率、负效率与
   “声明无损但有损耗项”；⑦ `CapabilityUnavailable` 理由码封闭并映射 CLI `invalid_request`；
   ⑧ `origin="builtin"` 只能由内置工厂声明；⑨ S7/S8 新名字以 experimental 身份顶层可达。
-  相关 10 个测试文件 **415 passed**；全量 **1655 passed / 11 skipped**（无 ngspice）。
+  相关 10 个测试文件 **415 passed**；全量 **1656 passed / 11 skipped**（无 ngspice）。
   入口与 `docs/60` 状态仍未改动。
 
 **S9 — 适配器扩面（A8 A9 A11 B7 B8 B3 D3）**

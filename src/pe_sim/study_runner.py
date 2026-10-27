@@ -71,6 +71,7 @@ _FAILURE_MANIFEST_RUN_ID = "manifest_run_id_mismatch"
 _FAILURE_MANIFEST_PLANT_ID = "manifest_plant_id_mismatch"
 _FAILURE_MANIFEST_DIGEST = "manifest_sha256_mismatch"
 _FAILURE_PACKAGE_DIGEST = "package_digest_mismatch"
+_FAILURE_SAMPLES = "samples_error"
 _FAILURE_STATISTICS = "statistics_error"
 _FAILURE_PERIODICITY = "periodicity_error"
 
@@ -237,14 +238,17 @@ def run_study(
 
         samples = _read_samples(run_dir)
         declared_statistics = plan.plan.get("statistics", [])
-        if samples is None and declared_statistics:
-            # Declared statistics make samples required evidence.  Recording
-            # ``statistics=None`` silently would publish the point as if the
-            # statistics had never been requested.
+        if samples is None:
+            # A published point package always owns its samples.  Missing,
+            # malformed, or non-finite samples are a failed point even when the
+            # plan did not ask for a statistic: otherwise a NaN could be
+            # published without any consumer noticing.
             all_points_ok = False
             analysis_ok = False
-            failure_reason = failure_reason or _FAILURE_STATISTICS
-            details["statistics_error"] = _SAMPLES_READ_ERROR
+            failure_reason = failure_reason or _FAILURE_SAMPLES
+            details["samples_error"] = _SAMPLES_READ_ERROR
+            if declared_statistics:
+                details["statistics_error"] = _SAMPLES_READ_ERROR
             statistics = None
         else:
             statistics, statistics_error = _point_statistics(
