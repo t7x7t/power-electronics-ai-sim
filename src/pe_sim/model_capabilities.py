@@ -225,6 +225,30 @@ def _validate_assumptions(values: Any, label: str = "assumptions") -> tuple[str,
     return items
 
 
+def _validate_signal_names(
+    values: Any, label: str, *, expected_length: int
+) -> tuple[str, ...]:
+    """Validate one ordered list of input or output port names."""
+
+    items = _string_tuple(values, label)
+    if len(items) != expected_length:
+        raise ValueError(
+            f"{label} must contain exactly {expected_length} name(s), "
+            f"got {len(items)}"
+        )
+    seen: set[str] = set()
+    for item in items:
+        if not _ASSUMPTION_PATTERN.match(item):
+            raise ValueError(
+                f"{label} entries must be snake_case identifiers matching "
+                f"^[a-z][a-z0-9_]*$, got {item!r}"
+            )
+        if item in seen:
+            raise ValueError(f"{label} entries must be unique; duplicated {item!r}")
+        seen.add(item)
+    return items
+
+
 def _require_consistent(actual: float, expected: float, label: str) -> None:
     if not math.isclose(
         actual, expected, rel_tol=_RELATIVE_TOLERANCE, abs_tol=0.0
@@ -340,9 +364,17 @@ def _solve_complex(matrix: list[list[complex]], rhs: list[complex]) -> list[comp
 class SmallSignalModel:
     """A linearized plant ``dx/dt = A x + B u``, ``y = C x + D u``.
 
-    ``u`` is the scalar duty-ratio deviation, so ``input_matrix`` must have
-    exactly one column.  ``output_matrix`` must have exactly one row; ``y`` is
-    the output-voltage deviation.
+    ``u`` and ``y`` are **named port vectors**.  ``input_names`` labels the
+    columns of ``input_matrix`` and ``output_names`` labels the rows of
+    ``output_matrix``; both default to the legacy single-port view
+    (``("duty",)`` and ``("vout",)``).  ``transfer_function`` therefore keeps
+    meaning "first output over first input"; use ``transfer_function_for`` or
+    ``transfer_matrix`` when the model declares more than one port.
+
+    ``feedthrough`` is the scalar ``D[0][0]`` of the legacy view.  ``D`` itself
+    is ``feedthrough_matrix``; when it is omitted it is built from the scalar.
+    Declaring both with different ``[0][0]`` values is rejected so the model
+    never has two contradictory DC paths.
 
     The ``operating_point`` mapping must contain ``duty``, ``vout``, and
     ``il``.  Providers may add keys, but must not omit those three.
@@ -365,6 +397,9 @@ class SmallSignalModel:
     assumptions: tuple[str, ...]
     verified_by: str
     origin: str = "caller_registered"
+    input_names: tuple[str, ...] = ("duty",)
+    output_names: tuple[str, ...] = ("vout",)
+    feedthrough_matrix: tuple[tuple[float, ...], ...] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.plant_id, str) or not self.plant_id:
@@ -372,24 +407,58 @@ class SmallSignalModel:
         _validate_method(self.method)
         if not isinstance(self.state_space, LinearStateSpace):
             raise TypeError("state_space must be a LinearStateSpace")
-        if self.state_space.input_size != 1:
-            raise ValueError(
-                "state_space.input_matrix must have exactly one column "
-                "(the scalar duty deviation)"
-            )
+        input_names = _validate_signal_names(
+            self.input_names,
+            "input_names",
+            expected_length=self.state_space.input_size,
+        )
 
         if isinstance(self.output_matrix, (str, bytes)):
             raise TypeError("output_matrix must be a sequence of rows")
-        rows = tuple(tuple(_finite_float(value, "output_matrix") for value in row)
-                     for row in self.output_matrix)
-        if len(rows) != 1:
-            raise ValueError("output_matrix must have exactly one row")
+        rows = tuple(
+            tuple(_finite_float(value, "output_matrix") for value in row)
+            for row in self.output_matrix
+        )
+        if not rows:
+            raise ValueError("output_matrix must contain at least one row")
+        output_names = _validate_signal_names(
+            self.output_names, "output_names", expected_length=len(rows)
+        )
         if len(rows[0]) != self.state_space.state_size:
             raise ValueError(
                 "output_matrix row length must equal state_space.state_size"
             )
 
         feedthrough = _finite_float(self.feedthrough, "feedthrough")
+        declared_matrix = self.feedthrough_matrix
+        if declared_matrix is None:
+            feedthrough_matrix = tuple(
+                tuple(
+                    feedthrough if (row == 0 and column == 0) else 0.0
+                    for column in range(len(input_names))
+                )
+                for row in range(len(rows))
+            )
+        else:
+            if isinstance(declared_matrix, (str, bytes)):
+                raise TypeError("feedthrough_matrix must be a sequence of rows")
+            feedthrough_matrix = tuple(
+                tuple(_finite_float(value, "feedthrough_matrix") for value in row)
+                for row in declared_matrix
+            )
+            if len(feedthrough_matrix) != len(rows):
+                raise ValueError(
+                    "feedthrough_matrix must have one row per output name"
+                )
+            if any(len(row) != len(input_names) for row in feedthrough_matrix):
+                raise ValueError(
+                    "feedthrough_matrix must have one column per input name"
+                )
+            if feedthrough_matrix[0][0] != feedthrough:
+                raise ValueError(
+                    "feedthrough must equal feedthrough_matrix[0][0]; declare "
+                    "the scalar or the matrix, not two different values"
+                )
         operating_point = _freeze_float_mapping(
             self.operating_point,
             "operating_point",
@@ -407,18 +476,18 @@ class SmallSignalModel:
 
         object.__setattr__(self, "output_matrix", rows)
         object.__setattr__(self, "feedthrough", feedthrough)
+        object.__setattr__(self, "feedthrough_matrix", feedthrough_matrix)
+        object.__setattr__(self, "input_names", input_names)
+        object.__setattr__(self, "output_names", output_names)
         object.__setattr__(self, "operating_point", operating_point)
         object.__setattr__(self, "parameters", parameters)
         object.__setattr__(self, "assumptions", assumptions)
         object.__setattr__(self, "verified_by", verified_by)
 
-    def transfer_function(self, frequency_hz: float) -> complex:
-        """Return ``C (sI - A)^-1 B + D`` at ``s = j 2 pi f``.
-
-        ``frequency_hz`` must be finite and non-negative.  At ``f == 0`` this
-        is the DC control-to-output gain.  A singular ``sI - A`` raises
-        ``ValueError`` rather than returning infinity or a guessed value.
-        """
+    def _transfer_value(
+        self, frequency_hz: float, *, output_index: int, input_index: int
+    ) -> complex:
+        """Evaluate ``C[i] (sI - A)^-1 B[:, j] + D[i][j]`` at ``s = j 2 pi f``."""
 
         frequency = _finite_float(frequency_hz, "frequency_hz")
         if frequency < 0.0:
@@ -433,16 +502,69 @@ class SmallSignalModel:
                 diagonal = s if row == column else 0j
                 matrix_row.append(diagonal - self.state_space.matrix_a[row][column])
             matrix.append(matrix_row)
-        rhs = [complex(self.state_space.input_matrix[row][0]) for row in range(size)]
+        rhs = [
+            complex(self.state_space.input_matrix[row][input_index])
+            for row in range(size)
+        ]
         solution = _solve_complex(matrix, rhs)
 
-        output_row = self.output_matrix[0]
+        output_row = self.output_matrix[output_index]
         value = sum(
             output_row[column] * solution[column] for column in range(size)
-        ) + self.feedthrough
+        ) + self.feedthrough_matrix[output_index][input_index]
         if not math.isfinite(value.real) or not math.isfinite(value.imag):
             raise ValueError("transfer function is not finite at this frequency")
         return value
+
+    def transfer_function(self, frequency_hz: float) -> complex:
+        """Return ``C (sI - A)^-1 B + D`` at ``s = j 2 pi f``.
+
+        This is the legacy single-port view: the first output over the first
+        input.  ``frequency_hz`` must be finite and non-negative.  At
+        ``f == 0`` this is the DC control-to-output gain.  A singular
+        ``sI - A`` raises ``ValueError`` rather than returning infinity or a
+        guessed value.
+        """
+
+        return self._transfer_value(
+            frequency_hz, output_index=0, input_index=0
+        )
+
+    def transfer_function_for(
+        self, frequency_hz: float, *, output: str, input: str
+    ) -> complex:
+        """Return the transfer function from one named input to one named output."""
+
+        if output not in self.output_names:
+            raise KeyError(
+                f"unknown output {output!r}; declared outputs are "
+                f"{list(self.output_names)}"
+            )
+        if input not in self.input_names:
+            raise KeyError(
+                f"unknown input {input!r}; declared inputs are "
+                f"{list(self.input_names)}"
+            )
+        return self._transfer_value(
+            frequency_hz,
+            output_index=self.output_names.index(output),
+            input_index=self.input_names.index(input),
+        )
+
+    def transfer_matrix(self, frequency_hz: float) -> dict[str, dict[str, complex]]:
+        """Return ``result[output][input]`` for every declared port pair."""
+
+        return {
+            output: {
+                input_name: self._transfer_value(
+                    frequency_hz,
+                    output_index=output_index,
+                    input_index=input_index,
+                )
+                for input_index, input_name in enumerate(self.input_names)
+            }
+            for output_index, output in enumerate(self.output_names)
+        }
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-safe, self-describing projection of the model."""
@@ -458,6 +580,9 @@ class SmallSignalModel:
             },
             "output_matrix": [list(row) for row in self.output_matrix],
             "feedthrough": self.feedthrough,
+            "feedthrough_matrix": [list(row) for row in self.feedthrough_matrix],
+            "input_names": list(self.input_names),
+            "output_names": list(self.output_names),
             "state_equation": "dx/dt = A x + B u",
             "output_equation": "y = C x + D u",
             "input": "duty_deviation",
@@ -749,6 +874,35 @@ def loss_model_for(plant: Any, operating_point: OperatingPoint) -> LossBreakdown
     return breakdown
 
 
+def capability_provenance(
+    model: SmallSignalModel,
+    *,
+    sweep: Mapping[str, Any] | None,
+    verified_by: Sequence[str],
+    controller: Mapping[str, Any] | None = None,
+    assumptions: Sequence[str] = (),
+) -> dict[str, Any]:
+    """Return the self-contained provenance block analysis results must carry.
+
+    ``verified_by`` is the list of tests that verify *this analysis*, while
+    ``plant_verified_by`` is the model's own declaration.  Keeping them apart
+    is what stops a loop-gain result from borrowing the plant model's test as
+    if it had verified the controller mapping.
+    """
+
+    return {
+        "plant_id": model.plant_id,
+        "linearization_point": dict(model.operating_point),
+        "method": model.method,
+        "capability_origin": model.origin,
+        "assumptions": list(assumptions),
+        "plant_verified_by": model.verified_by,
+        "controller": dict(controller) if controller is not None else None,
+        "sweep": dict(sweep) if sweep is not None else None,
+        "verified_by": list(verified_by),
+    }
+
+
 def registered_model_capabilities() -> dict[str, tuple[str, ...]]:
     """Return registered plant keys and the capabilities each declares.
 
@@ -931,7 +1085,20 @@ def _analytic_converter_model(
             (0.0, -1.0 / inductance),
             (1.0 / capacitance, -1.0 / (load_resistance * capacitance)),
         )
-        input_matrix = ((input_voltage / inductance,), (0.0,))
+        # Inputs: duty deviation, input-voltage deviation, injected load current.
+        input_matrix = (
+            (input_voltage / inductance, duty / inductance, 0.0),
+            (0.0, 0.0, 1.0 / capacitance),
+        )
+        # Outputs: output voltage; input current (d * iL -> I_L * dd + D * diL).
+        # The input-current row multiplies the inductor-current state, not the
+        # output voltage: i_in = D * iL.
+        output_matrix = ((0.0, 1.0), (duty, 0.0))
+        feedthrough_matrix = (
+            (0.0, 0.0, 0.0),
+            (inductor_current, 0.0, 0.0),
+        )
+        current_assumption = "input_current_is_d_times_inductor_current"
     else:
         conduction = 1.0 - duty
         matrix_a = (
@@ -939,16 +1106,30 @@ def _analytic_converter_model(
             (conduction / capacitance, -1.0 / (load_resistance * capacitance)),
         )
         input_matrix = (
-            (output_voltage / inductance,),
-            (-inductor_current / capacitance,),
+            (output_voltage / inductance, 1.0 / inductance, 0.0),
+            (-inductor_current / capacitance, 0.0, 1.0 / capacitance),
         )
+        output_matrix = ((0.0, 1.0), (1.0, 0.0))
+        feedthrough_matrix = (
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 0.0),
+        )
+        current_assumption = "input_current_is_inductor_current"
+
+    assumptions = _ANALYTIC_ASSUMPTIONS + (
+        "load_current_is_injected_at_the_output_node",
+        current_assumption,
+    )
 
     return SmallSignalModel(
         plant_id=topology,
         method="analytic",
         state_space=LinearStateSpace(matrix_a, input_matrix),
-        output_matrix=((0.0, 1.0),),
-        feedthrough=0.0,
+        output_matrix=output_matrix,
+        feedthrough=feedthrough_matrix[0][0],
+        feedthrough_matrix=feedthrough_matrix,
+        input_names=("duty", "vin", "load_current"),
+        output_names=("vout", "input_current"),
         operating_point={
             "duty": duty,
             "vout": output_voltage,
@@ -962,7 +1143,7 @@ def _analytic_converter_model(
             "capacitance_f": capacitance,
             "load_resistance_ohm": load_resistance,
         },
-        assumptions=_ANALYTIC_ASSUMPTIONS,
+        assumptions=assumptions,
         verified_by=_BUCK_VERIFIED_BY if topology == "buck" else _BOOST_VERIFIED_BY,
         origin="builtin",
     )

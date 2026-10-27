@@ -50,7 +50,18 @@ from __future__ import annotations
 import math
 from typing import Any, Mapping, Sequence
 
-from .model_capabilities import CapabilityUnavailable, SmallSignalModel
+from .model_capabilities import (
+    CapabilityUnavailable,
+    SmallSignalModel,
+    capability_provenance,
+)
+from .frequency_domain import (
+    finite_number as _finite_number,
+    log_frequencies,
+    magnitude_series,
+    unwrapped_phase_deg,
+    validate_sweep,
+)
 
 
 AC_RESULT_SCHEMA = "pe-sim.ac-analysis.v1"
@@ -84,34 +95,13 @@ def _finite_number(value: Any, label: str) -> float:
 
 
 def _validate_sweep(start_hz: Any, stop_hz: Any, points: Any) -> tuple[float, float, int]:
-    start = _finite_number(start_hz, "start_hz")
-    if start <= 0.0:
-        raise ValueError("start_hz must be finite and positive")
-    stop = _finite_number(stop_hz, "stop_hz")
-    if stop <= start:
-        raise ValueError("stop_hz must be finite and greater than start_hz")
-    if isinstance(points, bool) or not isinstance(points, int):
-        raise ValueError(
-            f"points must be an integer in [{_MIN_POINTS}, {_MAX_POINTS}]"
-        )
-    if not _MIN_POINTS <= points <= _MAX_POINTS:
-        raise ValueError(
-            f"points must be an integer in [{_MIN_POINTS}, {_MAX_POINTS}], got {points}"
-        )
-    return start, stop, points
+    return validate_sweep(
+        start_hz, stop_hz, points, min_points=_MIN_POINTS, max_points=_MAX_POINTS
+    )
 
 
 def _log_frequencies(start_hz: float, stop_hz: float, points: int) -> list[float]:
-    if points == 2:
-        return [start_hz, stop_hz]
-    log_start = math.log10(start_hz)
-    log_stop = math.log10(stop_hz)
-    step = (log_stop - log_start) / (points - 1)
-    frequencies = [10.0 ** (log_start + step * index) for index in range(points)]
-    # Pin the endpoints so the declared sweep and the returned axis agree.
-    frequencies[0] = start_hz
-    frequencies[-1] = stop_hz
-    return frequencies
+    return log_frequencies(start_hz, stop_hz, points)
 
 
 def _complex_values(
@@ -129,40 +119,13 @@ def _complex_values(
 
 
 def _unwrapped_phase_deg(values: Sequence[complex]) -> list[float]:
-    if not values:
-        raise ValueError("at least one complex value is required")
-    raw = [math.atan2(value.imag, value.real) for value in values]
-    unwrapped = [raw[0]]
-    for angle in raw[1:]:
-        previous = unwrapped[-1]
-        while angle - previous > math.pi:
-            angle -= 2.0 * math.pi
-        while angle - previous < -math.pi:
-            angle += 2.0 * math.pi
-        unwrapped.append(angle)
-    phases = [math.degrees(angle) for angle in unwrapped]
-    if not all(math.isfinite(phase) for phase in phases):
-        raise ValueError("phase response contains a non-finite value")
-    return phases
+    return unwrapped_phase_deg(values)
 
 
 def _magnitude_series(
     values: Sequence[complex], frequencies: Sequence[float]
 ) -> tuple[list[float], list[float]]:
-    if len(values) != len(frequencies):
-        raise ValueError("values and frequencies must have equal length")
-    magnitudes: list[float] = []
-    decibels: list[float] = []
-    for value, frequency in zip(values, frequencies):
-        magnitude = abs(value)
-        if not math.isfinite(magnitude) or magnitude <= 0.0:
-            raise ValueError(
-                "transfer function magnitude is zero or non-finite at "
-                f"{frequency!r} Hz; a finite Bode magnitude cannot be reported"
-            )
-        magnitudes.append(magnitude)
-        decibels.append(20.0 * math.log10(magnitude))
-    return magnitudes, decibels
+    return magnitude_series(values, frequencies, label="transfer function")
 
 
 def _result_provenance(
@@ -173,17 +136,13 @@ def _result_provenance(
     controller: Mapping[str, Any] | None,
     assumptions: Sequence[str],
 ) -> dict[str, Any]:
-    return {
-        "plant_id": model.plant_id,
-        "linearization_point": dict(model.operating_point),
-        "method": model.method,
-        "capability_origin": model.origin,
-        "assumptions": list(assumptions),
-        "plant_verified_by": model.verified_by,
-        "controller": dict(controller) if controller is not None else None,
-        "sweep": dict(sweep),
-        "verified_by": list(verified_by),
-    }
+    return capability_provenance(
+        model,
+        sweep=sweep,
+        verified_by=verified_by,
+        controller=controller,
+        assumptions=assumptions,
+    )
 
 
 def _response_payload(
@@ -223,7 +182,8 @@ def _response_payload(
         "method": model.method,
         "linearization_point": dict(model.operating_point),
         "assumptions": list(assumptions),
-        "verified_by": model.verified_by,
+        "verified_by": list(verified_by),
+        "plant_verified_by": model.verified_by,
         "sweep": dict(sweep),
         "provenance": _result_provenance(
             model,

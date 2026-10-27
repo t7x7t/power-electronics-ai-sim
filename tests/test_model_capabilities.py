@@ -176,9 +176,11 @@ def test_builtin_buck_analytic_model_contract() -> None:
     assert model.method == "analytic"
     assert {"ccm_average_model", "ideal_components_no_loss"}.issubset(model.assumptions)
     assert isinstance(model.state_space, LinearStateSpace)
-    assert model.state_space.input_size == 1
-    assert len(model.output_matrix) == 1
-    assert len(model.output_matrix[0]) == model.state_space.state_size
+    assert model.input_names == ("duty", "vin", "load_current")
+    assert model.output_names == ("vout", "input_current")
+    assert model.state_space.input_size == 3
+    assert len(model.output_matrix) == 2
+    assert all(len(row) == model.state_space.state_size for row in model.output_matrix)
     assert model.feedthrough == 0.0
 
     inductance = plant.inductance_h
@@ -193,7 +195,10 @@ def test_builtin_buck_analytic_model_contract() -> None:
         plant.input_voltage_v / inductance
     )
     assert model.state_space.input_matrix[1][0] == pytest.approx(0.0)
-    assert model.output_matrix == ((0.0, 1.0),)
+    assert model.state_space.input_matrix[0][1] == pytest.approx(duty / inductance)
+    assert model.state_space.input_matrix[0][2] == pytest.approx(0.0)
+    assert model.state_space.input_matrix[1][2] == pytest.approx(1.0 / capacitance)
+    assert model.output_matrix == ((0.0, 1.0), (duty, 0.0))
 
     assert model.operating_point["duty"] == pytest.approx(duty)
     assert model.operating_point["vout"] == pytest.approx(
@@ -268,7 +273,9 @@ def test_boost_small_signal_matrices_match_linearized_average_equations() -> Non
     assert model.state_space.input_matrix[1][0] == pytest.approx(
         -inductor_current / capacitance
     )
-    assert model.output_matrix == ((0.0, 1.0),)
+    assert model.state_space.input_matrix[0][1] == pytest.approx(1.0 / inductance)
+    assert model.state_space.input_matrix[1][2] == pytest.approx(1.0 / capacitance)
+    assert model.output_matrix == ((0.0, 1.0), (1.0, 0.0))
 
 
 @pytest.mark.parametrize("plant_factory", [_buck, _boost])

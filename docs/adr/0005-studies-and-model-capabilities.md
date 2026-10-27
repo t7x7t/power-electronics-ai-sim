@@ -193,6 +193,21 @@ provider land in the rest of stage S8; until then `docs/60` C4/C5/C6 stay open.
 7. Known limitation: `pe-sim.model-capability.v1` and `pe-sim.ac-analysis.v1`
    are versioned identifiers, not JSON Schema documents under `schemas/`.
    Treating them as published schemas would overstate what exists.
+8. **Ports are named, so impedance can reuse the same model.** `SmallSignalModel`
+   declares `input_names`/`output_names`; the built-in converters expose
+   `(duty, vin, load_current)` and `(vout, input_current)`. The added input
+   columns are the linearization of the same averaged equations — no second
+   plant model exists. Conventions are stated in the result, not implied:
+   `Z_in = v_in/i_in`, `Z_out = v_out/i_load` with `load_current` **injected
+   into the output node**. (The common `-dv/di` form assumes `i` is drawn by
+   the load; a sign convention that is not written down is a trap.)
+9. **The Middlebrook ratio is a screen, not a stability proof.**
+   `criterion="satisfied"` means `|Zin/Zsource| > 1` (or `|Zload/Zout| > 1`)
+   at every sampled frequency. The payload carries
+   `criterion_meaning` saying exactly that, records `min_ratio_db`,
+   `first_violation_hz`, and the inherited sweep, and has no `stable` field.
+   The external impedance is caller-declared, so the ratio is only as good as
+   that declaration.
 
 ## Consequences
 - The kernel keeps three objects; two layers are added around them. Adding a

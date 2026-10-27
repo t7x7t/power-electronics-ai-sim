@@ -196,7 +196,11 @@ def test_frequency_response_schema_shape_and_log_spacing() -> None:
     assert response["method"] == model.method
     assert response["linearization_point"] == dict(model.operating_point)
     assert response["assumptions"] == list(model.assumptions)
-    assert response["verified_by"] == model.verified_by
+    assert response["plant_verified_by"] == model.verified_by
+    assert response["verified_by"] == [
+        "tests/test_ac_analysis.py::"
+        "test_frequency_response_declares_self_contained_provenance"
+    ]
     assert response["sweep"] == {
         "start_hz": 10.0,
         "stop_hz": 100_000.0,

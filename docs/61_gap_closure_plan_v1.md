@@ -153,6 +153,11 @@
   `assumptions` 禁用证据等级词、`plant_id` 与查找键必须一致、margins 保留扫频与插值方法、
   `LossBreakdown` 强制功率/损耗/效率一致性。**C4/C5/C6 均未关闭**：缺阻抗与 Middlebrook
   （C5）、缺 loss provider 与效率分解（C6）、缺 CLI/study 入口。
+- 已交付（第二片）：`SmallSignalModel` 端口具名化（`duty`/`vin`/`load_current` →
+  `vout`/`input_current`，旧单端口视图保持不变）、`src/pe_sim/impedance_analysis.py`
+  （`Zin`/`Zout` 扇帚与 Middlebrook 幅度判据）、`src/pe_sim/frequency_domain.py`
+  （扫频/幅值/相位助手单一实现）。实现中修正了一处真实符号错误：buck 的输入电流
+  状态行必须乘电感电流（`i_in = D·iL`），最初的 `(0, D)` 会让 `Zin(0)` 差 10 倍。
 - 交付：可选 `small_signal_model(op)` 与 `loss_model()`；AC 扫频 / Bode / PM / GM；
   输入/输出阻抗与 Middlebrook 判据；效率与损耗分解。
 - 验收：未实现能力的植物报告"不可用"而非 `limited`；每个结果记录线性化方法与验证方式；
