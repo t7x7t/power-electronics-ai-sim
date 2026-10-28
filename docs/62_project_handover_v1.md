@@ -2,10 +2,11 @@
 
 **文档性质：** 维护者交接说明。它不是发布批准、不是工程结论，也不改变任何运行时行为。
 
-**适用基线：** 2026-10-28，`main` 提交 `ced25ea`（其父提交为 `6b55cb8`），版本
-`0.17.0`，`origin/main` 已同步。
+**适用基线：** 2026-10-28，`main` 的 0.18.0 收口提交（其父提交为 `8011127`），版本
+`0.18.0`，`origin/main` 已同步。
 
-**当前阶段：** S0–S9 已交付；S10（收口与发布）尚未正式完成。
+**当前阶段：** S0–S9 已交付；S10 的文档与版本收口已完成，正式 gate / release record /
+人工批准 / tag 仍待执行。
 
 ---
 
@@ -55,27 +56,27 @@
 
 | 项 | 当前值 |
 | --- | --- |
-| 分支/提交 | `main` = `ced25ea`（本文所在提交；其父提交为 `6b55cb8`）= `origin/main` |
-| 版本 | `0.17.0`（`src/pe_sim/_version.py` 与 `pyproject.toml` 一致） |
+| 分支/提交 | `main` = 0.18.0 收口提交（见 `docs/releases/v0.18.0.md`；其父为 `8011127`）= `origin/main` |
+| 版本 | `0.18.0`（`src/pe_sim/_version.py` 与 `pyproject.toml` 一致） |
 | 覆盖矩阵 | 35 行：34 `covered`，1 `out_of_scope`（C8 电热/热网络） |
 | 开放行 | 无 `kernel_gap` / `expressible` |
 | 当前 Python 环境 | `d:\power-electronics-ai-sim\.venv\Scripts\python.exe`（本地为 3.13.2） |
-| 全量测试（含 ngspice 41） | `1720 passed / 2 skipped` |
-| 全量测试（无 ngspice） | `1710 passed / 12 skipped` |
+| 全量测试（含 ngspice 41） | `1733 passed / 2 skipped` |
+| 全量测试（无 ngspice） | `1723 passed / 12 skipped` |
 | 发布 gate / tag | **未完成**；仅通过 `release_record.py check-identity`，没有正式 gate 证据、release record 或 tag |
 
-`pe-sim --version` 应输出 `0.17.0`。正式发布 gate 使用 `docs/29` 的隔离环境
+`pe-sim --version` 应输出 `0.18.0`。正式发布 gate 使用 `docs/29` 的隔离环境
 （Python 3.12.7 + 固定 pin），与当前开发 venv 不是同一件事。
 
 ### 2.1 交接资产
 
 | 资产 | 状态/位置 |
 | --- | --- |
-| 源码仓库 | `https://github.com/t7x7t/power-electronics-ai-sim.git`，`main` = `ced25ea` |
+| 源码仓库 | `https://github.com/t7x7t/power-electronics-ai-sim.git`，`main` = 0.18.0 收口提交 |
 | 本地开发环境 | `d:\power-electronics-ai-sim\.venv`（Python 3.13.2）；venv 不入库，换机需按 `pyproject.toml` / `requirements-tested.txt` / `requirements-release.txt` 重建 |
 | ngspice（可选） | 当前验证路径 `D:\Applications\Anaconda3\envs\pe-sim-spice\Library\bin\ngspice_con.exe`，通过 `PE_SIM_NGSPICE` 启用 |
 | PySpice（可选） | 不是运行时依赖；未安装时相关能力报告为不可用，不是失败 |
-| 发布证据/record/tag | **无 0.17.0 的正式 gate 证据、release record 或 tag**；只有 `check-identity` 通过 |
+| 发布证据/record/tag | **无 0.18.0 的正式 gate 证据、release record 或 tag**；只有 `check-identity` 通过 |
 | 凭据/密钥 | 仓库与交接材料中不应包含任何凭据或私有数据 |
 
 ---
@@ -158,7 +159,7 @@ CLI / Python API
 | S7 | 0.15.0 | study 计划层、逐点失败传播、聚合恒 `per-point` |
 | S8 | 0.16.0 / 0.16.1 | `pe-sim capability`（AC/阻抗/损耗）；写失败映射 `output_error` |
 | S9 | 0.17.0 | A8/A9/B7（同步整流、DCM/burst 检测、多相）；A11/B8/B3/D3（整段开关、模型内控、峰值电流/比较器） |
-| S10 | 0.18.0 | **待完成：收口、发布说明汇总、正式 gate/release record/tag** |
+| S10 | 0.18.0 | 文档与版本收口完成；正式 gate / release record / 人工批准 / tag 待执行 |
 
 ### 4.1 S9 第二片的细节
 
@@ -202,20 +203,21 @@ CLI / Python API
 ### 6.1 S10 收口清单
 
 1. 在 `docs/61` 将 S10 标记完成并记录验收；`docs/60` 已无开放行（34 covered +
-   1 out_of_scope）。
+   1 out_of_scope）。（状态：部分——`docs/61` 已更新，`docs/60` 台账未动。）
 2. 新增 `docs/releases/v0.18.0.md`：汇总每个阶段的上限、未做事项和当前基线；
-   将 `_version.py` / `pyproject.toml` 提升到 `0.18.0`（以实际计划为准）。
+   将 `_version.py` / `pyproject.toml` 提升到 `0.18.0`（以实际计划为准）。（状态：已完成。）
 3. 同步 `docs/58` 能力边界；检查 README 不再声称已被删除的限制
-   （如“控制周期必须是开关周期整数倍”）。
+   （如“控制周期必须是开关周期整数倍”）。（状态：已完成。）
 4. 运行：
    - `pytest tests/test_coverage_matrix.py -q`
    - 全量 `pytest -q`（有/无 ngspice 各一次）
    - `python scripts/release_record.py check-identity`
+   （状态：已完成；全量计数见 §2。）
 5. 按 `docs/29` / `docs/53` 完成正式本地 release gate、wheel/sdist、distribution
    inventory、release record、人工批准和 tag。没有 gate 证据或人工批准时，
-   不得声称已发布或创建 tag。
+   不得声称已发布或创建 tag。（状态：未执行。）
 6. 若正式 gate 需要 ngspice/PySpice，记录精确版本、SHA-256、平台和 solver
-   settings；缺失时只能记 `not_run`，不能记 pass。
+   settings；缺失时只能记 `not_run`，不能记 pass。（状态：未执行。）
 
 ### 6.2 已知技术债/限制
 

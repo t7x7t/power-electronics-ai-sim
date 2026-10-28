@@ -32,7 +32,7 @@
 | S7 | 0.15.0 | —（已完成：study 计划层） | `study` seam | S1 | 已交付：A10 C3 C9 闭合；聚合恒为 `per-point`，不自动继承 `comparable` |
 | S8 | 0.16.0 | —（已完成：capability 入口） | `capability` seam | S7 | 已交付：C4 C5 C6 闭合；缺失能力 = 不可用（不是 `limited`）；AC/阻抗方法必须自报 |
 | S9 | 0.17.0 | —（已完成：适配器扩面） | `adapter` 扩面 + 比较器事件 | S5 | 已交付：A11/B8/B3/D3 闭合；A8/A9/B7 已在前一片闭合；T1 仍然成立 |
-| S10 | 0.18.0 | —（收口与发布） | 发布 | S1–S9 | `docs/60` 无 `kernel_gap` / `expressible` 残留 |
+| S10 | 0.18.0 | —（已交付：收口文档与版本；正式 gate/批准待执行） | 发布 | S1–S9 | `docs/60` 无 `kernel_gap` / `expressible` 残留 |
 
 ### 2.1 为什么是这个顺序
 
@@ -246,6 +246,20 @@
   `docs/58` 能力边界同步。
 - 验收：`test_coverage_matrix.py` 在 `expressible`/`kernel_gap` 为空时通过；
   全量测试与发布检查通过。
+- 已交付（0.18.0，待正式 gate）：`docs/releases/v0.18.0.md`（状态声明、本版变更、
+  S0–S9 上限汇总、当前基线、未做事项与非主张）；`src/pe_sim/_version.py` 与
+  `pyproject.toml` 提升到 `0.18.0`；`docs/58` 与 README 的能力边界同步（
+  `event_granularity=window` 只描述控制器侧）；5 个 schema 随包分发
+  （`experiment`、`manifest`、`stage10-evidence-report`、`stage10-metrics`、
+  `stage12-evidence-classification`，由 `tests/test_packaging.py` 逐字节断言）；
+  `plant_catalog` 暴露 `control_location` / `event_granularity`（`docs/44` 同步）；
+  provenance 的 `environment.runner.version` 改取运行代码版本并单列
+  `package_metadata_version`；守卫测试 `tests/test_event_granularity_semantics.py`
+  与 `tests/test_provenance_version.py`。
+- 台账状态：`docs/60` 的 35 行保持 34 `covered` + 1 `out_of_scope`（C8），本阶段
+  **没有改动台账**；`docs/60` 无 `kernel_gap` / `expressible` 残留。
+- 仍待执行：正式 release gate、release record、人工批准与 tag。在这些完成之前，
+  本阶段只能记为“文档与版本收口完成”，release note 不构成发布批准。
 
 ### 2.3 证据上限登记
 
