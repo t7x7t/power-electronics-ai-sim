@@ -195,7 +195,7 @@ from .postprocess import (
     write_evidence_report,
 )
 from .evidence import EvidenceClassificationError, classify_report, classify_stage10, classify_summary
-from .topology import TOPOLOGY_SCHEMA, TopologyNet, TopologyPort, TopologyComponent, TopologyDescriptor, buck_topology_descriptor, boost_topology_descriptor, multiphase_buck_topology_descriptor, ngspice_buck_topology_descriptor, ngspice_sync_buck_topology_descriptor, export_topology_descriptor, topology_to_dot, topology_to_adjacency
+from .topology import TOPOLOGY_SCHEMA, TopologyNet, TopologyPort, TopologyComponent, TopologyDescriptor, buck_topology_descriptor, boost_topology_descriptor, model_control_buck_topology_descriptor, multiphase_buck_topology_descriptor, ngspice_buck_topology_descriptor, ngspice_sync_buck_topology_descriptor, export_topology_descriptor, topology_to_dot, topology_to_adjacency
 from .traces import (
     TRACE_SCHEMA_VERSION,
     SignalDefinition,
@@ -227,6 +227,11 @@ from .backends import (
     SyncBuckNetlistParameters,
     NativeBuckNetlistBuilder,
     NativeSyncBuckNetlistBuilder,
+    ModelControlBuckParameters,
+    ModelControlBuckPlant,
+    PeakCurrentBuckParameters,
+    PeakCurrentBuckPlant,
+    WholeRunSwitchingBuckPlant,
     NgspiceBuckPlant,
     NgspiceSyncBuckPlant,
     classify_conduction_regime,

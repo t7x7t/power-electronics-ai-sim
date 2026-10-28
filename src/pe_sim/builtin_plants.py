@@ -42,12 +42,17 @@ from typing import Any, Mapping
 from .backends import (
     BackendConfigError,
     BackendNotFoundError,
+    ModelControlBuckParameters,
+    ModelControlBuckPlant,
+    PeakCurrentBuckParameters,
+    PeakCurrentBuckPlant,
     NativeBuckNetlistBuilder,
     NgspiceBuckPlant,
     NgspiceSyncBuckPlant,
     PyspiceBuckNetlistBuilder,
     PyspiceUnavailableError,
     WholeRunBuckPlant,
+    WholeRunSwitchingBuckPlant,
     resolve_ngspice_executable,
 )
 from .contracts import Timebase
@@ -66,6 +71,7 @@ from .topology import (
     TopologyDescriptor,
     buck_topology_descriptor,
     export_topology_descriptor,
+    model_control_buck_topology_descriptor,
     multiphase_buck_topology_descriptor,
     ngspice_buck_topology_descriptor,
     ngspice_sync_buck_topology_descriptor,
@@ -151,6 +157,46 @@ _WHOLE_RUN_BUCK_DEFAULTS: dict[str, object] = {
     "anti_windup": True,
 }
 
+#: Two adapters share one switching core but declare different time models.
+#: The controller is model-side in both; the kernel action is recorded and
+#: ignored.  ``cadence_s`` is only used by the whole-run adapter.
+_MODEL_CONTROL_BUCK_DEFAULTS: dict[str, object] = {
+    "input_voltage_v": 12.0,
+    "inductance_h": 100e-6,
+    "capacitance_f": 470e-6,
+    "load_resistance_ohm": 5.0,
+    "switching_frequency_hz": 100e3,
+    "control_period_s": None,
+    "integration_step_s": 0.5e-6,
+    "kp": 0.05,
+    "ki": 20.0,
+    "default_vref_v": 5.0,
+    "output_min": 0.0,
+    "output_max": 1.0,
+    "anti_windup": True,
+    "cadence_s": None,
+}
+
+#: The peak-current variant reuses the switching core but gains an outer
+#: voltage loop in amperes and a model-internal comparator.
+_PEAK_CURRENT_BUCK_DEFAULTS: dict[str, object] = {
+    "input_voltage_v": 12.0,
+    "inductance_h": 100e-6,
+    "capacitance_f": 470e-6,
+    "load_resistance_ohm": 5.0,
+    "switching_frequency_hz": 100e3,
+    "control_period_s": None,
+    "integration_step_s": 0.5e-6,
+    "kp": 0.5,
+    "ki": 200.0,
+    "default_vref_v": 5.0,
+    "output_min": 0.0,
+    "output_max": 1.0,
+    "anti_windup": True,
+    "current_reference_max_a": 5.0,
+    "diode_emulation": False,
+}
+
 # The display descriptors render only these recorded parameters.  They are
 # listed here so an incomplete manifest is refused instead of being drawn with
 # missing values; the descriptor builders themselves stay in ``pe_sim.topology``.
@@ -172,6 +218,14 @@ _SWITCHING_TOPOLOGY_PARAMETERS: tuple[str, ...] = (
 _SYNC_SWITCHING_TOPOLOGY_PARAMETERS: tuple[str, ...] = (
     *_SWITCHING_TOPOLOGY_PARAMETERS,
     "dead_time_s",
+)
+_MODEL_CONTROL_TOPOLOGY_PARAMETERS: tuple[str, ...] = (
+    "input_voltage_v",
+    "inductance_h",
+    "capacitance_f",
+    "load_resistance_ohm",
+    "switching_frequency_hz",
+    "control_period_s",
 )
 
 
@@ -236,6 +290,79 @@ def _build_whole_run_buck(
             )
         cadence = context.timebase.control_period_s
     return WholeRunBuckPlant(cadence_s=cadence, **values)
+
+
+def _model_control_parameters(
+    plant_id: str,
+    config: Mapping[str, Any],
+    context: PlantBuildContext,
+) -> ModelControlBuckParameters:
+    """Build the shared parameter record and resolve the control period."""
+
+    _reject_unknown_keys(
+        plant_id, config, frozenset(_MODEL_CONTROL_BUCK_DEFAULTS)
+    )
+    values = dict(_MODEL_CONTROL_BUCK_DEFAULTS)
+    values.update(config)
+    values.pop("cadence_s", None)
+    control_period = values.pop("control_period_s")
+    if control_period is None:
+        if context.timebase is None:
+            raise ValueError(
+                f"{plant_id} requires control_period_s in plant_config or a timebase"
+            )
+        control_period = context.timebase.control_period_s
+    return ModelControlBuckParameters(control_period_s=float(control_period), **values)
+
+
+def _build_model_control_buck(
+    config: Mapping[str, Any], context: PlantBuildContext
+) -> ModelControlBuckPlant:
+    """Build the stepped switching adapter whose PI loop closes in the model."""
+
+    return ModelControlBuckPlant(_model_control_parameters("model-control-buck", config, context))
+
+
+def _build_peak_current_buck(
+    config: Mapping[str, Any], context: PlantBuildContext
+) -> PeakCurrentBuckPlant:
+    """Build the stepped peak-current comparator adapter."""
+
+    _reject_unknown_keys(
+        "peak-current-buck", config, frozenset(_PEAK_CURRENT_BUCK_DEFAULTS)
+    )
+    values = dict(_PEAK_CURRENT_BUCK_DEFAULTS)
+    values.update(config)
+    control_period = values.pop("control_period_s")
+    if control_period is None:
+        if context.timebase is None:
+            raise ValueError(
+                "peak-current-buck requires control_period_s in plant_config or a timebase"
+            )
+        control_period = context.timebase.control_period_s
+    return PeakCurrentBuckPlant(
+        PeakCurrentBuckParameters(control_period_s=float(control_period), **values)
+    )
+
+
+def _build_whole_run_switching_buck(
+    config: Mapping[str, Any], context: PlantBuildContext
+) -> WholeRunSwitchingBuckPlant:
+    """Build the whole-run switching adapter with model-side PI control."""
+
+    values = dict(_MODEL_CONTROL_BUCK_DEFAULTS)
+    values.update(config)
+    cadence = values.pop("cadence_s")
+    if cadence is None:
+        if context.timebase is None:
+            raise ValueError(
+                "whole-run-switching-buck requires cadence_s in plant_config or a timebase"
+            )
+        cadence = context.timebase.control_period_s
+    parameters = _model_control_parameters(
+        "whole-run-switching-buck", config, context
+    )
+    return WholeRunSwitchingBuckPlant(parameters, cadence_s=float(cadence))
 
 
 def _build_ngspice_sync_buck(
@@ -373,6 +500,40 @@ def _export_multiphase_buck_topology(
         raise ValueError("recorded phases must be an integer")
     values["phases"] = int(phases)
     return multiphase_buck_topology_descriptor(MultiphaseBuckPlant(**values))
+
+
+def _export_model_control_buck_topology(
+    parameters: Mapping[str, Any]
+) -> TopologyDescriptor:
+    """Display the model-controlled switching Buck graph from recorded data."""
+
+    values = _recorded_parameters(parameters, _MODEL_CONTROL_TOPOLOGY_PARAMETERS)
+    return model_control_buck_topology_descriptor(SimpleNamespace(**values))
+
+
+def _export_whole_run_switching_buck_topology(
+    parameters: Mapping[str, Any]
+) -> TopologyDescriptor:
+    """Display the whole-run switching graph without claiming a netlist."""
+
+    values = _recorded_parameters(parameters, _MODEL_CONTROL_TOPOLOGY_PARAMETERS)
+    return model_control_buck_topology_descriptor(
+        SimpleNamespace(**values),
+        backend="whole-run-switching-buck",
+    )
+
+
+def _export_peak_current_buck_topology(
+    parameters: Mapping[str, Any]
+) -> TopologyDescriptor:
+    """Display the peak-current switching graph from recorded data."""
+
+    values = _recorded_parameters(parameters, _MODEL_CONTROL_TOPOLOGY_PARAMETERS)
+    return model_control_buck_topology_descriptor(
+        SimpleNamespace(**values),
+        model_kind="model_side_peak_current_reference",
+        backend="peak-current-buck",
+    )
 
 
 def _export_ngspice_sync_buck_topology(
@@ -520,6 +681,46 @@ _BUILTIN_REGISTRATIONS: tuple[PlantRegistration, ...] = (
         control_location=CONTROL_LOCATION_MODEL,
         event_granularity=EVENT_GRANULARITY_WINDOW,
         topology_exporter=_export_whole_run_buck_topology,
+    ),
+    PlantRegistration(
+        plant_id="model-control-buck",
+        backend_id="model-control-buck",
+        factory=_build_model_control_buck,
+        class_name="ModelControlBuckPlant",
+        schedule_keys=_BASE_SCHEDULE_KEYS | _EXTERNAL_INPUT_SCHEDULE_KEYS,
+        config_keys=frozenset(_MODEL_CONTROL_BUCK_DEFAULTS),
+        trust_level="reference",
+        export_eligible=True,
+        control_location=CONTROL_LOCATION_MODEL,
+        event_granularity=EVENT_GRANULARITY_WINDOW,
+        topology_exporter=_export_model_control_buck_topology,
+    ),
+    PlantRegistration(
+        plant_id="peak-current-buck",
+        backend_id="peak-current-buck",
+        factory=_build_peak_current_buck,
+        class_name="PeakCurrentBuckPlant",
+        schedule_keys=_BASE_SCHEDULE_KEYS | _EXTERNAL_INPUT_SCHEDULE_KEYS,
+        config_keys=frozenset(_PEAK_CURRENT_BUCK_DEFAULTS),
+        trust_level="reference",
+        export_eligible=True,
+        control_location=CONTROL_LOCATION_MODEL,
+        event_granularity=EVENT_GRANULARITY_WINDOW,
+        topology_exporter=_export_peak_current_buck_topology,
+    ),
+    PlantRegistration(
+        plant_id="whole-run-switching-buck",
+        backend_id="whole-run-switching-buck",
+        factory=_build_whole_run_switching_buck,
+        class_name="WholeRunSwitchingBuckPlant",
+        schedule_keys=_BASE_SCHEDULE_KEYS | _EXTERNAL_INPUT_SCHEDULE_KEYS,
+        config_keys=frozenset(_MODEL_CONTROL_BUCK_DEFAULTS),
+        trust_level="reference",
+        export_eligible=True,
+        time_model=TIME_MODEL_WHOLE_RUN,
+        control_location=CONTROL_LOCATION_MODEL,
+        event_granularity=EVENT_GRANULARITY_WINDOW,
+        topology_exporter=_export_whole_run_switching_buck_topology,
     ),
 )
 

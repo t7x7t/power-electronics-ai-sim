@@ -478,6 +478,97 @@ def ngspice_sync_buck_topology_descriptor(plant: Any | None = None) -> TopologyD
     )
 
 
+def model_control_buck_topology_descriptor(
+    plant: Any | None = None,
+    *,
+    model_kind: str = "model_side_controlled_switching_reference",
+    backend: str = "model-control-buck",
+) -> TopologyDescriptor:
+    """Build the semantic graph for a model-controlled switching Buck.
+
+    The graph has a high-side and a low-side ideal switch and a single PWM
+    control net.  It claims no dead time and no diode; those are model
+    declarations, not display details.
+    """
+
+    params = _plant_parameters(plant)
+    nets = tuple(
+        TopologyNet(net_id, label=label, kind=kind)
+        for net_id, label, kind in (
+            ("vin", "Vin", "electrical"),
+            ("sw", "Switch node", "electrical"),
+            ("vout", "Vout", "electrical"),
+            ("gnd", "GND", "reference"),
+            ("pwm", "PWM control", "control"),
+        )
+    )
+    components = (
+        _component(
+            "vin_source",
+            "voltage_source",
+            (("positive", "vin", "output"), ("negative", "gnd", "passive")),
+            parameters={"voltage_v": params.get("input_voltage_v")},
+            symbol_id="source.dc",
+        ),
+        _component(
+            "pwm_source",
+            "pulse_source",
+            (("positive", "pwm", "output"), ("negative", "gnd", "passive")),
+            parameters={"switching_frequency_hz": params.get("switching_frequency_hz")},
+            symbol_id="source.pulse",
+        ),
+        _component(
+            "high_side_switch",
+            "voltage_controlled_switch",
+            (("input", "vin", "input"), ("output", "sw", "output"), ("control", "pwm", "control")),
+            parameters={},
+            symbol_id="switch.ideal",
+        ),
+        _component(
+            "low_side_switch",
+            "voltage_controlled_switch",
+            (("input", "sw", "input"), ("output", "gnd", "passive"), ("control", "pwm", "control")),
+            parameters={},
+            symbol_id="switch.ideal",
+        ),
+        _component(
+            "inductor",
+            "inductor",
+            (("input", "sw", "passive"), ("output", "vout", "passive")),
+            parameters={"inductance_h": params.get("inductance_h")},
+            symbol_id="inductor",
+        ),
+        _component(
+            "capacitor",
+            "capacitor",
+            (("positive", "vout", "passive"), ("negative", "gnd", "passive")),
+            parameters={"capacitance_f": params.get("capacitance_f")},
+            symbol_id="capacitor",
+        ),
+        _component(
+            "load",
+            "resistor_load",
+            (("positive", "vout", "passive"), ("negative", "gnd", "passive")),
+            parameters={"resistance_ohm": params.get("load_resistance_ohm")},
+            symbol_id="resistor",
+        ),
+    )
+    return TopologyDescriptor(
+        "buck",
+        components,
+        nets,
+        metadata={
+            "model_level": "L2",
+            "model_kind": model_kind,
+            "backend": backend,
+            "control_location": "model",
+            "control_period_s": params.get("control_period_s"),
+            "freewheeling_diode": False,
+            "dead_time_modelled": False,
+        },
+    )
+
+
 def export_topology_descriptor(plant: Any) -> TopologyDescriptor:
     """Export a known reference topology; unknown custom plants fail closed."""
 
@@ -490,6 +581,19 @@ def export_topology_descriptor(plant: Any) -> TopologyDescriptor:
             return ngspice_buck_topology_descriptor(plant)
         if model_kind == "ngspice_sync_buck_reference":
             return ngspice_sync_buck_topology_descriptor(plant)
+        if model_kind in {
+            "model_side_controlled_switching_reference",
+            "model_side_peak_current_reference",
+        }:
+            backend = str(
+                getattr(plant, "backend_id", "model-control-buck")
+                or "model-control-buck"
+            )
+            return model_control_buck_topology_descriptor(
+                plant,
+                model_kind=model_kind,
+                backend=backend,
+            )
         return buck_topology_descriptor(plant)
     if topology == "boost":
         return boost_topology_descriptor(plant)

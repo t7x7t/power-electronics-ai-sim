@@ -35,7 +35,7 @@
 | A8 | 轻载 / DCM / burst | very-common | partial | covered | adapter | `tests/test_sync_buck_plant.py`（`ngspice-sync-buck` 按开关周期从 `i(L1)` 检测 `ccm`/`dcm`/`forced_ccm`/`idle`/`burst`，阈值显式且仅为检测设置）；平均模型仍声明 CCM 假设；burst 是观察标签，不是 burst-mode 控制 |
 | A9 | 死区与同步整流时序 | common | yes | covered | adapter | `tests/test_sync_buck_plant.py`（`ngspice-sync-buck`：高/低边双开关、两侧 100 ns 死区、PWL 栅极支持任意载波相位、无续流二极管；含真实 ngspice 窗口测试）；未建模栅极电阻/电荷与体二极管 |
 | A10 | 输入/负载/duty 参数扫掠 | very-common | yes | covered | kernel | `tests/test_study_plan.py`（笛卡尔展开、路径白名单、单点文档仍是合法实验文档）、`tests/test_study_cli.py`（端到端扫掠 `controller_config.kp` 与 `plant_config.load_resistance_ohm`，任意数值叶子可为轴）；上限 `per-point`，聚合为派生（`aggregate_does_not_inherit_comparable`） |
-| A11 | 长时程高分辨率连续波形（放弃窗口拦截） | common | partial | expressible | adapter | `whole_run` 路线已有（`limited`）；缺开关级整段适配器，见 ADR 0004 §Implementation 3 |
+| A11 | 长时程高分辨率连续波形（放弃窗口拦截） | common | yes | covered | adapter | `tests/test_model_control_adapters.py`（`whole-run-switching-buck`：开关级 RK4 整段轨迹、模型内 PI、声明 cadence；`limited` + `post_hoc_validation_only`） |
 
 ### B. 控制与环路
 
@@ -43,12 +43,12 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | B1 | 电压模式 PI/PID（内核控制器） | very-common | yes | covered | kernel | `tests/test_pi_controller.py`, `tests/test_pid_controller.py` |
 | B2 | Type II/III 补偿器（内核侧、按控制周期离散） | very-common | yes | covered | kernel | `tests/test_controller_registry.py`（注册表解析、Tustin 系数独立对照、钳位/快照、CLI 端到端）；ADR 0007 |
-| B3 | 峰值/平均电流模式（逐周期比较器） | very-common | no | kernel_gap | kernel | 需比较器级事件（A4 的超集）；`UD-01` |
+| B3 | 峰值/平均电流模式（逐周期比较器） | very-common | yes | covered | adapter | `tests/test_model_control_adapters.py`（`peak-current-buck`：固定频率峰值电流、模型内比较器、比较器事件时刻；`limited` + `actuator_control_in_model`） |
 | B4 | 数字环路的采样/ZOH/计算延迟 | very-common | yes | covered | controller | `tests/test_stage16_expressible_scenarios.py`（`sample_offset_s`/`control_period_s`/观测时刻一致） |
 | B5 | 前馈（line/load） | common | yes | covered | controller | `tests/test_stage16_expressible_scenarios.py`（零误差时 duty 仅由 `kff_v` 决定，含零前馈对照） |
 | B6 | 多环级联（电压外环+电流内环） | very-common | yes | covered | controller | `tests/test_stage16_expressible_scenarios.py`（`state_update` 在下一步可见） |
 | B7 | 多相/均流/相位增减 | common | partial | covered | adapter | `tests/test_multiphase_plant.py`（`multiphase-buck`：2–8 相共享 duty、内部相位偏移、总电流平均模型、`L/N` 等效电感）；逐相均流/增减相与纹波抵消未建模，限制码 `per_phase_current_sharing_not_modelled` |
-| B8 | 控制器放进网表 | common | no | kernel_gap | kernel | ADR 0004（`control_location=model`，上限 `limited`） |
+| B8 | 控制器放进网表 | common | yes | covered | adapter | `tests/test_model_control_adapters.py`（`model-control-buck` 步进/model 与 `whole-run-switching-buck` whole_run/model：模型内 PI，内核 action 被记录但不驱动；这是 ADR 0004 的 model 侧闭环，不是 SPICE 网表内器件级补偿器；`limited` + `actuator_control_in_model`） |
 | B9 | 保护状态机（OCP/OVP/UVLO/hiccup/latch） | very-common | yes | covered | controller | `tests/test_protection.py`（OVP/OCP/UVLO、启动掩码、hiccup/latch、快照恢复） |
 
 ### C. 分析类型
@@ -72,7 +72,7 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | D1 | 窗口内子步（plant_step_s） | very-common | yes | covered | kernel | `tests/test_runtime_preflight_contracts.py`（窗口端点校验） |
 | D2 | 任意控制/开关周期比下的相位连续 PWM | common | yes | covered | kernel | `tests/test_event_boundaries.py`（1.5× 与 1.2×Tsw 连跑均与单次直跑一致）；`UD-05` 关闭 |
-| D3 | 事件精确时刻（比较器/二极管过零） | very-common | partial | kernel_gap | kernel | ADR 0004 §3：外部输入变更点已按声明时刻求解（`tests/test_event_boundaries.py`）；比较器/器件级事件随 B3 在 `docs/61` S9 处理 |
+| D3 | 事件精确时刻（比较器/二极管过零） | very-common | yes | covered | adapter | `tests/test_model_control_adapters.py`（`peak-current-buck` 记录比较器事件；`diode_emulation` 记录二极管过零并保持零电流；事件在模型内求解，`limited`） |
 | D4 | 中断/恢复、快照等价 | common | yes | covered | kernel | `tests/test_stage5_runner.py`, `tests/test_stage8_failure_recovery.py` |
 | D5 | 确定性/可复现与包可复核 | common | yes | covered | kernel | `tests/test_stage9_reproducibility.py`, `tests/test_inspection.py` |
 
@@ -99,15 +99,15 @@
 | `closed` | A1, A2, A3, A4, A5, A6, A7, A10, B1, B2, B4, B5, B6, B9, C1, C2, C3, C4, C5, C6, C7, C9, C10, D1, D2, D4, D5 | 今天可用且已有测试 |
 | `test-only` | —（当前为空：可表达性行已在 0.10.0 闭合） | 今天已能表达，只缺用例 |
 | `postprocess` | —（当前为空：派生指标已在 0.12.0 闭合） | 单次运行样本上的派生指标 |
-| `adapter` | A8, A9, A11, B7 | 新模型或新网表模板，零内核改动（T1） |
+| `adapter` | A8, A9, A11, B3, B7, B8, D3 | 新模型或新网表模板，零内核改动（T1） |
 | `controller` | —（当前为空：保护在 0.14.1 闭合） | 新控制器或保护状态机 |
 | `study` | —（当前为空：study 计划层已在 0.15.0 闭合） | 需要在单次运行之上编排（ADR 0005 Seam 1） |
 | `capability` | —（0.16.0 已由 `pe-sim capability` 闭合） | 需要模型回答 `advance()` 答不了的问题（ADR 0005 Seam 2） |
-| `kernel-impl` | B3, D3 | 内核实现改动，**不改协议** |
-| `contract` | B8 | 真正需要改契约，且已由 ADR 决定（ADR 0004）；A6（ADR 0006）与 B2（ADR 0007）曾属此类，已关闭并转入 `closed` |
+| `kernel-impl` | —（当前为空：模型内比较器适配器已闭合对应行，零内核改动） | 内核实现改动，**不改协议** |
+| `contract` | —（当前为空：既有 `control_location=model` 声明已闭合对应行） | 真正需要改契约，只有先写 ADR 才允许新增一行 |
 | `never` | C8 | 已声明不做 |
 
-**读数说明:** 35 行里曾有 **3 行**需要改契约（A6、B2 已关闭，B8 待做），2 行需要内核实现但不改协议（B3、D3）；
+**读数说明:** 35 行里曾有 **3 行**需要改契约（A6、B2、B8 均已关闭），2 行曾需要内核实现但不改协议（B3、D3，现由模型内比较器适配器闭合）；
 其余行是适配器、控制器、study、后处理或补测试。这说明 `plant + controller + runner` 本身是适配的，
 缺的是 Runner **之上**的一层编排与 Plant **之下**的一层可选能力声明（ADR 0005），而不是重写。
 
@@ -123,7 +123,7 @@
 | 用平均模型判断 DCM/纹波（A8） | `uncheckable_rules` 已声明，但报告里不显眼 | 保持声明；在 `docs/58` 增加对应行 |
 | 把 `whole-run` 结果当实时拦截证据（A11） | 已由证据上限 `limited` 阻断 | 已闭合 |
 | 需要 AC 环路裕度却只看瞬态（C4） | 已由 `pe-sim capability` 的 AC 入口闭合；仍不得把瞬态结果当 AC 裕度 | 用 `pe-sim capability` 明确声明工作点与扫频；结果不携带证据等级 |
-| 需要比较器级事件（B3/D3） | 外部输入变更点已按声明时刻求解；比较器/器件事件仍只在求解段边界 | 保持为 `kernel_gap`；由 `docs/61` S9 处理，落地前文档不得暗示逐周期保护 |
+| 需要比较器级事件（B3/D3） | 外部输入变更点已按声明时刻求解；比较器/器件事件仍只在模型内求解，内核不拦截 | 已由 `peak-current-buck` 的模型内比较器闭合；`limited` 上限与 `actuator_control_in_model` 限制码仍然有效，不得暗示内核逐周期保护 |
 
 已消除的两个静默缺口（保留在此备查）：A4 窗口内负载阶跃（ADR 0004 步骤 2，0.13.0）与
 D2 非整数控制比（同一提交删除构造期限制）。

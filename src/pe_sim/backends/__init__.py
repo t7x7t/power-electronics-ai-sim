@@ -62,6 +62,13 @@ from .process import (
     parse_ngspice_version,
 )
 from .settings import NgspiceSolverSettings
+from .model_control_buck import (
+    ModelControlBuckParameters,
+    ModelControlBuckPlant,
+    PeakCurrentBuckParameters,
+    PeakCurrentBuckPlant,
+    WholeRunSwitchingBuckPlant,
+)
 from .whole_run_engine import (
     IntegrationOutcome,
     LinearStateSpace,
@@ -99,8 +106,13 @@ __all__ = [
     "NgspiceSolverSettings",
     "IntegrationOutcome",
     "LinearStateSpace",
+    "ModelControlBuckParameters",
+    "ModelControlBuckPlant",
+    "PeakCurrentBuckParameters",
+    "PeakCurrentBuckPlant",
     "TraceTable",
     "WholeRunBuckPlant",
+    "WholeRunSwitchingBuckPlant",
     "WrdataParseError",
     "default_sample_step_s",
     "classify_conduction_regime",

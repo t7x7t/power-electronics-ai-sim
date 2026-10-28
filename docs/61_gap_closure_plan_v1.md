@@ -31,7 +31,7 @@
 | S6 | 0.14.1 | —（已完成：控制器 seam） | `controller` seam | S5 | 已交付：B2 注册表/Type II-III（0.14.0）；B9/A7 保护与短路恢复（0.14.1） |
 | S7 | 0.15.0 | —（已完成：study 计划层） | `study` seam | S1 | 已交付：A10 C3 C9 闭合；聚合恒为 `per-point`，不自动继承 `comparable` |
 | S8 | 0.16.0 | —（已完成：capability 入口） | `capability` seam | S7 | 已交付：C4 C5 C6 闭合；缺失能力 = 不可用（不是 `limited`）；AC/阻抗方法必须自报 |
-| S9 | 0.17.0 | A11 B8 B3 D3 | `adapter` 扩面 + 比较器事件 | S5 | T1 仍然成立：新能力是注册，不是内核分支；A8/A9/B7 已交付 |
+| S9 | 0.17.0 | —（已完成：适配器扩面） | `adapter` 扩面 + 比较器事件 | S5 | 已交付：A11/B8/B3/D3 闭合；A8/A9/B7 已在前一片闭合；T1 仍然成立 |
 | S10 | 0.18.0 | —（收口与发布） | 发布 | S1–S9 | `docs/60` 无 `kernel_gap` / `expressible` 残留 |
 
 ### 2.1 为什么是这个顺序
@@ -223,6 +223,17 @@
   `tests/test_multiphase_plant.py` **14 passed**；全量 **1705 passed / 2 skipped**。
   `docs/60` 的 A8/A9/B7 已置 `covered`。新 solve path 尚未获得维护者 review pin，
   正式比较仍封顶 `limited`；A11/B8/B3/D3 尚未开始。
+- 已交付（第二片，0.17.0）：`src/pe_sim/backends/model_control_buck.py`——
+  A11 `whole-run-switching-buck`（开关级 RK4 整段轨迹、声明 cadence、模型内 PI，
+  `whole_run/model`）；B8 `model-control-buck`（步进开关级、模型内 PI，内核 action
+  记录但不驱动）与 `whole-run-switching-buck` 的 whole_run/model 半边；
+  B3/D3 `peak-current-buck`（固定频率峰值电流、模型内比较器事件、可选二极管
+  续流零电流保持）。三条路线均保持零内核改动（T1），证据上限由既有
+  `RouteCapabilities` 派生为 `limited`，限制码 `actuator_control_in_model` /
+  `post_hoc_validation_only` 由既有单点派生。测试：
+  `tests/test_model_control_adapters.py` **15 passed**；全量
+  **1720 passed / 2 skipped**（含 ngspice 41）与 **1710 passed / 12 skipped**
+  （无 ngspice）；`docs/60` 的 A11/B8/B3/D3 已置 `covered`。
 
 **S10 — 收口**
 

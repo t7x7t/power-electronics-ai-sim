@@ -115,7 +115,9 @@ def test_the_catalog_exposes_the_declared_time_model():
     time_models = {item["time_model"] for item in entries}
     assert {"stepped", TIME_MODEL_WHOLE_RUN} <= time_models
     assert {
-        item["time_model"] for item in entries if item["plant_id"] != "whole-run-buck"
+        item["time_model"]
+        for item in entries
+        if item["plant_id"] not in {"whole-run-buck", "whole-run-switching-buck"}
     } == {TIME_MODEL_STEPPED}
 
 

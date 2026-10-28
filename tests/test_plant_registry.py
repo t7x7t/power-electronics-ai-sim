@@ -51,10 +51,13 @@ _EXPECTED_TRUST = {
     "fake-load": "fixture",
     "buck": "reference",
     "boost": "reference",
+    "model-control-buck": "reference",
     "multiphase-buck": "reference",
     "ngspice-buck": "reference",
+    "peak-current-buck": "reference",
     "ngspice-sync-buck": "reference",
     "whole-run-buck": "reference",
+    "whole-run-switching-buck": "reference",
 }
 
 
