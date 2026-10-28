@@ -30,6 +30,8 @@ from .capability_analysis import (
 )
 from .builtin_controllers import load_builtin_controllers
 from .builtin_plants import PlantBuildContext, load_builtin_plants
+from .circuit_compile import CircuitCompileError, compile_topology
+from .circuit_devices import describe_devices, describe_device
 from .controller_registry import ControllerBuildContext, resolve_controller
 from .plant_parameters import PLANT_PARAMETERS, describe_plant
 from .plant_registry import PlantRegistration, plant_catalog, resolve
@@ -40,6 +42,12 @@ from .spec_validation import (
     collect_issues,
     validate_document,
     validation_document,
+)
+from .topology_validation import (
+    TOPOLOGY_VALIDATION_SCHEMA,
+    TopologyValidationError,
+    build_descriptor,
+    topology_validation_document,
 )
 from .time_model import TIME_MODEL_STEPPED, TIME_MODEL_WHOLE_RUN, TIME_MODELS
 from .backends import (
@@ -114,6 +122,17 @@ def _emit_rejection(status: str, code: str, error: str, **extra: Any) -> None:
     print(json.dumps(rejection_document(status, code, error, extra), sort_keys=True))
 
 
+def _key_error_text(exc: KeyError) -> str:
+    """Return a ``KeyError`` payload without the repr quoting ``str`` adds.
+
+    ``describe`` and ``describe-devices`` raise ``KeyError`` for a misspelled
+    name, and ``str(KeyError("x"))`` is ``"'x'"`` - quoting a message that is
+    already prose makes the CLI output look like a serialisation bug.
+    """
+
+    return str(exc.args[0]) if exc.args else str(exc)
+
+
 def _run_validate(args) -> int:
     """Validate one experiment document and print its issue envelope.
 
@@ -173,21 +192,154 @@ def _run_describe(args) -> int:
         # Mirror the shape ``run`` uses for the same mistake, so a client needs
         # one parser for one class of error.  ``path`` points at the field an
         # experiment document would have carried the name in.
+        message = _key_error_text(exc)
         issue = SpecIssue(
             code="unknown_plant",
             path="/plant_id",
-            message=str(exc),
+            message=message,
             expected="one of: " + ", ".join(sorted(PLANT_PARAMETERS)),
         )
         _emit_rejection(
             "CONFIG_REJECTED",
             "unknown_plant",
-            str(exc),
+            message,
             validation=SPEC_VALIDATION_SCHEMA,
             issues=[issue.to_dict()],
         )
         return 2
     print(json.dumps(payload, sort_keys=True))
+    return 0
+
+
+def _run_describe_devices(args) -> int:
+    """Print the closed device vocabulary without loading any adapter.
+
+    This is the other half of the authoring question: ``describe`` says what a
+    ``plant_config`` may contain, and this says what a *topology* may contain.
+    An unknown kind is reported the same way ``describe`` reports an unknown
+    plant, so a client needs one parser for one class of mistake.
+    """
+
+    if args.device_kind is None:
+        print(json.dumps(describe_devices(), sort_keys=True))
+        return 0
+    try:
+        payload = describe_device(args.device_kind)
+    except KeyError as exc:
+        from .circuit_devices import CIRCUIT_DEVICES
+
+        message = _key_error_text(exc)
+        print(
+            json.dumps(
+                rejection_document(
+                    "CONFIG_REJECTED",
+                    "invalid_request",
+                    message,
+                    {
+                        "validation": "pe-sim.circuit-devices.v1",
+                        "issues": [
+                            {
+                                "code": "unsupported_device_kind",
+                                "path": "/kind",
+                                "message": message,
+                                "expected": "one of: "
+                                + ", ".join(sorted(CIRCUIT_DEVICES)),
+                                "suggestion": None,
+                                "severity": "error",
+                            }
+                        ],
+                    },
+                ),
+                sort_keys=True,
+            )
+        )
+        return 2
+    print(json.dumps(payload, sort_keys=True))
+    return 0
+
+
+def _run_validate_topology(args) -> int:
+    """Validate one topology document and print its issue envelope.
+
+    Like ``validate``, this builds nothing and starts nothing, so it is safe to
+    run before any circuit exists.  An unreadable file is a rejected request
+    rather than a document issue, because no document was read.
+    """
+
+    try:
+        document = json.loads(Path(args.topology).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        _emit_rejection(
+            "CONFIG_REJECTED",
+            "invalid_request",
+            f"{args.topology}: {exc}",
+            reason="invalid_document",
+        )
+        return 2
+    payload = topology_validation_document(document)
+    print(json.dumps(payload, sort_keys=True))
+    return 0 if payload["ok"] is True else 2
+
+
+def _run_compile_topology(args) -> int:
+    """Compile one topology document into a netlist, without executing it.
+
+    Validation runs first because a compile refusal and a document defect are
+    different answers, and an author should see the document defects as a list
+    rather than one refusal at a time.
+    """
+
+    try:
+        document = json.loads(Path(args.topology).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        _emit_rejection(
+            "CONFIG_REJECTED",
+            "invalid_request",
+            f"{args.topology}: {exc}",
+            reason="invalid_document",
+        )
+        return 2
+
+    envelope = topology_validation_document(document)
+    if envelope["ok"] is not True:
+        _emit_rejection(
+            "CONFIG_REJECTED",
+            "invalid_request",
+            f"{args.topology}: topology document has "
+            f"{envelope['error_count']} error(s)",
+            validation=TOPOLOGY_VALIDATION_SCHEMA,
+            issues=envelope["issues"],
+        )
+        return 2
+
+    try:
+        compiled = compile_topology(
+            build_descriptor(document),
+            duty=args.duty,
+            duration_s=args.duration,
+            sample_step_s=args.step,
+            integrator=args.integrator,
+        )
+    except CircuitCompileError as exc:
+        _emit_rejection(
+            "CONFIG_REJECTED",
+            "invalid_request",
+            str(exc),
+            compile_code=exc.code,
+            details=exc.details,
+        )
+        return 2
+
+    summary = compiled.to_dict()
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(compiled.netlist, encoding="utf-8")
+        print(json.dumps({**summary, "output": str(args.output)}, sort_keys=True))
+        return 0
+    if args.as_json:
+        print(json.dumps({**summary, "netlist": compiled.netlist}, sort_keys=True, indent=2))
+    else:
+        print(compiled.netlist, end="" if compiled.netlist.endswith("\n") else "\n")
     return 0
 
 
@@ -497,6 +649,29 @@ def main(argv: list[str] | None = None) -> int:
         help="print the declared plant_config surface of one plant",
     )
     describe.add_argument("plant_id")
+    devices = sub.add_parser(
+        "describe-devices",
+        help="print the closed device vocabulary a topology may use",
+    )
+    devices.add_argument("device_kind", nargs="?", default=None)
+    validate_topology_parser = sub.add_parser(
+        "validate-topology",
+        help="validate a circuit topology document without compiling it",
+    )
+    validate_topology_parser.add_argument("topology", type=Path)
+    compile_topology_parser = sub.add_parser(
+        "compile-topology",
+        help="compile a circuit topology document into a netlist without executing it",
+    )
+    compile_topology_parser.add_argument("topology", type=Path)
+    compile_topology_parser.add_argument("--duty", type=float, default=0.5)
+    compile_topology_parser.add_argument("--duration", type=float, default=1e-3)
+    compile_topology_parser.add_argument("--step", type=float, default=None)
+    compile_topology_parser.add_argument(
+        "--integrator", choices=("trap", "gear", "euler"), default="trap"
+    )
+    compile_topology_parser.add_argument("--output", type=Path, default=None)
+    compile_topology_parser.add_argument("--json", action="store_true", dest="as_json")
     preview = sub.add_parser(
         "preview-netlist",
         help="render the reviewed circuit netlist without executing a simulation",
@@ -531,6 +706,12 @@ def main(argv: list[str] | None = None) -> int:
             return _run_describe(args)
         if args.command == "validate":
             return _run_validate(args)
+        if args.command == "describe-devices":
+            return _run_describe_devices(args)
+        if args.command == "validate-topology":
+            return _run_validate_topology(args)
+        if args.command == "compile-topology":
+            return _run_compile_topology(args)
         # The CLI is the composition root: it attaches the project-owned plant
         # registrations. The kernel never enumerates plants itself.  Kept
         # inside the try so a registration conflict is reported as JSON rather

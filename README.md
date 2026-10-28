@@ -120,6 +120,28 @@ experiment schema, and the plant's schedule vocabulary without building a
 plant, starting a solver, or creating a run directory. See
 [docs/63_agent_facing_spec_validation_v1.md](docs/63_agent_facing_spec_validation_v1.md).
 
+The other half of authoring a circuit is its structure, and it has the same
+three-step shape:
+
+```powershell
+pe-sim describe-devices                       # what may I draw?
+pe-sim validate-topology .\topology.json      # is this a well-formed circuit?
+pe-sim compile-topology .\topology.json --duty 0.5 --output circuit.cir
+```
+
+`describe-devices` prints the closed device vocabulary (ordered ports, allowed
+net kinds, parameters with units, and whether a kind has an element card at
+all). `validate-topology` reports pointer-addressed issues for unknown ports,
+unknown parameters, dangling nets, a disconnected graph, a missing or duplicated
+reference net, an undriven or multiply driven control net, and loops of ideal
+voltage sources. `compile-topology` renders a deterministic netlist whose
+SHA-256 is a stable identity for the compiled circuit; it refuses anything it
+cannot render exactly instead of approximating. None of the three builds a
+plant, imports an adapter, starts a solver, or creates a run directory. A
+compiled netlist is a well-formed circuit, not a reviewed model: a topology an
+agent authors can reach at most `limited` evidence. See
+[docs/64_circuit_topology_authoring_v1.md](docs/64_circuit_topology_authoring_v1.md).
+
 The demo is an exploratory run of a project-owned averaged reference model. It
 records `evidence_level: functional`; it is not a physical, formal-comparison,
 or hardware claim. The consumer creates one configuration file and otherwise

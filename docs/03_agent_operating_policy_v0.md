@@ -36,6 +36,12 @@
   （类型、单位、边界、默认值），不构建 plant、不调用工厂；
 - `pe-sim validate <config>` 在构建 plant、启动求解器、创建运行目录之前，用同一份
   声明与实验 Schema 检查文档，并按 JSON Pointer 输出结构化问题（`docs/63`）；
+- `pe-sim describe-devices [kind]` 打印拓扑可用的封闭器件词表（端口、网种类、参数、
+  单位、是否可渲染），不加载注册根、不导入后端；
+- `pe-sim validate-topology <file>` 在编译之前检查拓扑文档的结构与语义（连通性、
+  参考网、控制网、电压源回路），并报告 `checked` 实际跑过的检查组（`docs/64`）；
+- `pe-sim compile-topology <file>` 把拓扑文档渲染成确定性网表，不执行任何求解；
+  渲染不了时给出封闭的拒绝码，不做近似；
 - `pe-sim preview-netlist` 在不启动仿真器的情况下渲染网表，供人工核对电路；
 - 后端失败时保留有界日志摘要（`failure.backend_evidence`）。
 
@@ -66,9 +72,13 @@
    `pe-sim validate <config>`，并按 `issues[].path` 修到 `ok: true`。该命令不构建
    plant、不实例化或调用适配器、不启动求解器、不创建运行目录，是零副作用自检回路；
    通过只表示文档与当前声明一致，不表示电路正确或可发布（`docs/63`）。
-6. 运行针对性测试，再运行相关集成测试。
-7. 对 Manifest、状态、资格、安全和因果边界做审计。
-8. 保留失败产物，生成变更摘要、命令、限制和未完成项。
+6. 若任务编写或修改电路拓扑文档，先按 `pe-sim describe-devices` 的声明写，再运行
+   `pe-sim validate-topology` 修到 `ok: true`，最后用 `pe-sim compile-topology` 确认
+   能渲染。**可编译不等于模型被评审**：Agent 自行编写的拓扑没有评审记录，其产出
+   最高为 `limited` 证据，不得暗示 `comparable`（`docs/64`）。
+7. 运行针对性测试，再运行相关集成测试。
+8. 对 Manifest、状态、资格、安全和因果边界做审计。
+9. 保留失败产物，生成变更摘要、命令、限制和未完成项。
 
 任务未完成时必须明确标记 `INCOMPLETE`，不能用“代码已修改”代替验证结论。
 

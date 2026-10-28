@@ -323,9 +323,12 @@ CONFIG_REJECTED`，`error_code: invalid_request`），并额外带两个可选�
 
 ## 10. 未做（Step B / Step C 与跨字段约束）
 
-- **Step B**：`TopologyDescriptor` 的双向契约、`CircuitPlant`、通用 `ModelBuilder`
-  尚未实现；本表面只覆盖 `plant_config` 声明，不覆盖拓扑结构声明。
-- **Step C**：SPICE 子集导入器尚未实现；`validate` 不能读取网表并据此校验参数。
+- **Step B**：拓扑结构那一半已在 **v0.20.0** 交付（器件词表、结构校验、网表编译，
+  见 `docs/64_circuit_topology_authoring_v1.md`）。仍缺 `CircuitPlant` 执行适配器、
+  通用 `ModelBuilder`、载波相位支持与互补控制声明。本表面只覆盖 `plant_config`
+  声明，不覆盖拓扑结构声明；两者由不同模块回答，但形状一致。
+- **Step C**：SPICE 子集导入器尚未实现；`validate` 不能读取网表并据此校验参数，
+  `validate-topology` 也不能。
 - **跨字段约束**：`output_min < output_max`、
   `integration_step_s <= switching_period / 20` 这类关系目前只在模型层（适配器构造
   或运行期）校验，`validate` 不做。文档可以在单字段层面全部合法，而在运行期因跨字段
@@ -340,4 +343,5 @@ CONFIG_REJECTED`，`error_code: invalid_request`），并额外带两个可选�
 | `docs/45_error_and_rejection_codes_v1.md` | 拒绝信封与 `issues` 可选字段 |
 | `docs/03_agent_operating_policy_v0.md` | Agent 强制流程中的 `validate` 步骤 |
 | `docs/44_run_interaction_contract_v1.md` | `list-plants` 的 catalog 声明 |
-| `docs/releases/v0.19.0.md` | 本次新增表面的发布说明 |
+| `docs/64_circuit_topology_authoring_v1.md` | Step B 前半：器件词表、拓扑校验、网表编译 |
+| `docs/releases/v0.19.0.md` | Step A 的发布说明 |
