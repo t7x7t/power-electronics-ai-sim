@@ -443,7 +443,9 @@ def ngspice_sync_buck_topology_descriptor(plant: Any | None = None) -> TopologyD
     """Build the semantic graph for the synchronous-Buck switching reference.
 
     The graph has a high-side and a low-side controlled switch, two separate
-    gate-drive nets, and no freewheeling diode.  It is a display/contract
+    gate-drive nets, and no freewheeling diode.  ``metadata.control`` declares
+    the one relation the two nets obey: both derive from the single commanded
+    duty, with the dead time separating them.  It is a display/contract
     identity, not a netlist or an electrical truth claim.
     """
 
@@ -463,6 +465,9 @@ def ngspice_sync_buck_topology_descriptor(plant: Any | None = None) -> TopologyD
         _component("capacitor", "capacitor", (("positive", "vout", "passive"), ("negative", "gnd", "passive")), parameters={"capacitance_f": params.get("capacitance_f")}, symbol_id="capacitor"),
         _component("load", "resistor_load", (("positive", "vout", "passive"), ("negative", "gnd", "passive")), parameters={"resistance_ohm": params.get("load_resistance_ohm")}, symbol_id="resistor"),
     )
+    control: dict[str, Any] = {"mode": "single_duty_complementary"}
+    if params.get("dead_time_s") is not None:
+        control["dead_time_s"] = params["dead_time_s"]
     return TopologyDescriptor(
         "buck",
         components,
@@ -471,6 +476,11 @@ def ngspice_sync_buck_topology_descriptor(plant: Any | None = None) -> TopologyD
             "model_level": "L2",
             "model_kind": "ngspice_sync_buck_reference",
             "backend": "ngspice-sync-buck",
+            # The two gate nets are not independent commands: one duty ratio
+            # produces both, with the dead time between them.  Declaring the
+            # relation is what lets the compiler render the circuit instead of
+            # refusing the second control net.
+            "control": control,
             "dead_time_s": params.get("dead_time_s"),
             "control_period_s": params.get("control_period_s"),
             "freewheeling_diode": False,

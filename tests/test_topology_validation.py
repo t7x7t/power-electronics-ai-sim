@@ -128,17 +128,24 @@ def test_an_averaged_reference_reports_only_that_it_is_not_compilable(name):
     ]
 
 
-def test_the_synchronous_reference_reports_its_second_control_net_as_a_warning():
+def test_the_synchronous_reference_declares_how_its_two_gate_nets_relate():
     descriptor = _shipped_descriptors()["ngspice_sync_buck"]
 
     issues = collect_topology_issues(descriptor.to_dict())
 
-    # Two gate nets are a declaration the single-duty compiler cannot honour
-    # yet, not a broken descriptor: the shipped synchronous reference is a
-    # reviewed model, so the finding must not be an error.
-    assert [(issue.code, issue.severity) for issue in issues] == [
-        ("multiple_control_nets", "warning")
-    ]
+    # The descriptor states that both gate nets derive from one commanded
+    # duty.  Once that relation is declared, two control nets are no longer a
+    # finding: the compiler can render them, and the validator must not warn
+    # about a document that explains itself.
+    assert issues == ()
+    assert descriptor.metadata["control"]["mode"] == "single_duty_complementary"
+
+
+def _sync_document_without_control_declaration() -> dict:
+    document = copy.deepcopy(_shipped_descriptors()["ngspice_sync_buck"].to_dict())
+    document.pop("fingerprint", None)
+    document["metadata"].pop("control", None)
+    return document
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +160,15 @@ def test_issue_codes_are_a_closed_set():
     assert WARNING_ISSUE_CODES == frozenset(
         {"actuator_missing", "multiple_control_nets", "no_output_load", "not_compilable"}
     )
+
+
+def test_the_validator_and_the_compiler_bless_the_same_control_modes():
+    """A mode the compiler honours must not be warned about, and vice versa."""
+
+    from pe_sim.circuit_compile import SUPPORTED_CONTROL_MODES
+    from pe_sim.topology_validation import DECLARED_CONTROL_MODES
+
+    assert DECLARED_CONTROL_MODES == SUPPORTED_CONTROL_MODES
 
 
 def test_an_issue_refuses_a_code_outside_the_vocabulary():
@@ -179,7 +195,7 @@ def test_every_warning_code_is_actually_emitted_as_a_warning():
         "actuator_missing": _mutate(
             lambda d: d["components"].remove(_component(d, "switch"))
         ),
-        "multiple_control_nets": _shipped_descriptors()["ngspice_sync_buck"].to_dict(),
+        "multiple_control_nets": _sync_document_without_control_declaration(),
         "no_output_load": _mutate(
             lambda d: d["components"].remove(_component(d, "load"))
         ),

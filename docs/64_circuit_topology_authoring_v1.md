@@ -134,7 +134,7 @@ Step B 的目标是把描述符从"展示用途的单向导出"变成"可校验�
 | --- | --- |
 | `not_compilable` | 含无元件卡的行为块 |
 | `actuator_missing` | 没有任何执行器 |
-| `multiple_control_nets` | 多于一个控制网 |
+| `multiple_control_nets` | 多于一个控制网，且描述符没有声明它们之间的关系 |
 | `no_output_load` | 没有负载，也就没有可观测输出 |
 
 `WARNING_ISSUE_CODES` 是这四个码的封闭集合，测试钉住它，因此一个码不可能悄悄
@@ -178,8 +178,10 @@ fingerprint)`。schema 不识别时 `checked` 为空；文档没有 `fingerprint
 - **确定性文本。** 元件卡按描述符顺序输出，数值统一用 `%.12e`，不写时间、主机名
   或路径。因此网表文本的 SHA-256 就是这份编译电路的稳定身份。
 - **拒绝而非发明。** 渲染不了的描述符给出代码，绝不做近似。
-- **单一被控标量。** 内核只命令一个无量纲占空比，因此编译器要求**恰好一个执行器**
-  与**恰好一个载波**，脉冲宽度由传入的 `duty` 推导，而不是从描述符里读。
+- **单一被控标量。** 内核只命令一个无量纲占空比。描述符可以声明这个占空比如何
+  派生出多个栅极信号（§5.6）；没有声明时，编译器要求**恰好一个执行器**与
+  **恰好一个载波**。无论哪种情形，脉冲宽度都由传入的 `duty` 推导，而不是从描述符
+  里读。
 
 ### 5.2 `pulse_source` 不存占空比
 
@@ -216,17 +218,18 @@ B1 pwm 0 V = V(pwm_pulse) + V(pwm_tail)
 
 最大偏差 2.4e-04，相对于 iL ≈ 6.8 A 是 3.5e-05 相对误差。
 
-### 5.4 封闭的 14 个拒绝码
+### 5.4 封闭的 16 个拒绝码
 
-`ambiguous_reference_net`、`invalid_carrier_phase`、`invalid_duration`、`invalid_duty`、
-`invalid_integrator`、`invalid_option`、`invalid_parameter`、`invalid_sample_step`、
-`missing_parameter`、`multiple_actuators`、`multiple_carriers`、`no_carrier`、
-`not_compilable`、`unsupported_net_kind`。
+`ambiguous_complementary_control`、`ambiguous_reference_net`、`invalid_carrier_phase`、
+`invalid_control_declaration`、`invalid_duration`、`invalid_duty`、`invalid_integrator`、
+`invalid_option`、`invalid_parameter`、`invalid_sample_step`、`missing_parameter`、
+`multiple_actuators`、`multiple_carriers`、`no_carrier`、`not_compilable`、
+`unsupported_net_kind`。
 
 其中 `multiple_actuators` 有一条重要的物理理由必须写在文档里：**同一个控制网驱动
-两个开关，会把互补器件渲染成同时导通。** 同步 Buck 有两个栅极网，因此当前编译器
-拒绝它 —— 这不是缺陷，而是“双控制网与单一占空比的推导关系尚未声明”这一事实的
-诚实表达。见 §7。
+两个开关，会把互补器件渲染成同时导通。** 没有声明关系的两个控制网也属于这一类。
+声明的互补关系见 §5.6；声明不合法时拒绝码是 `invalid_control_declaration`，声明了
+互补但开关无法按“是否接到参考网”分成一高一低时是 `ambiguous_complementary_control`。
 
 ### 5.5 与已评审模板的等价性
 
@@ -248,6 +251,40 @@ delta     vout=4.077e-05  iL=1.190e-05
 
 差约 7 ppm，来自采样点数不同（446992 vs 450094 行），不是模型差异。
 `D·Vin = 6.000 V`，与 6.022 V 的偏差是二极管正向压降，两个网表相同。
+
+### 5.6 互补控制声明
+
+同步 Buck 有两个栅极，但内核只命令一个占空比。描述符可以用**数据**说明两者的
+关系，而不是让编译器猜：
+
+```json
+"metadata": {
+  "control": {"mode": "single_duty_complementary", "dead_time_s": 1e-07}
+}
+```
+
+该模式的时序与已评审的同步参考网表完全一致：
+
+- 高边导通区间 `[0, D·Tsw − td]`；
+- 低边导通区间 `[D·Tsw, Tsw − td]`；
+- 两个死区区间 `[D·Tsw − td, D·Tsw)` 与 `[Tsw − td, Tsw)` 两侧栅极都为低。
+
+编译器的分类规则只看**连接**，不看名字：导电通路接到参考网的开关是低边，另一个
+是高边。两个开关共用同一个栅极网、或无法分成一高一低、或栅极网上没有恰好一个
+载波时，拒绝而不是猜。两个载波必须声明同一个开关频率；`td` 必须小于半个开关
+周期。
+
+`dead_time_s` 只从 `metadata.control` 读取。`pulse_source.dead_time_s` 仍然被记录
+（描述符表达两个载波的关系时需要它），但不参与渲染 —— 一个声明只能有一个权威
+来源。
+
+2026-10-29 实测（D = 0.5，Vin = 12 V，100 kHz，td = 100 ns，120 µs 窗口，
+末 30 个样本均值）：编译网表与 `render_sync_buck_netlist` 在相位 0、3 µs、6 µs
+三处均一致，`vout` 与 `i(L1)` 的末段均值差在 1e-3 以内。
+
+另外，开关的栅极参考节点现在取自**驱动它的载波的负端**，而不是无条件取节点 0。
+浮地/高边栅极驱动是合法电路；把它的栅极电压拿去和地比较，会让每一条元件卡看起来
+都合法而控制关系是错的。
 
 ## 6. CLI 表面
 
@@ -273,13 +310,12 @@ delta     vout=4.077e-05  iL=1.190e-05
   证据阶梯，它产出的结果最高只能是 `limited`，绝不可能是 `comparable`。
 - **一次只有八个器件、三种网种类**，没有互感、变压器、受控源、非线性器件、
   子电路、`.include`。
-- **不支持互补控制。** 同步 Buck、模型侧控制 Buck、峰值电流 Buck 的描述符都声明
-  了两个执行器共用或分用控制网；当前编译器只接受一个执行器加一个载波。
-  下一步是让描述符声明"多个控制网如何从单一占空比推导"（例如
-  `metadata.control = {mode: "single_duty_complementary", dead_time_s: ...}`），
-  并在编译器里实现；本次**未做**。
-- **`dead_time_s` 被记录但不渲染。** 声明在 `pulse_source` 上，因为描述符若有
-  两个载波就必须说明它们的关系；单执行器编译器没有位置应用它。
+- **互补控制只支持一种声明。** `single_duty_complementary` 覆盖同步 Buck 的双栅极
+  情形；模型侧控制 Buck 与峰值电流 Buck 的两个开关共用同一个栅极网（控制发生在
+  模型内部），它们不是互补电路，编译器仍然拒绝。多相、交错、三电平之类的关系
+  都需要各自的声明与渲染，本次**未做**。
+- **`dead_time_s` 的唯一权威来源是 `metadata.control`。** `pulse_source` 上的同名字段
+  被记录但不渲染，避免两处声明打架。
 - 不做 SPICE 子集导入（Step C）。
 
 ## 8. 未做：`CircuitPlant` 与通用 `ModelBuilder`
@@ -288,18 +324,18 @@ delta     vout=4.077e-05  iL=1.190e-05
 
 - `CircuitPlant`：从 `NgspiceBuckPlant` 抽出、以描述符驱动网表渲染与信号名解析的
   执行适配器；
-- 通用 `ModelBuilder`：与 `BuckNetlistParameters` 解耦的模型参数载体；
-- 互补控制的声明与实现（见 §7）。
+- 通用 `ModelBuilder`：与 `BuckNetlistParameters` 解耦的模型参数载体。
 
 这些都需要触及 `pe_sim.backends` 与评审身份（`reviewed_identities.json`），因此
-必须作为一次显式决策单独提交，而不是混在编写面里。
+必须作为一次显式决策单独提交，而不是混在编写面里。互补控制的声明与渲染已在
+§5.6 完成（只落在编写层，不碰后端）。
 
 ## 9. 证据
 
 | 测试 | 固定的事实 |
 | --- | --- |
-| `tests/test_topology_validation.py` | 26 码封闭、6 份内置描述符零错误、单缺陷单报告、建议安全门、`checked` 真实性、`build_descriptor` 与 `from_dict` 一致、标识符规则与 `topology._ID_RE` 一致 |
-| `tests/test_circuit_compile.py` | 14 码封闭、结构与已评审 Buck 逐端子一致、摘要稳定与可复算、相位与尾脉冲（真实 ngspice 三个相位均一致）、全部拒绝路径、无 backend 导入 |
+| `tests/test_topology_validation.py` | 26 码封闭、6 份内置描述符零错误、单缺陷单报告、建议安全门、`checked` 真实性、`build_descriptor` 与 `from_dict` 一致、标识符规则与 `topology._ID_RE` 一致、校验器与编译器认可同一组控制模式 |
+| `tests/test_circuit_compile.py` | 16 码封闭、结构与已评审 Buck 逐端子一致、摘要稳定与可复算、相位与尾脉冲（真实 ngspice 三个相位均一致）、互补声明（真实 ngspice 三个相位与已评审同步模板一致）、浮地栅极参考、全部拒绝路径、无 backend 导入 |
 | `tests/test_agent_topology_surface.py` | 三个 CLI 命令的信封、退出码、不建目录、空注册表可用 |
 
 ## 10. 相关文档

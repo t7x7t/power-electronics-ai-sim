@@ -239,12 +239,134 @@ def test_two_actuators_are_refused_because_the_command_is_one_scalar():
     assert error.details["actuators"] == 2
 
 
-def test_two_carriers_are_refused():
-    error = _error(ngspice_sync_buck_topology_descriptor(_plant()))
+def _with_metadata(descriptor, metadata):
+    return type(descriptor)(
+        descriptor.topology_id,
+        descriptor.components,
+        descriptor.nets,
+        metadata=metadata,
+    )
 
-    # Two gate nets arrive with two carriers; the actuator count is what stops
-    # the compilation first, and both facts are real refusals.
-    assert error.code in {"multiple_actuators", "multiple_carriers"}
+
+def _gate_pulses(netlist: str) -> list[tuple[str, list[float]]]:
+    """Return ``(positive node, PULSE fields)`` for every rendered gate."""
+
+    result: list[tuple[str, list[float]]] = []
+    for line in netlist.splitlines():
+        if "PULSE(" not in line:
+            continue
+        window = line[line.index("PULSE(") + len("PULSE(") : line.rindex(")")]
+        result.append((line.split()[1], [float(field) for field in window.replace(",", " ").split()]))
+    return result
+
+
+def test_two_switches_without_a_declared_relation_are_refused():
+    descriptor = ngspice_sync_buck_topology_descriptor(_plant())
+    metadata = dict(descriptor.metadata)
+    metadata.pop("control")
+
+    error = _error(_with_metadata(descriptor, metadata))
+
+    # Without the declaration the two gates are independent commands, and the
+    # kernel supplies only one duty ratio.
+    assert error.code == "multiple_actuators"
+    assert error.details["actuators"] == 2
+
+
+def test_a_declared_complementary_pair_renders_both_gate_windows():
+    compiled = _compile(ngspice_sync_buck_topology_descriptor(_plant()))
+
+    assert compiled.control_mode == "single_duty_complementary"
+    gates = dict(_gate_pulses(compiled.netlist))
+    assert set(gates) == {"pwm_hs", "pwm_ls"}
+    # PULSE fields are initial, pulsed, delay, rise, fall, width, period.
+    assert gates["pwm_hs"][2] == pytest.approx(0.0)
+    assert gates["pwm_hs"][5] == pytest.approx(DUTY / FSW - 100e-9)
+    assert gates["pwm_ls"][2] == pytest.approx(DUTY / FSW)
+    assert gates["pwm_ls"][5] == pytest.approx(DUTY / FSW - 100e-9)
+    for fields in gates.values():
+        assert fields[6] == pytest.approx(1.0 / FSW)
+
+
+def test_an_unknown_control_mode_is_refused():
+    descriptor = ngspice_sync_buck_topology_descriptor(_plant())
+    metadata = dict(descriptor.metadata)
+    metadata["control"] = {"mode": "interleaved"}
+
+    error = _error(_with_metadata(descriptor, metadata))
+
+    assert error.code == "invalid_control_declaration"
+    assert "single_duty_complementary" in error.details["supported"]
+
+
+def test_two_switches_on_one_gate_are_not_complementary():
+    descriptor = model_control_buck_topology_descriptor(_plant())
+    metadata = dict(descriptor.metadata)
+    metadata["control"] = {"mode": "single_duty_complementary"}
+
+    error = _error(_with_metadata(descriptor, metadata))
+
+    assert error.code == "ambiguous_complementary_control"
+
+
+def test_a_dead_time_at_half_the_switching_period_is_refused():
+    descriptor = ngspice_sync_buck_topology_descriptor(_plant())
+    metadata = dict(descriptor.metadata)
+    metadata["control"] = {
+        "mode": "single_duty_complementary",
+        "dead_time_s": 5e-6,
+    }
+
+    error = _error(_with_metadata(descriptor, metadata))
+
+    assert error.code == "invalid_control_declaration"
+    assert error.details["dead_time_s"] == pytest.approx(5e-6)
+
+
+def test_a_floating_gate_drive_compares_against_its_own_reference():
+    """The switch must use the carrier's negative node, not node 0."""
+
+    descriptor = _buck_descriptor()
+
+    def rebind(component, port_id, net_id):
+        ports = tuple(
+            type(port)(
+                port.port_id,
+                net_id if port.port_id == port_id else port.net_id,
+                port.direction,
+                port.label,
+            )
+            for port in component.ports
+        )
+        return type(component)(
+            component.component_id,
+            component.kind,
+            ports,
+            parameters=dict(component.parameters),
+            symbol_id=component.symbol_id,
+            model_id=component.model_id,
+        )
+
+    components = tuple(
+        rebind(item, "negative", "sw")
+        if item.component_id == "pwm_source"
+        else item
+        for item in descriptor.components
+    )
+    rebuilt = type(descriptor)(
+        descriptor.topology_id,
+        components,
+        descriptor.nets,
+        metadata=descriptor.metadata,
+    )
+
+    switch = next(
+        line
+        for line in _compile(rebuilt).netlist.splitlines()
+        if line.startswith("S1 ")
+    )
+
+    assert switch.split()[:5] == ["S1", "vin", "sw", "pwm", "sw"]
 
 
 def test_a_descriptor_without_a_carrier_is_refused():
@@ -352,8 +474,10 @@ def test_a_boolean_option_is_refused():
 def test_compile_codes_are_a_closed_set():
     assert CIRCUIT_COMPILE_CODES == frozenset(
         {
+            "ambiguous_complementary_control",
             "ambiguous_reference_net",
             "invalid_carrier_phase",
+            "invalid_control_declaration",
             "invalid_duration",
             "invalid_duty",
             "invalid_integrator",
@@ -595,6 +719,52 @@ def test_a_phase_shifted_circuit_matches_the_reviewed_template(phase):
             capacitance_f=C_F,
             load_resistance_ohm=R_OHM,
             switching_frequency_hz=FSW,
+        ),
+        duty=DUTY,
+        duration_s=duration,
+        solver=NgspiceSolverSettings(),
+        carrier_phase_s=phase,
+    )
+
+    left = _solve(compiled.netlist)
+    right = _solve(reviewed)
+
+    def mean_tail(values: list[float], count: int = 30) -> float:
+        return sum(values[-count:]) / len(values[-count:])
+
+    assert mean_tail(left["v(vout)"]) == pytest.approx(
+        mean_tail(right["v(vout)"]), abs=1e-3
+    )
+    assert mean_tail(left["i(l1)"]) == pytest.approx(
+        mean_tail(right["i(l1)"]), abs=1e-3
+    )
+
+
+@needs_ngspice
+@pytest.mark.parametrize("phase", [0.0, 3e-6, 6e-6])
+def test_a_complementary_compile_matches_the_reviewed_sync_template(phase):
+    """The dead-time convention is the part a reader cannot verify by eye."""
+
+    from pe_sim.backends.settings import NgspiceSolverSettings
+    from pe_sim.backends.sync_buck import (
+        SyncBuckNetlistParameters,
+        render_sync_buck_netlist,
+    )
+
+    duration = 120e-6
+    compiled = _compile(
+        ngspice_sync_buck_topology_descriptor(_plant()),
+        duration_s=duration,
+        carrier_phase_s=phase,
+    )
+    reviewed = render_sync_buck_netlist(
+        SyncBuckNetlistParameters(
+            input_voltage_v=VIN,
+            inductance_h=L_H,
+            capacitance_f=C_F,
+            load_resistance_ohm=R_OHM,
+            switching_frequency_hz=FSW,
+            dead_time_s=100e-9,
         ),
         duty=DUTY,
         duration_s=duration,

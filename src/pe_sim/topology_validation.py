@@ -106,6 +106,12 @@ WARNING_ISSUE_CODES = frozenset(
 #: it simply has no element card to render.
 ACTUATOR_KINDS = frozenset({"voltage_controlled_switch", "averaged_switch"})
 
+#: Gate relations a descriptor may declare in ``metadata.control``.  Mirrors
+#: ``pe_sim.circuit_compile.SUPPORTED_CONTROL_MODES``; a test asserts the two
+#: sets are equal, so the validator cannot bless a mode the compiler refuses
+#: (or warn about one it understands).
+DECLARED_CONTROL_MODES = frozenset({"single_duty_complementary"})
+
 #: The component kind whose presence makes a circuit's output observable.  A
 #: topology without one is valid but has nothing to measure.
 OUTPUT_SINK_KIND = "resistor_load"
@@ -384,7 +390,13 @@ def _collect(document: Any) -> _Result:
         behavioural = _behavioural_nets(parsed)
         _check_renderability(result, net_kind_by_id, parsed)
         _check_connectivity(result, net_kind_by_id, parsed, behavioural)
-        _check_control(result, net_kind_by_id, parsed, behavioural)
+        _check_control(
+            result,
+            net_kind_by_id,
+            parsed,
+            behavioural,
+            _declared_control_mode(document),
+        )
         _check_sources(result, parsed)
 
     _check_fingerprint(result, document)
@@ -1041,11 +1053,31 @@ def _disconnected_islands(parsed: Sequence[_ParsedComponent]) -> list[list[str]]
     return islands
 
 
+def _declared_control_mode(document: Mapping[str, Any]) -> str | None:
+    """Return a declared gate relation, when the document states one.
+
+    Only the mode string is read here.  Whether the declaration is complete,
+    consistent, and renderable is the compiler's question: the validator is
+    allowed to stop warning that two control nets have "no defined relation"
+    once the document says what that relation is.
+    """
+
+    metadata = document.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return None
+    declaration = metadata.get("control")
+    if not isinstance(declaration, Mapping):
+        return None
+    mode = declaration.get("mode")
+    return mode if isinstance(mode, str) else None
+
+
 def _check_control(
     result: _Result,
     net_kind_by_id: Mapping[str, str],
     parsed: Sequence[_ParsedComponent],
     behavioural: frozenset[str],
+    control_mode: str | None = None,
 ) -> None:
     result.checked.add("control")
 
@@ -1074,7 +1106,7 @@ def _check_control(
     control_nets = [
         net_id for net_id, kind in net_kind_by_id.items() if kind == NET_KIND_CONTROL
     ]
-    if len(control_nets) > 1:
+    if len(control_nets) > 1 and control_mode not in DECLARED_CONTROL_MODES:
         result.issues.append(
             TopologyIssue(
                 code="multiple_control_nets",
@@ -1088,46 +1120,47 @@ def _check_control(
                 ),
                 expected=(
                     f"exactly one net of kind {NET_KIND_CONTROL!r}, or none when the "
-                    "descriptor is display-only"
+                    "descriptor is display-only, or metadata.control declaring how "
+                    "the nets derive from one duty"
                 ),
                 severity="warning",
             )
         )
-    if len(control_nets) != 1:
+    if not control_nets:
         return
 
-    control_net = control_nets[0]
-    if control_net in behavioural:
-        return
-    position = list(net_kind_by_id).index(control_net)
-    drivers = [
-        component
-        for component in parsed
-        if component.device is not None
-        and _drives(component, control_net)
-    ]
-    if not drivers:
-        result.issues.append(
-            TopologyIssue(
-                code="control_net_undriven",
-                path=_pointer("nets", position, "net_id"),
-                message=f"control net {control_net!r} has no driving source",
-                expected="exactly one source whose output port binds the control net",
+    for control_net in control_nets:
+        if control_net in behavioural:
+            continue
+        position = list(net_kind_by_id).index(control_net)
+        drivers = [
+            component
+            for component in parsed
+            if component.device is not None
+            and _drives(component, control_net)
+        ]
+        if not drivers:
+            result.issues.append(
+                TopologyIssue(
+                    code="control_net_undriven",
+                    path=_pointer("nets", position, "net_id"),
+                    message=f"control net {control_net!r} has no driving source",
+                    expected="exactly one source whose output port binds the control net",
+                )
             )
-        )
-    elif len(drivers) > 1:
-        result.issues.append(
-            TopologyIssue(
-                code="control_net_multiple_drivers",
-                path=_pointer("nets", position, "net_id"),
-                message=(
-                    f"control net {control_net!r} is driven by "
-                    f"{len(drivers)} sources ({', '.join(c.component_id for c in drivers)}); "
-                    "the voltage on the net would be the sum of two carriers"
-                ),
-                expected="exactly one source whose output port binds the control net",
+        elif len(drivers) > 1:
+            result.issues.append(
+                TopologyIssue(
+                    code="control_net_multiple_drivers",
+                    path=_pointer("nets", position, "net_id"),
+                    message=(
+                        f"control net {control_net!r} is driven by "
+                        f"{len(drivers)} sources ({', '.join(c.component_id for c in drivers)}); "
+                        "the voltage on the net would be the sum of two carriers"
+                    ),
+                    expected="exactly one source whose output port binds the control net",
+                )
             )
-        )
 
 
 def _drives(component: _ParsedComponent, net_id: str) -> bool:
