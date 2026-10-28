@@ -122,11 +122,11 @@ pe-sim simulate-topology <topology.json> \
 
 `circuit-topology` 已注册为内置 Plant，可以在实验文档里直接写：
 
-```json
+```text
 {
   "plant_id": "circuit-topology",
   "plant_config": {
-    "topology": { "schema": "topology-descriptor-v1", "...": "..." },
+    "topology": { <完整的 topology-descriptor-v1 文档> },
     "control_period_s": 1e-05,
     "sample_step_s": 5e-08
   }
