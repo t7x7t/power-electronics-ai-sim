@@ -42,32 +42,43 @@ that procedure signs an artifact or tag, and CI never approves or publishes.
 
 ## Capability boundary: what this kernel does not solve
 
-The kernel drives a **stepped** closed loop: one solve per control window, one
-scalar actuator (`duty`), and constraints evaluated at every window boundary so
-they can block a run in flight. That is invariant I1, and it is also why the
-adapters have the shape they have. Before choosing this tool, check the four
-consequences:
+The kernel can drive a **stepped, kernel-closed** loop: one solve per control
+window, one scalar actuator (`duty`), and constraints evaluated at every window
+boundary so they can block a run in flight. That is invariant I1. Loop closure,
+however, is a declared route fact rather than a universal shape. Before choosing
+this tool, check the current consequences:
 
-- **Duty is constant inside a control window.** `ngspice-buck` runs one
-  switching-level `.tran` per window and carries state through `IC=`; the
-  waveform inside a window is sampled, not integrated across the run.
-  `ngspice-buck` is *not* an averaged model — the averaged ones are `buck` /
-  `boost` (pure Python RK4) and `whole-run-buck`.
-- **The compensator lives in the kernel, not in the netlist.** A Type III
-  compensator is a `Controller` plugin (in `vout`/`vref`, out `duty`), and the
-  closed loop closes through the Runner.
-- **`control_period_s` must be an integer multiple of the switching period**,
-  because each window restarts the PWM carrier.
-- **Schedules change only at window boundaries** (`time_s`, `vref`, `vin_v`,
-  `input_voltage_v`, `load_ohm`, `load_resistance_ohm`).
+- **Duty is constant inside each solved segment for kernel-driven adapters.**
+  `ngspice-buck` runs one switching-level `.tran` per window and carries state
+  through `IC=`; the waveform inside a window is sampled, not integrated across
+  the run. `ngspice-buck` is *not* an averaged model — the averaged ones are
+  `buck` / `boost` (pure Python RK4) and `whole-run-buck`.
+- **The compensator can close in the kernel or inside the model.** A Type III
+  compensator is a kernel `Controller` plugin; `model-control-buck`,
+  `whole-run-switching-buck`, and `peak-current-buck` instead own a model-side PI
+  or comparator loop and are capped at `limited`
+  (`actuator_control_in_model`). These are model-side loops, not device-level
+  SPICE netlist compensators.
+- **The carrier phase is carried across solve segments.** Since 0.13.0,
+  `control_period_s` does **not** need to be an integer multiple of the
+  switching period; a segment may start at any carrier phase.
+- **Schedules change at declared change points.** A registration with
+  `event_granularity=continuous` honours change points inside a window; a
+  `window` registration resolves them at control-window boundaries
+  (`time_s`, `vref`, `vin_v`, `input_voltage_v`, `load_ohm`,
+  `load_resistance_ohm`).
+- **A switching-level whole-run trace exists, but only post-hoc.**
+  `whole-run-switching-buck` returns one continuous trace at a declared cadence,
+  capped at `limited` (`post_hoc_validation_only` / `in_run_enforcement_unavailable`);
+  it is not real-time interception evidence.
 
-If a task needs an in-netlist controller, a continuous transient across the
-whole run, or device/thermal models, the honest answer is to drive ngspice
-directly — and to accept losing constraint enforcement, qualification, evidence
-levels, the auditable package, and L1 attestation. Two supported ways to stay
-inside the framework are writing a `Controller` (Type III included) and writing
-an `Adapter` (T1 requires zero kernel edits; the route then declares its own
-evidence cap, as `whole-run-buck` does at `limited`).
+If a task needs a true device-level in-netlist compensator, device/thermal
+models, or in-run interception across a continuous run, the honest answer is to
+drive ngspice directly — and to accept losing constraint enforcement,
+qualification, evidence levels, the auditable package, and L1 attestation.
+Supported ways to stay inside the framework are writing a `Controller`
+(Type III included), a model-side adapter (T1: zero kernel edits), or a
+`PlantRegistration` whose declared route carries its own evidence cap.
 
 Full statement, including the three-backend comparison and the bypass criteria:
 [docs/58_capability_boundary_v1.md](docs/58_capability_boundary_v1.md).
@@ -78,6 +89,10 @@ declared out of scope — is tracked in
 [docs/60_simulation_coverage_matrix_v1.md](docs/60_simulation_coverage_matrix_v1.md).
 That ledger is machine-checked: a row may not claim `covered` without naming the
 test that proves it.
+
+For maintainer handover — goals, stage history, evidence caps, known debt, and
+the constraints that must survive the transfer — see
+[docs/62_project_handover_v1.md](docs/62_project_handover_v1.md).
 
 ## Quick start (installed package)
 
@@ -579,13 +594,18 @@ anything is written. Adding a displayable topology is a registration, not an
 edit to the exporter.
 
 A registration also declares `time_model`. `stepped` (the default) means the
-kernel owns the clock and can enforce constraints per window; those runs remain
-eligible for `comparable`. `whole_run` means the engine owns its time axis and
-returns a trace that can only be checked afterwards, so it is capped at
-`limited`. Both routes are executable as of 0.5.10: the whole-run route checks
-the trace after the fact, records `enforcement: "post_hoc_only"`, and refuses
-formal comparison because it cannot enforce constraints in-run. See
-[docs/46_time_model_and_engine_boundary_v1.md](docs/46_time_model_and_engine_boundary_v1.md).
+kernel owns the clock and can enforce constraints per window; a stepped run
+with `control_location="kernel"` remains eligible for `comparable`.
+`whole_run` means the engine owns its time axis and returns a trace that can
+only be checked afterwards, so it is capped at `limited`. A separate
+`control_location` declaration says where the loop closes: `kernel` uses a
+ControllerAdapter; `model` closes the loop inside the model and is capped at
+`limited` (`actuator_control_in_model`) even on the stepped route. Both time
+models are executable: the whole-run route checks the trace after the fact,
+records `enforcement: "post_hoc_only"`, and refuses formal comparison because
+it cannot enforce constraints in-run. See
+[docs/46_time_model_and_engine_boundary_v1.md](docs/46_time_model_and_engine_boundary_v1.md)
+and [docs/adr/0004-solve-route-capabilities.md](docs/adr/0004-solve-route-capabilities.md).
 
 A `manifest_identity()` record is producer-declared, so since 0.5.2 the kernel
 recomputes it for any adapter that declares a `backend_id` and records the
