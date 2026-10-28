@@ -361,7 +361,7 @@ EXPERIMENTAL_API: frozenset[str] = frozenset(
         "derive_claim",
         # time model and engine boundary (Phase A2): who owns the clock, what a
         # trace contract promises, and how a route is priced.  The whole-run
-        # execution route is declared but not implemented yet.
+        # execution route is executable and capped at limited evidence.
         "RUNTIME_EVIDENCE_LEVELS",
         "TIME_MODELS",
         "TIME_MODEL_STEPPED",

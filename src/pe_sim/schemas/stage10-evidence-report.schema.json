@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/power-electronics-ai-sim/stage10-evidence-report.schema.json",
+  "title": "Stage 10 Evidence Report",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema", "report_type", "provenance", "comparison", "limitations"],
+  "properties": {
+    "schema": {"const": "stage10-evidence-report-v1"},
+    "report_type": {"const": "restricted_metric_comparison"},
+    "provenance": {
+      "type": "object",
+      "required": ["runs", "metric_schema", "metric_registry", "data"],
+      "properties": {
+        "metric_schema": {"const": "stage10-metrics-v1"},
+        "runs": {"type": "array", "minItems": 2, "items": {"$ref": "#/$defs/run"}},
+        "metric_registry": {"type": "object"},
+        "data": {"type": "object"}
+      }
+    },
+    "comparison": {
+      "type": "object",
+      "required": ["schema", "metric_schema", "tolerance", "runs", "metrics", "outcome", "limitations", "metric_registry", "data"],
+      "properties": {
+        "schema": {"const": "stage10-metric-comparison-v1"},
+        "metric_schema": {"const": "stage10-metrics-v1"},
+        "tolerance": {"type": "number", "minimum": 0},
+        "runs": {"type": "array", "minItems": 2, "items": {"$ref": "#/$defs/run"}},
+        "metrics": {"type": "object", "minProperties": 1},
+        "outcome": {"enum": ["exact_match", "tolerance_match", "mismatch"]},
+        "limitations": {"type": "array", "items": {"type": "string"}},
+        "metric_registry": {"type": "object"},
+        "data": {"type": "object"}
+      }
+    },
+    "limitations": {"type": "array", "items": {"type": "string"}}
+  },
+  "$defs": {
+    "run": {
+      "type": "object",
+      "required": ["run_id", "manifest_sha256", "package_sha256", "status", "working_tree_status", "source_provenance_status", "environment_status"],
+      "properties": {
+        "run_id": {"type": "string", "minLength": 1},
+        "manifest_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "package_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "status": {"const": "QUALIFIED"},
+        "working_tree_status": {"const": "clean"},
+        "source_provenance_status": {"const": "known"},
+        "environment_status": {"enum": ["known", "partial"]}
+      }
+    }
+  }
+}

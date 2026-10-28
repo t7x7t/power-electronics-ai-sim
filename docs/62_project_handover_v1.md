@@ -2,7 +2,8 @@
 
 **文档性质：** 维护者交接说明。它不是发布批准、不是工程结论，也不改变任何运行时行为。
 
-**适用基线：** 2026-10-28，`main` 提交 `6b55cb8`，版本 `0.17.0`，`origin/main` 已同步。
+**适用基线：** 2026-10-28，`main` 提交 `ced25ea`（其父提交为 `6b55cb8`），版本
+`0.17.0`，`origin/main` 已同步。
 
 **当前阶段：** S0–S9 已交付；S10（收口与发布）尚未正式完成。
 
@@ -54,7 +55,7 @@
 
 | 项 | 当前值 |
 | --- | --- |
-| 分支/提交 | `main` = `6b55cb8` = `origin/main` |
+| 分支/提交 | `main` = `ced25ea`（本文所在提交；其父提交为 `6b55cb8`）= `origin/main` |
 | 版本 | `0.17.0`（`src/pe_sim/_version.py` 与 `pyproject.toml` 一致） |
 | 覆盖矩阵 | 35 行：34 `covered`，1 `out_of_scope`（C8 电热/热网络） |
 | 开放行 | 无 `kernel_gap` / `expressible` |
@@ -70,7 +71,7 @@
 
 | 资产 | 状态/位置 |
 | --- | --- |
-| 源码仓库 | `https://github.com/t7x7t/power-electronics-ai-sim.git`，`main` = `6b55cb8` |
+| 源码仓库 | `https://github.com/t7x7t/power-electronics-ai-sim.git`，`main` = `ced25ea` |
 | 本地开发环境 | `d:\power-electronics-ai-sim\.venv`（Python 3.13.2）；venv 不入库，换机需按 `pyproject.toml` / `requirements-tested.txt` / `requirements-release.txt` 重建 |
 | ngspice（可选） | 当前验证路径 `D:\Applications\Anaconda3\envs\pe-sim-spice\Library\bin\ngspice_con.exe`，通过 `PE_SIM_NGSPICE` 启用 |
 | PySpice（可选） | 不是运行时依赖；未安装时相关能力报告为不可用，不是失败 |
@@ -229,8 +230,9 @@ CLI / Python API
 | `input_sha256` 覆盖整份输入文档 | 包含 `output.directory`，改变输出目录会改变哈希 | 比较“分析身份”时需先剔除 `output` |
 | `verified_by` 只校验格式 | 目前校验 `tests/<file>.py::<test_name>` 形状，不证明该测试函数真实存在 | 提高证据等级前应加存在性校验或人工复核 |
 | schema registry 覆盖不完整 | 新增的 AC/阻抗/能力报告 schema 未必都进入 `schema_registry.py` | 跨版本/迁移声明前先补齐并测试 |
-| `ac_analysis` 有重复 `_finite_number` | 局部 helper 与 `frequency_domain.finite_number` 重复 | 低风险重构；不要在本阶段顺手扩大 |
+| `ac_analysis` 重复 `_finite_number`（已修复） | 本地 helper 与 `frequency_domain.finite_number` 重复，遮蔽了导入；本轮删除本地定义、统一使用导入，`tests/test_ac_analysis.py` 通过 | 无需后续动作；新增数值校验请只改 `frequency_domain.finite_number` |
 | 周期检测仍是指标 lag 型 | `evaluate_periodicity` 声明 `sampling_interval_s` 与索引 lag 近似 | 只作为声明的收敛检测，不是严格周期证明 |
+| event_granularity 限制码语义 | `window` 注册实际按变更点求解，限制码只描述控制器侧；已由 `docs/58` + ADR 0004 + 守卫测试澄清 | 若未来要让 `window` 真正量化输入，需新 ADR 并重跑 S5 验收 |
 
 ---
 

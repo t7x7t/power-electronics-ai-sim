@@ -29,6 +29,23 @@ def test_packaged_experiment_schema_matches_the_repository_contract():
     assert packaged_copy.read_bytes() == repository_copy.read_bytes()
 
 
+def test_every_repository_schema_is_packaged_byte_for_byte():
+    for repository_schema in sorted((REPOSITORY / "schemas").glob("*.json")):
+        packaged_copy = (
+            REPOSITORY / "src" / "pe_sim" / "schemas" / repository_schema.name
+        )
+        assert packaged_copy.is_file(), f"missing packaged copy: {repository_schema.name}"
+        assert packaged_copy.read_bytes() == repository_schema.read_bytes(), (
+            f"packaged copy drifted from schemas/: {repository_schema.name}"
+        )
+
+
+def test_every_repository_schema_is_reachable_through_the_package():
+    for repository_schema in sorted((REPOSITORY / "schemas").glob("*.json")):
+        packaged = resources.files("pe_sim.schemas").joinpath(repository_schema.name)
+        assert packaged.is_file(), f"schema is not importable as package data: {repository_schema.name}"
+
+
 def test_default_validation_loads_the_packaged_schema():
     assert resources.files("pe_sim.schemas").joinpath("experiment.schema.json").is_file()
     document = json.loads((REPOSITORY / "examples" / "buck_pi_step" / "config.json").read_text(encoding="utf-8"))

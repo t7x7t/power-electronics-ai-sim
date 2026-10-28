@@ -229,6 +229,20 @@ def _metadata_version(distribution: str) -> str | None:
         return None
 
 
+def _code_version() -> str | None:
+    """Return the version of the code that is actually running.
+
+    The installed distribution metadata can lag behind an editable checkout, so
+    it is recorded separately instead of speaking for the running code.
+    """
+
+    try:
+        from ._version import __version__
+    except Exception:  # pragma: no cover - the module ships with the package
+        return None
+    return __version__ if isinstance(__version__, str) and __version__ else None
+
+
 def collect_backend_provenance(adapter: object | None) -> dict[str, object]:
     """Normalize an explicit backend adapter into portable evidence.
 
@@ -357,9 +371,18 @@ def collect_environment_provenance(
     if backend_adapter is not None:
         backend_adapters = tuple(backend_adapters) + (backend_adapter,)
     limitations: list[str] = []
-    runner_version = _metadata_version("power-electronics-ai-sim")
+    # The running code is the authority.  An editable checkout can keep stale
+    # distribution metadata, so the metadata is recorded beside the code
+    # version instead of being reported as the version that ran.
+    code_version = _code_version()
+    package_version = _metadata_version("power-electronics-ai-sim")
+    runner_version = code_version or package_version
     if runner_version is None:
         limitations.append("project distribution metadata is unavailable")
+    elif package_version is not None and package_version != runner_version:
+        limitations.append(
+            "installed distribution version differs from the running code version"
+        )
     dependencies: dict[str, str] = {}
     for distribution in ("numpy", "jsonschema"):
         version = _metadata_version(distribution)
@@ -398,6 +421,7 @@ def collect_environment_provenance(
             "name": "pe_sim",
             "distribution": "power-electronics-ai-sim",
             "version": runner_version,
+            "package_metadata_version": package_version,
         },
         "python": {
             "implementation": platform.python_implementation(),

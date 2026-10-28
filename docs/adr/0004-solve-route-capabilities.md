@@ -128,6 +128,11 @@ These are the operative part of this ADR:
 - `event_granularity = continuous` raises the number of solves proportionally to
   the number of events. That cost becomes visible in the declaration instead of
   being discovered as a runtime surprise.
+- After step 2, input resolution happens at change points for every stepped
+  route. `event_granularity` therefore no longer means "does the plant see an
+  in-window input"; it means the controller observation cadence and the declared
+  solve cost. Registrations that still declare `window` keep the limitation code
+  as a controller-side description.
 
 ## Implementation order
 

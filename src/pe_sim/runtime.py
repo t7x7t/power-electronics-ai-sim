@@ -1608,7 +1608,9 @@ def _derive_evidence_level(
         return cap_evidence_level_for("limited", capabilities)
     if qualification.get("level") == "failed":
         return "diagnostic_only"
-    if qualification.get("level") in {"partial", "limited"}:
+    # The qualification level vocabulary is assessed/partial/failed; the legacy
+    # "limited" never occurs here.
+    if qualification.get("level") == "partial":
         return cap_evidence_level_for("limited", capabilities)
     return cap_evidence_level_for("comparable", capabilities)
 

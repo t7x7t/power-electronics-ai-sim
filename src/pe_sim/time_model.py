@@ -34,9 +34,11 @@ CONTROL_LOCATION_KERNEL = "kernel"
 CONTROL_LOCATION_MODEL = "model"
 CONTROL_LOCATIONS: tuple[str, ...] = (CONTROL_LOCATION_KERNEL, CONTROL_LOCATION_MODEL)
 
-#: Whether an external input may change between observation points.  ``window``
-#: means inputs are resolved once per control window; ``continuous`` means the
-#: solve honours every declared change point.
+#: The controller-side event declaration.  Since ADR 0004 step 2 the solve
+#: resolves every declared change point for both values, so ``window`` means
+#: observation and actuation still happen only at control-window boundaries;
+#: ``continuous`` says the model is reviewed for mid-window change points and
+#: reports no quantization limitation.  Neither value changes plant solving.
 EVENT_GRANULARITY_WINDOW = "window"
 EVENT_GRANULARITY_CONTINUOUS = "continuous"
 EVENT_GRANULARITIES: tuple[str, ...] = (

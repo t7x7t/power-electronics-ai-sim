@@ -62,11 +62,12 @@ this tool, check the current consequences:
 - **The carrier phase is carried across solve segments.** Since 0.13.0,
   `control_period_s` does **not** need to be an integer multiple of the
   switching period; a segment may start at any carrier phase.
-- **Schedules change at declared change points.** A registration with
-  `event_granularity=continuous` honours change points inside a window; a
-  `window` registration resolves them at control-window boundaries
+- **Schedules change at declared change points.** Every stepped route ends a
+  solve segment at the next declared change and resolves the input there
   (`time_s`, `vref`, `vin_v`, `input_voltage_v`, `load_ohm`,
-  `load_resistance_ohm`).
+  `load_resistance_ohm`). `event_granularity=window` is a controller statement:
+  observation and actuation still happen only at control-window boundaries, and
+  the registration declares no cost for in-window events.
 - **A switching-level whole-run trace exists, but only post-hoc.**
   `whole-run-switching-buck` returns one continuous trace at a declared cadence,
   capped at `limited` (`post_hoc_validation_only` / `in_run_enforcement_unavailable`);

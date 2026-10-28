@@ -41,7 +41,8 @@ pe-sim list-plants
 
 The answer carries `"schema": "pe-sim.plant-catalog.v1"` and one entry per
 registered plant: `plant_id`, `backend_id`, `class_name`, `time_model`,
-`schedule_keys`, `config_keys`, `trust_level`, `export_eligible`. `config_keys:
+`control_location`, `event_granularity`, `schedule_keys`, `config_keys`,
+`trust_level`, `export_eligible`, `topology_export`. `config_keys:
 null` means the factory validates its own keys, not that any key is accepted.
 The catalog exposes declarations only; the factory stays in-process.
 `pe-sim list-runs` serves the same purpose for packages already produced. Its

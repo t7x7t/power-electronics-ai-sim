@@ -14,6 +14,13 @@ values are collected from the running interpreter. A backend that cannot
 declare its executable/version is recorded as `not_declared` with a limitation,
 never as a fabricated version.
 
+`environment.runner.version` is the in-code version (`pe_sim._version`), because
+that is the code that actually ran. The installed distribution metadata can lag
+behind an editable checkout, so it is recorded separately as
+`runner.package_metadata_version`; a mismatch adds the limitation
+`installed distribution version differs from the running code version` instead
+of silently reporting the stale value.
+
 The same environment object is written to `environment.json`. Failed and
 interrupted runs use the same provenance path, so a failure can be diagnosed
 against the environment that actually produced it.

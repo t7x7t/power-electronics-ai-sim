@@ -98,8 +98,10 @@ class PlantRegistration:
     #: ``kernel`` means a kernel-owned ControllerAdapter closes the loop;
     #: ``model`` means the compensator lives inside the model or the netlist.
     control_location: str = CONTROL_LOCATION_KERNEL
-    #: ``window`` means external inputs are resolved once per control window;
-    #: ``continuous`` means the solve honours every declared change point.
+    #: ``window`` means the controller observes and actuates at control-window
+    #: boundaries (the solve still honours declared change points since ADR
+    #: 0004 step 2); ``continuous`` declares the model reviewed for mid-window
+    #: changes and reports no quantization limitation.
     event_granularity: str = EVENT_GRANULARITY_WINDOW
     #: Builds the reviewed display descriptor from the parameters a run records
     #: in its manifest.  The registry validates that it is callable and reports
@@ -244,6 +246,8 @@ def plant_catalog(*, discover: bool = False) -> dict[str, Any]:
             "backend_id": registration.backend_id,
             "class_name": registration.class_name,
             "time_model": registration.time_model,
+            "control_location": registration.control_location,
+            "event_granularity": registration.event_granularity,
             "schedule_keys": sorted(registration.schedule_keys),
             "config_keys": None
             if registration.config_keys is None

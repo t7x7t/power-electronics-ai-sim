@@ -95,15 +95,6 @@ _STABILITY_MARGINS_VERIFIED_BY = (
 # ---------------------------------------------------------------------------
 
 
-def _finite_number(value: Any, label: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"{label} must be a finite number")
-    number = float(value)
-    if not math.isfinite(number):
-        raise ValueError(f"{label} must be a finite number")
-    return number
-
-
 def _validate_sweep(start_hz: Any, stop_hz: Any, points: Any) -> tuple[float, float, int]:
     return validate_sweep(
         start_hz, stop_hz, points, min_points=_MIN_POINTS, max_points=_MAX_POINTS

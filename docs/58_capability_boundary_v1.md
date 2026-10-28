@@ -38,6 +38,9 @@
 4. **输入变更点按声明时刻求解。** 允许的调度键是 `time_s`、`vref`、`vin_v`、
    `input_voltage_v`、`load_ohm`、`load_resistance_ohm`；内核在下一个变更点结束当前
    求解段，并在新段起点重新解析输入。控制器的观测与动作仍然只发生在窗口边界。
+   `event_granularity=window` 描述的是控制器观测/动作仍发生在控制窗口边界，以及该注册
+   不声明窗口内事件成本；它不表示植物求解忽略窗口内变更点。限制码
+   `events_quantized_to_control_windows` 只描述控制器侧。
 5. **study 层是运行之上的编排，不是新的证据等级。** `pe-sim study` 把每个点展开成一份
    普通实验文档（`<output>/points/pNN/config.json`）并各自发布运行包；报告里每点的
    `status`/`evidence_level`/`manifest_sha256` 都从该点自己的 `manifest.json` 读出。

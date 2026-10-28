@@ -530,6 +530,8 @@ def test_plant_catalog_reports_declarations_not_implementation(capsys):
     assert entries["buck"]["trust_level"] == "reference"
     assert entries["buck"]["export_eligible"] is True
     assert entries["buck"]["time_model"] == "stepped"
+    assert entries["buck"]["control_location"] == "kernel"
+    assert entries["buck"]["event_granularity"] == "window"
     assert {item["time_model"] for item in payload["plants"]} == {
         "stepped",
         "whole_run",

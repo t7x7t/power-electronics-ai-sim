@@ -80,6 +80,11 @@
   `time_model` 中唯一派生函数（吃整个能力记录）；四个内置植物的现状声明；
   manifest 上报；`whole_run + kernel` 构造期拒绝。
 - 验收：全量测试不变；新增测试证明**没有任何消费者在本地计算 cap**。
+- **步骤 2 后的语义修订（不改变本行的完成状态）：** 0.13.0 删除窗口量化后，
+  `event_granularity=window` 只描述控制器观测/动作仍在窗口边界，限制码
+  `events_quantized_to_control_windows` 也只描述控制器侧；新增守卫测试
+  `tests/test_event_granularity_semantics.py`。若未来要让 `window` 真正量化植物输入，
+  必须先更新 `docs/58` 与 ADR 0004 再改实现。
 
 **S3 — 初始状态载荷（A6）**
 
