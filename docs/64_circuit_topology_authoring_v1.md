@@ -293,11 +293,13 @@ delta     vout=4.077e-05  iL=1.190e-05
 | `pe-sim describe-devices [kind]` | 打印器件词表或单个器件声明 | 0；未知种类 2 |
 | `pe-sim validate-topology <file>` | 打印 `pe-sim.topology-validation.v1` 信封 | 无错误 0，否则 2 |
 | `pe-sim compile-topology <file> [--duty D] [--duration S] [--step S] [--carrier-phase S] [--integrator trap\|gear\|euler] [--output P] [--json]` | 编译并打印/写出网表 | 0；否则 2 |
+| `pe-sim simulate-topology <file> [--duty D --duration S ...]` | 编译并执行一次开环窗口 | 0；请求/文档错误 2；求解失败 1 |
 
-三个命令都在 `load_builtin_plants()` **之前**分派：电路问题不需要任何 plant 注册，
-也不需要求解器。拒绝信封沿用 `pe-sim.rejection.v1`，`compile-topology` 的编译失败
-额外带 `compile_code` 与 `details`；**没有新增拒绝码**，
-`REQUEST_REJECTION_CODES` 未变。
+前三个命令都在 `load_builtin_plants()` **之前**分派：电路问题不需要任何 plant
+注册，也不需要求解器。拒绝信封沿用 `pe-sim.rejection.v1`，`compile-topology` 的
+编译失败额外带 `compile_code` 与 `details`；**没有新增拒绝码**，
+`REQUEST_REJECTION_CODES` 未变。`simulate-topology` 需要求解器，但与
+`load_builtin_plants()` 无关，因此同样在注册表加载前分派。
 
 `describe-devices` 与 `describe` 对拼错的名称使用同一类信封：一个是
 `unknown_plant`（Step A 已有的码），一个是 `unsupported_device_kind` 放在 `issues`
@@ -306,8 +308,10 @@ delta     vout=4.077e-05  iL=1.190e-05
 ## 7. 边界与非主张
 
 - 校验通过 **不等于** 电路电气正确、数值稳定、收敛、可发布。
-- 编译成功 **不等于** 模型被评审。agent 编写的拓扑没有评审记录，按 `docs/22` 的
-  证据阶梯，它产出的结果最高只能是 `limited`，绝不可能是 `comparable`。
+- 编译/执行成功 **不等于** 模型被评审。agent 编写的拓扑没有评审记录：形式比较被
+  封顶为 `limited`，探索性 `QUALIFIED` 运行记录 `functional`（使用层级），
+  `pe_sim.credibility` 的 `implementation_review` 因子始终是 `limited`；任何情况
+  下都不可能是 `comparable`。
 - **一次只有八个器件、三种网种类**，没有互感、变压器、受控源、非线性器件、
   子电路、`.include`。
 - **互补控制只支持一种声明。** `single_duty_complementary` 覆盖同步 Buck 的双栅极
@@ -327,10 +331,6 @@ delta     vout=4.077e-05  iL=1.190e-05
 
 仍未做：
 
-- **注册为内置 Plant。** `CircuitPlant` 目前通过库 API 或
-  `pe-sim simulate-topology` 使用；`pe-sim run`/`study` 还不能直接写
-  `plant_id = "circuit-topology"`。这需要 `plant_config` 的嵌套 `topology` 对象、
-  对应 schema、`describe` 声明表与目录测试，以及控制器闭环验收。
 - 多相/交错/三电平控制关系（§5.6 只支持一种声明）。
 - Step C 的 SPICE 子集导入。
 

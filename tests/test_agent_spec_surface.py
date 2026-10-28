@@ -185,7 +185,7 @@ def test_every_builtin_plant_publishes_a_closed_parameter_schema():
 
     assert list(catalog) == ["schema", "trust_levels", "plants"]
     builtin_ids = {registration.plant_id for registration in builtin_registrations()}
-    assert len(builtin_ids) == 11
+    assert len(builtin_ids) == 12
     entries = {entry["plant_id"]: entry for entry in catalog["plants"]}
     assert set(entries) == builtin_ids
     for plant_id in sorted(builtin_ids):

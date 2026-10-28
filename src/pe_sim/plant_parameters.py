@@ -32,8 +32,10 @@ from typing import Any, Mapping
 #: on the module layout.
 PLANT_PARAMETERS_SCHEMA = "pe-sim.plant-parameters.v1"
 
-#: The only value shapes a ``plant_config`` field may declare.
-_PARAMETER_KINDS = frozenset({"number", "integer", "boolean"})
+#: The value shapes a ``plant_config`` field may declare.  ``object`` is how a
+#: nested circuit document is declared; ``string`` is a named choice such as an
+#: integrator.  Both stay declarative: this module never inspects the object.
+_PARAMETER_KINDS = frozenset({"number", "integer", "boolean", "object", "string"})
 
 
 @dataclass(frozen=True)
@@ -53,6 +55,7 @@ class ParameterSpec:
     maximum: float | None = None
     default: Any = None
     nullable: bool = False
+    choices: tuple[str, ...] | None = None
     description: str = ""
 
     def __post_init__(self) -> None:
@@ -61,6 +64,30 @@ class ParameterSpec:
                 f"parameter {self.name!r} declares kind {self.kind!r}; "
                 f"expected one of {sorted(_PARAMETER_KINDS)}"
             )
+        if self.kind in {"object", "string"}:
+            if self.unit is not None:
+                raise ValueError(
+                    f"parameter {self.name!r} is {self.kind} and cannot declare a unit"
+                )
+            if self.minimum is not None or self.maximum is not None:
+                raise ValueError(
+                    f"parameter {self.name!r} is {self.kind} and cannot declare numeric bounds"
+                )
+        if self.choices is not None and self.kind != "string":
+            raise ValueError(
+                f"parameter {self.name!r} declares choices but is not a string"
+            )
+        if self.choices is not None:
+            if not self.choices or any(
+                not isinstance(choice, str) or not choice for choice in self.choices
+            ):
+                raise ValueError(
+                    f"parameter {self.name!r} choices must be non-empty strings"
+                )
+            if self.default is not None and self.default not in self.choices:
+                raise ValueError(
+                    f"parameter {self.name!r} default is not one of its choices"
+                )
         if (
             self.kind in {"number", "integer"}
             and self.unit is None
@@ -98,6 +125,7 @@ class ParameterSpec:
             "maximum": self.maximum,
             "default": self.default,
             "nullable": self.nullable,
+            "choices": list(self.choices) if self.choices is not None else None,
             "description": self.description,
         }
 
@@ -471,6 +499,74 @@ _PEAK_CURRENT_BUCK_PARAMETERS = MappingProxyType(
     }
 )
 
+#: The circuit-topology plant accepts a whole descriptor document.  The field
+#: is declared as ``object`` rather than inlined here: the topology validator
+#: owns that shape, and duplicating it in a parameter table would create two
+#: descriptions that can disagree.  A missing document is refused by the
+#: factory, not defaulted.
+_CIRCUIT_TOPOLOGY_PARAMETERS: Mapping[str, ParameterSpec] = MappingProxyType(
+    {
+        "topology": ParameterSpec(
+            name="topology",
+            kind="object",
+            unit=None,
+            description=(
+                "Required topology-descriptor-v1 document. Validate it with "
+                "`pe-sim validate-topology`; the factory refuses any document "
+                "with an error."
+            ),
+        ),
+        "integrator": ParameterSpec(
+            name="integrator",
+            kind="string",
+            unit=None,
+            choices=("trap", "gear", "euler"),
+            default=None,
+            nullable=True,
+            description="Integration method override; null uses the solver default.",
+        ),
+        "control_period_s": ParameterSpec(
+            name="control_period_s",
+            kind="number",
+            unit="s",
+            minimum=0.0,
+            exclusive_minimum=True,
+            default=None,
+            nullable=True,
+            description=(
+                "Control window; null uses the experiment timebase, then one "
+                "switching period."
+            ),
+        ),
+        "sample_step_s": ParameterSpec(
+            name="sample_step_s",
+            kind="number",
+            unit="s",
+            minimum=0.0,
+            exclusive_minimum=True,
+            default=None,
+            nullable=True,
+            description="Printed waveform resolution; null uses the compiler default.",
+        ),
+        "timeout_s": ParameterSpec(
+            name="timeout_s",
+            kind="number",
+            unit="s",
+            minimum=0.0,
+            exclusive_minimum=True,
+            default=30.0,
+            description="Maximum wall time for one solver invocation.",
+        ),
+        "keep_artifacts": ParameterSpec(
+            name="keep_artifacts",
+            kind="boolean",
+            unit=None,
+            default=False,
+            description="Keep generated netlists and raw solver output for inspection.",
+        ),
+    }
+)
+
 #: The declared ``plant_config`` surface of every built-in plant.  Keys match the
 #: ``*_DEFAULTS`` dictionaries in ``pe_sim.builtin_plants``; the fixture plants
 #: declare ``_FAKE_CONFIG_KEYS`` instead of a defaults dictionary.
@@ -487,6 +583,7 @@ PLANT_PARAMETERS: Mapping[str, Mapping[str, ParameterSpec]] = MappingProxyType(
         "model-control-buck": _MODEL_CONTROL_BUCK_PARAMETERS,
         "peak-current-buck": _PEAK_CURRENT_BUCK_PARAMETERS,
         "whole-run-switching-buck": _MODEL_CONTROL_BUCK_PARAMETERS,
+        "circuit-topology": _CIRCUIT_TOPOLOGY_PARAMETERS,
     }
 )
 
@@ -526,6 +623,9 @@ PLANT_SCHEDULE_KEYS: Mapping[str, frozenset[str]] = MappingProxyType(
         "whole-run-switching-buck": frozenset(
             {"time_s", "vref", "vin_v", "input_voltage_v", "load_ohm", "load_resistance_ohm"}
         ),
+        "circuit-topology": frozenset(
+            {"time_s", "vref", "vin_v", "input_voltage_v", "load_ohm", "load_resistance_ohm"}
+        ),
     }
 )
 
@@ -546,8 +646,8 @@ def _parameters_of(plant_id: str) -> Mapping[str, ParameterSpec]:
 
 
 def _json_type(spec: ParameterSpec) -> str | list[str]:
-    if spec.kind == "boolean":
-        return "boolean"
+    if spec.kind in {"boolean", "object", "string"}:
+        return spec.kind
     if spec.kind == "integer":
         return "integer"
     # ``null`` is part of the type list so a nullable field validates without a
@@ -575,6 +675,8 @@ def parameter_schema(plant_id: str) -> dict[str, Any]:
                 entry["minimum"] = spec.minimum
         if spec.maximum is not None:
             entry["maximum"] = spec.maximum
+        if spec.choices is not None:
+            entry["enum"] = list(spec.choices)
         entry["default"] = spec.default
         entry["description"] = spec.description
         if spec.unit is not None:

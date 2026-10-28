@@ -14,6 +14,7 @@ import inspect
 import pytest
 
 from pe_sim.builtin_plants import (
+    _CIRCUIT_TOPOLOGY_DEFAULTS,
     _FAKE_CONFIG_KEYS,
     _MODEL_CONTROL_BUCK_DEFAULTS,
     _MULTIPHASE_BUCK_DEFAULTS,
@@ -47,6 +48,7 @@ _EXPECTED_PLANTS = frozenset(
         "model-control-buck",
         "peak-current-buck",
         "whole-run-switching-buck",
+        "circuit-topology",
     }
 )
 
@@ -60,6 +62,7 @@ _DEFAULTS_BY_PLANT = {
     "model-control-buck": _MODEL_CONTROL_BUCK_DEFAULTS,
     "peak-current-buck": _PEAK_CURRENT_BUCK_DEFAULTS,
     "whole-run-switching-buck": _MODEL_CONTROL_BUCK_DEFAULTS,
+    "circuit-topology": _CIRCUIT_TOPOLOGY_DEFAULTS,
 }
 
 
@@ -114,6 +117,16 @@ def test_parameter_schema_translates_types_bounds_and_units():
     assert properties["dead_time_s"]["x-unit"] == "s"
 
 
+def test_parameter_schema_declares_an_object_and_a_string_enum():
+    properties = parameter_schema("circuit-topology")["properties"]
+
+    assert properties["topology"]["type"] == "object"
+    assert properties["topology"]["default"] is None
+    assert properties["integrator"]["type"] == "string"
+    assert properties["integrator"]["enum"] == ["trap", "gear", "euler"]
+    assert properties["integrator"]["default"] is None
+
+
 def test_parameter_schema_declares_integers_and_duty_bounds():
     multiphase = parameter_schema("multiphase-buck")["properties"]
     assert multiphase["phases"]["type"] == "integer"
@@ -163,7 +176,8 @@ def test_unknown_plant_names_every_known_plant():
 @pytest.mark.parametrize(
     "kwargs",
     [
-        {"name": "x", "kind": "string", "unit": None, "description": "text"},
+        # ``string`` is now a declared value shape; an unmodelled one is not.
+        {"name": "x", "kind": "list", "unit": None, "description": "text"},
         {"name": "x", "kind": "number", "unit": "V", "minimum": 2.0, "maximum": 1.0},
         {
             "name": "x",

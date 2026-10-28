@@ -101,8 +101,13 @@ pe-sim simulate-topology <topology.json> \
 ## 6. 证据边界
 
 - `CircuitPlant` 在运行时注册 `circuit-topology` 求解路径，**不写入**
-  `reviewed_identities.json`。因此 `review_status` 恒为 `not_pinned`，`docs/22`
-  的证据阶梯把它封顶为 `limited`；在要求已评审实现的策略下它直接失败。
+  `reviewed_identities.json`。因此 `review_status` 恒为 `not_pinned`：
+  - 探索性运行（非 `formal_comparison`）且状态为 `QUALIFIED` 时，Runner 记录的
+    `evidence_level` 是 `functional`；
+  - 形式比较被评审状态封顶为 `limited`；要求已评审实现的策略下直接失败；
+  - 无论哪种情况，`pe_sim.credibility` 的 `implementation_review` 因子都是
+    `limited`，不是 `pass`。
+  "`functional` 是使用层级，不是"这个电路被评审过"的声明。
 - 描述符没有评审记录。编译器能证明的只是"这份图被渲染成了它声明的器件"，
   不能证明电路电气正确、收敛、稳定或可用。
 - 适配器不提供 `analytical_steady_state`。没有解析平衡点就诚实地报告"不适用"，
@@ -113,25 +118,46 @@ pe-sim simulate-topology <topology.json> \
   6 V"的证明。用户可以在描述符里并联一个 `freewheeling_diode` 来显式提供续流
   路径；那会是一份不同的、由用户负责的电路。
 
-## 7. 未做
+## 7. 内置 Plant 注册
 
-- **注册为内置 Plant。** 目前只能通过库 API 或 `simulate-topology` 使用；要让
-  `pe-sim run`/`study` 直接接受 `plant_id = "circuit-topology"`，还需要：
-  `plant_config` 的嵌套 `topology` 对象、对应的 `parameter_schema`、`describe`
-  的声明表与目录测试，以及控制器闭环的验收。这是下一步，不在本次范围。
+`circuit-topology` 已注册为内置 Plant，可以在实验文档里直接写：
+
+```json
+{
+  "plant_id": "circuit-topology",
+  "plant_config": {
+    "topology": { "schema": "topology-descriptor-v1", "...": "..." },
+    "control_period_s": 1e-05,
+    "sample_step_s": 5e-08
+  }
+}
+```
+
+`plant_config.topology` 必须是一个完整的描述符文档；工厂先走与
+`validate-topology` 相同的校验，再构造执行适配器。声明表把 `topology` 声明为
+`object`，把 `integrator` 声明为带 `enum` 的字符串，因此 `describe
+circuit-topology` 仍然能回答“这个 plant_config 能写什么”。
+
+该 Plant 在目录里是 `third-party` 信任级别，因为电路由调用方编写，项目没有评审
+它。它不声明 `topology_exporter`（描述符已经在 `plant_config` 里，硬造一个从标量
+身份参数反推图结构的导出器会描述另一份电路），因此工作台导出会报告“没有拓扑导出
+器”，而不是画一份猜出来的图。
+
+## 8. 未做
+
 - **多控制关系。** 编译器只理解 `single_duty_complementary`。多相、交错、三电平
   需要各自的声明与渲染。
 - 子电路、`.include`、SPICE 子集导入（Step C）。
 
-## 8. 证据
+## 9. 证据
 
 | 测试 | 固定的事实 |
 | --- | --- |
 | `tests/test_circuit_plant.py` | 输出网与元件名来自描述符、`not_pinned`、网表选项与记录的求解器设置一致、两个负载拒绝、reset 回显与未知键拒绝 |
-| `tests/test_circuit_plant.py`（真实 ngspice） | 异步 Buck 与已评审适配器末值一致；两个窗口与一个长窗口一致；`snapshot → restore` 与连续窗口逐位一致；外部 `vin_v` 改变下一窗口；互补电路与已评审同步适配器末值一致 |
+| `tests/test_circuit_plant.py`（真实 ngspice） | 异步 Buck 与已评审适配器末值一致；两个窗口与一个长窗口一致；`snapshot → restore` 与连续窗口逐位一致；外部 `vin_v` 改变下一窗口；互补电路与已评审同步适配器末值一致；`pe-sim run` 以 `plant_id = "circuit-topology"` 发布包 |
 | `tests/test_circuit_plant.py`（CLI） | 缺少求解器时的拒绝信封；成功报告与 `simulation.json`/`samples.json` 的形状与点数一致 |
 
-## 9. 相关文档
+## 10. 相关文档
 
 | 文档 | 关系 |
 | --- | --- |

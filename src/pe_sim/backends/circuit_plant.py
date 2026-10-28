@@ -64,6 +64,11 @@ BACKEND_ID = "circuit-topology"
 MODEL_KIND = "compiled_topology_reference"
 MODEL_LEVEL = "L2"
 
+#: Route-control keys ``InitialState.reset_arguments()`` adds to every reset
+#: call.  They describe how the run started, not the circuit state, so a plant
+#: that rejects unknown state keys must not treat them as user mistakes.
+_ROUTE_RESET_KEYS = frozenset({"mode", "snapshot_path", "snapshot_hash"})
+
 #: Unit suffix to declared unit.  A parameter without a recognised suffix is
 #: recorded as dimensionless rather than guessed.
 _UNITS: tuple[tuple[str, str], ...] = (
@@ -387,6 +392,8 @@ class CircuitPlant:
             element_state[self._capacitor_ids[0]] = value
             applied[key] = value
         for key, value in sorted(state.items()):
+            if key in _ROUTE_RESET_KEYS:
+                continue
             if key in applied or key in {"inductor_current_a", "current_a", "output_voltage_v", "vout"}:
                 continue
             if key not in element_state:

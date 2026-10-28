@@ -346,3 +346,61 @@ def test_simulate_topology_writes_a_report_and_bounded_samples(tmp_path, capsys)
     assert samples["schema"] == "pe-sim.topology-samples.v1"
     assert len(samples["time_s"]) == report["samples"]["points"]
     assert set(samples["signals"]) == set(report["samples"]["signals"])
+
+
+def _run_document(tmp_path: Path) -> Path:
+    document = {
+        "schema_version": "0.1",
+        "experiment_id": "circuit-topology-run",
+        "run_id": "circuit-topology-run",
+        "plant_id": "circuit-topology",
+        "controller_id": "pi",
+        "plant_config": {
+            "topology": _buck_descriptor().to_dict(),
+            "control_period_s": 10e-6,
+            "sample_step_s": 50e-9,
+        },
+        "controller_config": {"kp": 0.1, "ki": 0.0},
+        "timebase": {"unit": "s", "control_period_s": 10e-6, "duration_s": 2e-4},
+        "initial_state": {"mode": "cold_start"},
+        "input_schedule": [{"time_s": 0.0, "vref": 5.0}],
+        "seed": 0,
+        "contracts": {
+            "safety": {
+                "id": "default-safety",
+                "hash": "c8af0de8cfeec979bf5fd17dbf1c819df90d6fc5a95fc3a2f53d84271ba0ef58",
+            },
+            "qualification": {
+                "id": "default-qualification",
+                "hash": "a3ef375ff21b886d76977854178c77a5bd397e551170fe13e4db9e606f9f121e",
+            },
+        },
+        "output": {"directory": str(tmp_path / "runs"), "retention": "keep"},
+    }
+    path = tmp_path / "run.json"
+    path.write_text(json.dumps(document, indent=2), encoding="utf-8")
+    return path
+
+
+@needs_ngspice
+def test_the_runner_accepts_an_authored_topology_as_a_plant(tmp_path, capsys):
+    path = _run_document(tmp_path)
+
+    assert cli_main(["run", str(path), "--ngspice", NGSPICE]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["plant_id"] == "circuit-topology"
+    assert payload["status"] in {"QUALIFIED", "RUN_OK"}
+    assert payload["evidence_level"] == "functional"
+    manifest = json.loads(
+        (Path(payload["run_dir"]) / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["plant"]["id"] == "circuit-topology"
+    assert manifest["plant"]["verification"]["status"] == "verified"
+    assert (
+        manifest["plant"]["identity"]["implementation"]["review"]["status"]
+        == "not_pinned"
+    )
+    assert manifest["route"]["event_granularity"] == "continuous"
+    assert manifest["route"]["control_location"] == "kernel"
+    assert manifest["plant"]["evidence"]["solver_invocations"] > 0

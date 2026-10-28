@@ -42,6 +42,7 @@ from typing import Any, Mapping
 from .backends import (
     BackendConfigError,
     BackendNotFoundError,
+    CircuitPlant,
     ModelControlBuckParameters,
     ModelControlBuckPlant,
     PeakCurrentBuckParameters,
@@ -69,6 +70,11 @@ from .time_model import (
     EVENT_GRANULARITY_CONTINUOUS,
     EVENT_GRANULARITY_WINDOW,
     TIME_MODEL_WHOLE_RUN,
+)
+from .topology_validation import (
+    TopologyValidationError,
+    build_descriptor,
+    validate_topology,
 )
 from .topology import (
     TopologyDescriptor,
@@ -178,6 +184,18 @@ _MODEL_CONTROL_BUCK_DEFAULTS: dict[str, object] = {
     "output_max": 1.0,
     "anti_windup": True,
     "cadence_s": None,
+}
+
+#: The compiled-topology plant takes a whole descriptor document.  All other
+#: fields are execution facts; no electrical value is duplicated outside the
+#: document, so the document remains the single model identity.
+_CIRCUIT_TOPOLOGY_DEFAULTS: dict[str, object] = {
+    "topology": None,
+    "integrator": None,
+    "control_period_s": None,
+    "sample_step_s": None,
+    "timeout_s": 30.0,
+    "keep_artifacts": False,
 }
 
 #: The peak-current variant reuses the switching core but gains an outer
@@ -399,6 +417,66 @@ def _build_ngspice_sync_buck(
         control_period_s=float(control_period),
         ngspice_executable=executable,
         **values,
+    )
+
+
+def _build_circuit_topology(
+    config: Mapping[str, Any], context: PlantBuildContext
+) -> CircuitPlant:
+    """Build the compiled-circuit adapter from an authored topology document.
+
+    The document is validated here through the same Step B checks the CLI uses;
+    a graph defect must not wait until the first window solve to appear.  The
+    adapter owns execution, not model interpretation: it reflects the document
+    rather than repairing it.
+    """
+
+    _reject_unknown_keys(
+        "circuit-topology", config, frozenset(_CIRCUIT_TOPOLOGY_DEFAULTS)
+    )
+    values = dict(_CIRCUIT_TOPOLOGY_DEFAULTS)
+    values.update(config)
+    document = values.pop("topology")
+    if not isinstance(document, Mapping):
+        raise ValueError(
+            "circuit-topology plant_config requires a 'topology' object; "
+            "write it with `pe-sim validate-topology` first"
+        )
+    try:
+        validate_topology(dict(document))
+    except TopologyValidationError as exc:
+        first = exc.issues[0]
+        raise ValueError(
+            f"topology document has {len(exc.issues)} error(s); first at "
+            f"{first.path}: {first.message}"
+        ) from None
+    descriptor = build_descriptor(document)
+    control_period = values.pop("control_period_s")
+    if control_period is None and context.timebase is not None:
+        control_period = context.timebase.control_period_s
+    if context.model_builder == "pyspice":
+        raise ValueError(
+            "circuit-topology supports only the native compiler; PySpice builds "
+            "the reviewed Buck circuit, not an authored topology"
+        )
+    if context.require_executable:
+        try:
+            resolution = resolve_ngspice_executable(context.ngspice_executable)
+        except (BackendNotFoundError, BackendConfigError) as exc:
+            raise ValueError(str(exc)) from exc
+        executable = resolution.executable
+    else:
+        executable = str(context.ngspice_executable or "ngspice")
+    return CircuitPlant(
+        descriptor,
+        control_period_s=(
+            None if control_period is None else float(control_period)
+        ),
+        integrator=values.pop("integrator"),
+        ngspice_executable=executable,
+        timeout_s=float(values.pop("timeout_s")),
+        sample_step_s=values.pop("sample_step_s"),
+        keep_artifacts=bool(values.pop("keep_artifacts")),
     )
 
 
@@ -682,6 +760,24 @@ _BUILTIN_REGISTRATIONS: tuple[PlantRegistration, ...] = (
         event_granularity=EVENT_GRANULARITY_CONTINUOUS,
         topology_exporter=_export_ngspice_sync_buck_topology,
         parameter_schema=parameter_schema("ngspice-sync-buck"),
+    ),
+    PlantRegistration(
+        plant_id="circuit-topology",
+        backend_id="circuit-topology",
+        factory=_build_circuit_topology,
+        class_name="CircuitPlant",
+        schedule_keys=_BASE_SCHEDULE_KEYS | _EXTERNAL_INPUT_SCHEDULE_KEYS,
+        config_keys=frozenset(_CIRCUIT_TOPOLOGY_DEFAULTS),
+        # The adapter is shipped and reviewed as code; the circuit it executes
+        # is authored by the caller, so the catalogue must not present it as a
+        # project-reviewed reference model.  It declares no topology exporter:
+        # the descriptor is already recorded in ``plant_config``, and inventing
+        # one from scalar identity parameters would describe a different graph.
+        trust_level="third-party",
+        export_eligible=True,
+        control_location=CONTROL_LOCATION_KERNEL,
+        event_granularity=EVENT_GRANULARITY_CONTINUOUS,
+        parameter_schema=parameter_schema("circuit-topology"),
     ),
     PlantRegistration(
         plant_id="whole-run-buck",

@@ -146,6 +146,9 @@ well-formed circuit, not a reviewed model: a topology an agent authors can
 reach at most `limited` evidence. See
 [docs/64_circuit_topology_authoring_v1.md](docs/64_circuit_topology_authoring_v1.md)
 and [docs/65_circuit_execution_v1.md](docs/65_circuit_execution_v1.md).
+`circuit-topology` is also a registered Plant, so `pe-sim run` accepts an
+experiment document whose `plant_config.topology` is the descriptor and closes
+the loop with the kernel controller.
 
 The demo is an exploratory run of a project-owned averaged reference model. It
 records `evidence_level: functional`; it is not a physical, formal-comparison,

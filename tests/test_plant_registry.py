@@ -58,6 +58,7 @@ _EXPECTED_TRUST = {
     "ngspice-sync-buck": "reference",
     "whole-run-buck": "reference",
     "whole-run-switching-buck": "reference",
+    "circuit-topology": "third-party",
 }
 
 
@@ -424,9 +425,16 @@ def test_load_builtin_plants_is_idempotent_and_complete():
         assert registration.trust_level == trust_level
         # The whole-run route now declares a reviewed topology exporter, so it
         # is export-eligible; the fixture plants are eligible but publish no
-        # display topology.
+        # display topology.  ``circuit-topology`` is the other exception: the
+        # authored descriptor is recorded in ``plant_config`` itself, and an
+        # exporter reconstructed from scalar identity parameters would display
+        # a different graph.
         assert registration.export_eligible is True
-        assert registration.topology_exporter is not None or plant_id in ("fake", "fake-load")
+        assert registration.topology_exporter is not None or plant_id in (
+            "fake",
+            "fake-load",
+            "circuit-topology",
+        )
         assert registration.class_name.endswith("Plant")
 
 

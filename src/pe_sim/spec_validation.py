@@ -174,6 +174,15 @@ def _render_value(value: Any) -> str:
 def _expected_text(spec: ParameterSpec) -> str:
     if spec.kind == "boolean":
         return "boolean"
+    if spec.kind == "object":
+        return "object"
+    if spec.kind == "string":
+        text = "string"
+        if spec.choices is not None:
+            text += " one of: " + ", ".join(repr(choice) for choice in spec.choices)
+        if spec.nullable:
+            text += " (or null)"
+        return text
     text = spec.kind
     if spec.minimum is not None:
         comparator = ">" if spec.exclusive_minimum else ">="
@@ -190,6 +199,12 @@ def _value_is_invalid(spec: ParameterSpec, value: Any) -> bool:
         return not spec.nullable
     if spec.kind == "boolean":
         return not isinstance(value, bool)
+    if spec.kind == "object":
+        return not isinstance(value, Mapping)
+    if spec.kind == "string":
+        if not isinstance(value, str):
+            return True
+        return spec.choices is not None and value not in spec.choices
     # ``bool`` is an ``int`` subclass, so ``True`` would otherwise pass an
     # integer check; a JSON boolean is never a parameter value.
     if isinstance(value, bool):
