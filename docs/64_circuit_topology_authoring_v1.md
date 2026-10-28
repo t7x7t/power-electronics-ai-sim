@@ -318,17 +318,25 @@ delta     vout=4.077e-05  iL=1.190e-05
   被记录但不渲染，避免两处声明打架。
 - 不做 SPICE 子集导入（Step C）。
 
-## 8. 未做：`CircuitPlant` 与通用 `ModelBuilder`
+## 8. 执行层与仍未做
 
-本次交付的是**编写与编译**，不是**执行**。仍然缺：
+编写与编译已经闭环；执行由 `docs/65` 的 `CircuitPlant` 承担。它以描述符驱动
+`compile_topology`，把每个窗口的末状态作为下一窗口的初值，并复用已评审的 ngspice
+进程边界。通用 `ModelBuilder` 因此就是 `circuit_compile` 本身：它接受描述符、
+参数覆盖与初值，而不依赖 `BuckNetlistParameters`。
 
-- `CircuitPlant`：从 `NgspiceBuckPlant` 抽出、以描述符驱动网表渲染与信号名解析的
-  执行适配器；
-- 通用 `ModelBuilder`：与 `BuckNetlistParameters` 解耦的模型参数载体。
+仍未做：
 
-这些都需要触及 `pe_sim.backends` 与评审身份（`reviewed_identities.json`），因此
-必须作为一次显式决策单独提交，而不是混在编写面里。互补控制的声明与渲染已在
-§5.6 完成（只落在编写层，不碰后端）。
+- **注册为内置 Plant。** `CircuitPlant` 目前通过库 API 或
+  `pe-sim simulate-topology` 使用；`pe-sim run`/`study` 还不能直接写
+  `plant_id = "circuit-topology"`。这需要 `plant_config` 的嵌套 `topology` 对象、
+  对应 schema、`describe` 声明表与目录测试，以及控制器闭环验收。
+- 多相/交错/三电平控制关系（§5.6 只支持一种声明）。
+- Step C 的 SPICE 子集导入。
+
+互补控制的声明与渲染已在 §5.6 完成（只落在编写层，不碰后端）；执行适配器在
+`pe_sim.backends` 里新增模块并只做**运行时**求解路径声明，因此
+`reviewed_identities.json` 未变。
 
 ## 9. 证据
 
@@ -343,6 +351,7 @@ delta     vout=4.077e-05  iL=1.190e-05
 | 文档 | 关系 |
 | --- | --- |
 | `docs/63_agent_facing_spec_validation_v1.md` | Step A：`plant_config` 的声明与校验 |
+| `docs/65_circuit_execution_v1.md` | 执行适配器、窗口续跑与 `simulate-topology` |
 | `docs/24_stage11_contracts_v1.md` | `TopologyDescriptor` 契约 |
 | `docs/43_kernel_roadmap_v1.md` | 不变量 I5（内核不命名拓扑） |
 | `docs/22_stage12_evidence_levels_v1.md` | 证据阶梯 |

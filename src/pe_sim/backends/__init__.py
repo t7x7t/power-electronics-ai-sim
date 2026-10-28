@@ -44,6 +44,7 @@ from .netlist_builder import (
     PyspiceUnavailableError,
     pyspice_version,
 )
+from .circuit_plant import CircuitPlant
 from .ngspice_plants import NgspiceBuckPlant
 from .sync_buck import (
     SYNC_NETLIST_TEMPLATE_VERSION,
@@ -90,6 +91,7 @@ __all__ = [
     "NETLIST_TEMPLATE_VERSION",
     "SYNC_NETLIST_TEMPLATE_VERSION",
     "BuckNetlistParameters",
+    "CircuitPlant",
     "SyncBuckNetlistParameters",
     "NativeBuckNetlistBuilder",
     "NativeSyncBuckNetlistBuilder",

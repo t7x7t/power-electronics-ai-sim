@@ -136,6 +136,14 @@ class CompiledCircuit:
     #: The remaining on-time rendered as a finite tail, per control net.  Empty
     #: when no gate was already on at the window start.
     carrier_tails_s: tuple[tuple[str, float], ...] = ()
+    #: Component id to SPICE element name, in descriptor order.  A consumer that
+    #: holds the descriptor needs this to name the saved current/voltage of an
+    #: element it did not render itself.
+    element_names: tuple[tuple[str, str], ...] = ()
+    #: The net bound to the load's positive port when the descriptor declares
+    #: exactly one ``resistor_load``.  ``None`` means the descriptor does not
+    #: define a single observable output.
+    output_net: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -154,6 +162,10 @@ class CompiledCircuit:
             "carrier_tails_s": {
                 net_id: tail for net_id, tail in self.carrier_tails_s
             },
+            "element_names": {
+                component_id: name for component_id, name in self.element_names
+            },
+            "output_net": self.output_net,
         }
 
 
@@ -274,6 +286,39 @@ def _synthetic_node(base: str, taken: set[str]) -> str:
     while candidate in taken:
         candidate += "_"
     return candidate
+
+
+@dataclass(frozen=True)
+class _ComponentView:
+    """One component with per-window parameter values applied.
+
+    Only ``_parameter`` and ``_bound_net`` read a component, so the view carries
+    exactly the fields they use.  Building a view is what lets a caller change
+    an input voltage or load resistance for one window without rebuilding the
+    descriptor (which would change the identity the caller is citing).
+    """
+
+    component_id: str
+    kind: str
+    ports: tuple[Any, ...]
+    parameters: Mapping[str, Any]
+
+
+def _component_view(
+    component: Any,
+    overrides: Mapping[str, Mapping[str, Any]] | None,
+) -> Any:
+    if not overrides:
+        return component
+    override = overrides.get(component.component_id)
+    if not override:
+        return component
+    return _ComponentView(
+        component_id=component.component_id,
+        kind=component.kind,
+        ports=component.ports,
+        parameters={**dict(component.parameters), **dict(override)},
+    )
 
 
 def _bound_net(component: Any, port_id: str) -> str:
@@ -480,6 +525,9 @@ def compile_topology(
     options: Mapping[str, Any] | None = None,
     num_digits: int = 12,
     carrier_phase_s: float = 0.0,
+    temperature_c: float = 27.0,
+    initial_conditions: Mapping[str, float] | None = None,
+    parameter_overrides: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> CompiledCircuit:
     """Render ``descriptor`` as one ngspice netlist.
 
@@ -499,6 +547,14 @@ def compile_topology(
     hold consumer that solves one window at a time must pass it, or every
     window would restart the carrier at a rising edge and silently change the
     energy delivered.
+
+    ``initial_conditions`` overrides the ``IC`` of an inductor (amperes) or a
+    capacitor (volts) by component id; it is how a stepped executor resumes a
+    multi-window circuit from its previous endpoint without restoring solver
+    internals.  ``parameter_overrides`` replaces named component parameters for
+    this one window (an external input voltage or load change).  Neither
+    changes ``descriptor_fingerprint``: the descriptor is still the identity the
+    caller cites, and the netlist digest identifies the concrete window.
     """
 
     duty_value = float(duty)
@@ -517,6 +573,14 @@ def compile_topology(
         raise CircuitCompileError(
             "invalid_option", "num_digits must be a positive integer"
         )
+    try:
+        temperature = float(temperature_c)
+    except (TypeError, ValueError) as exc:
+        raise CircuitCompileError(
+            "invalid_option", "temperature_c must be a number"
+        ) from exc
+    if not math.isfinite(temperature):
+        raise CircuitCompileError("invalid_option", "temperature_c must be finite")
 
     nets: dict[str, str] = {}
     for net in descriptor.nets:
@@ -559,6 +623,71 @@ def compile_topology(
                 component_id=component.component_id,
                 kind=canonical,
             )
+
+    components_by_id = {
+        component.component_id: component for component in descriptor.components
+    }
+    if initial_conditions:
+        unknown = sorted(set(initial_conditions) - set(components_by_id))
+        if unknown:
+            raise CircuitCompileError(
+                "invalid_parameter",
+                "initial_conditions names components the descriptor does not "
+                f"declare: {unknown}",
+                components=unknown,
+            )
+        for component_id, value in sorted(initial_conditions.items()):
+            kind = canonical_device_kind(components_by_id[component_id].kind)
+            if kind not in {"inductor", "capacitor"}:
+                raise CircuitCompileError(
+                    "invalid_parameter",
+                    f"component {component_id!r} of kind {kind!r} has no initial "
+                    "state to set; only an inductor current or a capacitor "
+                    "voltage can be resumed",
+                    component_id=component_id,
+                )
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise CircuitCompileError(
+                    "invalid_parameter",
+                    f"initial state of {component_id!r} must be a number",
+                    component_id=component_id,
+                )
+            if not math.isfinite(float(value)):
+                raise CircuitCompileError(
+                    "invalid_parameter",
+                    f"initial state of {component_id!r} must be finite",
+                    component_id=component_id,
+                )
+    if parameter_overrides:
+        unknown = sorted(set(parameter_overrides) - set(components_by_id))
+        if unknown:
+            raise CircuitCompileError(
+                "invalid_parameter",
+                "parameter_overrides names components the descriptor does not "
+                f"declare: {unknown}",
+                components=unknown,
+            )
+        for component_id, override in sorted(parameter_overrides.items()):
+            if not isinstance(override, Mapping):
+                raise CircuitCompileError(
+                    "invalid_parameter",
+                    f"parameter override for {component_id!r} must be an object",
+                    component_id=component_id,
+                )
+            canonical = canonical_device_kind(components_by_id[component_id].kind)
+            assert canonical is not None
+            device = device_spec(canonical)
+            unknown_names = sorted(
+                name for name in override if device.parameter(str(name)) is None
+            )
+            if unknown_names:
+                raise CircuitCompileError(
+                    "invalid_parameter",
+                    f"component {component_id!r} declares no parameter "
+                    f"{unknown_names[0]!r}",
+                    component_id=component_id,
+                    parameter=unknown_names[0],
+                )
 
     declaration = _control_declaration(descriptor)
     actuators = [
@@ -740,18 +869,19 @@ def compile_topology(
         counters[letter] = counters.get(letter, 0) + 1
         name = f"{letter}{counters[letter]}"
         element_names[component.component_id] = name
+        view = _component_view(component, parameter_overrides)
         nodes = {
-            port.port_id: _node(_bound_net(component, port.port_id), reference_net)
+            port.port_id: _node(_bound_net(view, port.port_id), reference_net)
             for port in spec.ports
         }
 
         if canonical == "voltage_source":
             cards.append(
                 f"{name} {nodes['positive']} {nodes['negative']} DC "
-                f"{_format(_parameter(component, 'voltage_v', required=True))}"
+                f"{_format(_parameter(view, 'voltage_v', required=True))}"
             )
         elif canonical == "pulse_source":
-            control_net = _bound_net(component, "positive")
+            control_net = _bound_net(view, "positive")
             window = gate_windows.get(control_net)
             if window is None:  # only reachable in complementary mode
                 raise CircuitCompileError(
@@ -764,7 +894,7 @@ def compile_topology(
             start_s, stop_s = window
             gate_cards, tail_s = _render_gate(
                 name=name,
-                component=component,
+                component=view,
                 control_node=nodes["positive"],
                 negative_node=nodes["negative"],
                 start_s=start_s,
@@ -778,22 +908,28 @@ def compile_topology(
             if tail_s > 0.0:
                 carrier_tails[control_net] = tail_s
         elif canonical == "inductor":
+            initial = _parameter(view, "initial_current_a")
+            if initial_conditions and component.component_id in initial_conditions:
+                initial = float(initial_conditions[component.component_id])
             cards.append(
                 f"{name} {nodes['input']} {nodes['output']} "
-                f"{_format(_parameter(component, 'inductance_h', required=True))} "
-                f"IC={_format(_parameter(component, 'initial_current_a') or 0.0)}"
+                f"{_format(_parameter(view, 'inductance_h', required=True))} "
+                f"IC={_format(0.0 if initial is None else initial)}"
             )
             saved.append(f"i({name})")
         elif canonical == "capacitor":
+            initial = _parameter(view, "initial_voltage_v")
+            if initial_conditions and component.component_id in initial_conditions:
+                initial = float(initial_conditions[component.component_id])
             cards.append(
                 f"{name} {nodes['positive']} {nodes['negative']} "
-                f"{_format(_parameter(component, 'capacitance_f', required=True))} "
-                f"IC={_format(_parameter(component, 'initial_voltage_v') or 0.0)}"
+                f"{_format(_parameter(view, 'capacitance_f', required=True))} "
+                f"IC={_format(0.0 if initial is None else initial)}"
             )
         elif canonical == "resistor_load":
             cards.append(
                 f"{name} {nodes['positive']} {nodes['negative']} "
-                f"{_format(_parameter(component, 'resistance_ohm', required=True))}"
+                f"{_format(_parameter(view, 'resistance_ohm', required=True))}"
             )
         elif canonical == "voltage_controlled_switch":
             # The switch measures V(control) - V(control reference).  When the
@@ -801,7 +937,7 @@ def compile_topology(
             # than the circuit reference (a floating or high-side drive), that
             # node is the switch's control reference; using 0 would compare the
             # gate against the wrong node while every card still looked legal.
-            control_net = _bound_net(component, "control")
+            control_net = _bound_net(view, "control")
             driver = carrier_by_net.get(control_net)
             control_reference = (
                 _node(_bound_net(driver, "negative"), reference_net)
@@ -812,19 +948,23 @@ def compile_topology(
                 f"{name} {nodes['input']} {nodes['output']} {nodes['control']} "
                 f"{control_reference} {name}"
             )
+            on_resistance = _parameter(view, "on_resistance_ohm")
+            off_resistance = _parameter(view, "off_resistance_ohm")
+            threshold = _parameter(view, "threshold_v")
+            hysteresis = _parameter(view, "hysteresis_v")
             model_cards.append(
-                f".model {name} SW(Ron="
-                f"{_format(_parameter(component, 'on_resistance_ohm') or 1e-3)} "
-                f"Roff={_format(_parameter(component, 'off_resistance_ohm') or 1e9)} "
-                f"Vt={_format(_parameter(component, 'threshold_v') or 0.5)} "
-                f"Vh={_format(_parameter(component, 'hysteresis_v') or 0.0)})"
+                f".model {name} SW(Ron={_format(1e-3 if on_resistance is None else on_resistance)} "
+                f"Roff={_format(1e9 if off_resistance is None else off_resistance)} "
+                f"Vt={_format(0.5 if threshold is None else threshold)} "
+                f"Vh={_format(0.0 if hysteresis is None else hysteresis)})"
             )
         elif canonical == "freewheeling_diode":
             cards.append(f"{name} {nodes['anode']} {nodes['cathode']} {name}")
+            saturation = _parameter(view, "saturation_current_a")
+            emission = _parameter(view, "emission_coefficient")
             model_cards.append(
-                f".model {name} D(Is="
-                f"{_format(_parameter(component, 'saturation_current_a') or 1e-12)} "
-                f"N={_format(_parameter(component, 'emission_coefficient') or 0.02)})"
+                f".model {name} D(Is={_format(1e-12 if saturation is None else saturation)} "
+                f"N={_format(0.02 if emission is None else emission)})"
             )
         else:  # pragma: no cover - guarded above by ``renderable``
             raise CircuitCompileError(
@@ -834,6 +974,12 @@ def compile_topology(
             )
 
     saved = [f"v({net_id})" for net_id in nets if net_id != reference_net] + saved
+    loads = [
+        component
+        for component in descriptor.components
+        if canonical_device_kind(component.kind) == "resistor_load"
+    ]
+    output_net = _bound_net(loads[0], "positive") if len(loads) == 1 else None
 
     lines = [
         "* pe-sim compiled circuit",
@@ -843,7 +989,7 @@ def compile_topology(
         f"* duty: {_format(duty_value)}",
         "",
         _render_options(options, integrator),
-        f".temp {_format(27.0)}",
+        f".temp {_format(temperature)}",
         f".tran {_format(step)} {_format(duration)} 0 {_format(step)} uic",
         "",
         *cards,
@@ -876,6 +1022,8 @@ def compile_topology(
         carrier_tail_s=max(carrier_tails.values(), default=0.0),
         control_mode=control_mode,
         carrier_tails_s=tuple(sorted(carrier_tails.items())),
+        element_names=tuple(element_names.items()),
+        output_net=output_net,
     )
 
 

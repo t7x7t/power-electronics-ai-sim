@@ -2,6 +2,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 from pathlib import Path
 import sys
 import time
@@ -13,7 +14,7 @@ from .applicability import ApplicabilityPolicy
 from .attestation import attest_run, verify_attestation
 from .cancellation import FileCancelToken
 from .capabilities import capability_report
-from .contracts import ExperimentSpec
+from .contracts import BackendProcessError, ExperimentSpec
 from .error_codes import REQUEST_REJECTION_CODES, RequestRejected, rejection_document
 from .qualification_rules import QualificationRulePack
 from .run_events import DEMO_RESULT_SCHEMA, RUN_RESULT_SCHEMA, ProgressPolicy
@@ -53,7 +54,9 @@ from .time_model import TIME_MODEL_STEPPED, TIME_MODEL_WHOLE_RUN, TIME_MODELS
 from .backends import (
     BackendConfigError,
     BackendNotFoundError,
+    CircuitPlant,
     NgspiceExecutableAdapter,
+    resolve_ngspice_executable,
     config_template,
     current_platform,
     get_backend,
@@ -341,6 +344,209 @@ def _run_compile_topology(args) -> int:
         print(json.dumps({**summary, "netlist": compiled.netlist}, sort_keys=True, indent=2))
     else:
         print(compiled.netlist, end="" if compiled.netlist.endswith("\n") else "\n")
+    return 0
+
+
+def _topology_signal_summary(table) -> dict[str, dict[str, float]]:
+    """Summarise every saved signal without embedding the whole waveform."""
+
+    summary: dict[str, dict[str, float]] = {}
+    for name, values in sorted(table.signals.items()):
+        summary[name] = {
+            "min": min(values),
+            "max": max(values),
+            "last": values[-1],
+        }
+    return summary
+
+
+#: A convenience command, not a run package: refuse rather than build a
+#: multi-gigabyte JSON document nobody asked for.
+_MAX_TOPOLOGY_SAMPLE_POINTS = 2_000_000
+
+
+def _run_simulate_topology(args) -> int:
+    """Compile one topology and solve it once at a constant duty.
+
+    This is the execution half of the authoring loop.  It deliberately does not
+    create a run package: it answers "does this circuit solve, and what does it
+    look like" before a caller spends a full runner, controller, and
+    qualification stack on it.  Validation and compilation refusals stay in
+    their own vocabularies; only a solver failure produces a FAILED payload.
+    """
+
+    try:
+        document = json.loads(Path(args.topology).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        _emit_rejection(
+            "CONFIG_REJECTED",
+            "invalid_request",
+            f"{args.topology}: {exc}",
+            reason="invalid_document",
+        )
+        return 2
+
+    envelope = topology_validation_document(document)
+    if envelope["ok"] is not True:
+        _emit_rejection(
+            "CONFIG_REJECTED",
+            "invalid_request",
+            f"{args.topology}: topology document has "
+            f"{envelope['error_count']} error(s)",
+            validation=TOPOLOGY_VALIDATION_SCHEMA,
+            issues=envelope["issues"],
+        )
+        return 2
+
+    try:
+        resolution = resolve_ngspice_executable(args.ngspice)
+    except (BackendNotFoundError, BackendConfigError) as exc:
+        _emit_rejection(
+            "CONFIG_REJECTED",
+            "invalid_request",
+            str(exc),
+            reason="backend_not_found",
+        )
+        return 2
+
+    phase = float(args.carrier_phase)
+    if not math.isfinite(phase) or phase < 0.0:
+        _emit_rejection(
+            "CONFIG_REJECTED",
+            "invalid_request",
+            "--carrier-phase must be finite and non-negative",
+            reason="invalid_carrier_phase",
+        )
+        return 2
+
+    try:
+        plant = CircuitPlant(
+            build_descriptor(document),
+            control_period_s=args.control_period,
+            integrator=args.integrator,
+            ngspice_executable=resolution.executable,
+            timeout_s=args.timeout,
+            sample_step_s=args.step,
+        )
+        plant.reset({})
+        # The carrier phase is the window's start time modulo the switching
+        # period; starting the one-shot window there makes the flag mean exactly
+        # what ``compile-topology --carrier-phase`` means.
+        plant.time_s = phase
+        observation = plant.advance(args.duty, args.duration)
+    except CircuitCompileError as exc:
+        _emit_rejection(
+            "CONFIG_REJECTED",
+            "invalid_request",
+            str(exc),
+            compile_code=exc.code,
+            details=exc.details,
+        )
+        return 2
+    except ValueError as exc:
+        _emit_rejection(
+            "CONFIG_REJECTED",
+            "invalid_request",
+            str(exc),
+            reason="invalid_circuit",
+        )
+        return 2
+    except BackendProcessError as exc:
+        print(
+            json.dumps(
+                {
+                    "schema": "pe-sim.topology-simulation.v1",
+                    "status": "FAILED",
+                    "category": "backend_process_failure",
+                    "error": str(exc),
+                },
+                sort_keys=True,
+            )
+        )
+        return 1
+
+    table = plant.last_window_table()
+    compiled = plant.last_compiled()
+    assert table is not None and compiled is not None
+    report = {
+        "schema": "pe-sim.topology-simulation.v1",
+        "status": "COMPLETED",
+        "topology_id": compiled.topology_id,
+        "descriptor_fingerprint": compiled.descriptor_fingerprint,
+        "control_mode": compiled.control_mode,
+        "duty": compiled.duty,
+        "duration_s": compiled.duration_s,
+        "carrier_phase_s": compiled.carrier_phase_s,
+        "netlist": {
+            "template": compiled.template,
+            "digest": compiled.digest,
+            "saved_signals": list(compiled.saved_signals),
+            "element_names": dict(compiled.element_names),
+            "output_net": compiled.output_net,
+        },
+        "solver": plant.backend_provenance(),
+        "observation": {
+            "time_s": observation.time_s,
+            "measurement": dict(observation.measurement),
+        },
+        "samples": {
+            "points": table.point_count,
+            "start_time_s": table.start_time_s,
+            "end_time_s": table.end_time_s,
+            "signals": _topology_signal_summary(table),
+        },
+        "evidence_level": "limited",
+        "limitation": (
+            "no review record exists for a caller-authored topology; this "
+            "simulation is an inspection result, not comparable evidence"
+        ),
+    }
+
+    if args.output_dir is not None:
+        if table.point_count > _MAX_TOPOLOGY_SAMPLE_POINTS:
+            _emit_rejection(
+                "CONFIG_REJECTED",
+                "invalid_request",
+                f"{table.point_count} sample points exceed the "
+                f"{_MAX_TOPOLOGY_SAMPLE_POINTS} limit; pass --step to thin the trace",
+                reason="sample_export_too_large",
+            )
+            return 2
+        try:
+            args.output_dir.mkdir(parents=True, exist_ok=True)
+            report_path = args.output_dir / "simulation.json"
+            samples_path = args.output_dir / "samples.json"
+            report["artifacts"] = {
+                "report": str(report_path),
+                "samples": str(samples_path),
+            }
+            report_path.write_text(
+                json.dumps(report, sort_keys=True, indent=2), encoding="utf-8"
+            )
+            samples_path.write_text(
+                json.dumps(
+                    {
+                        "schema": "pe-sim.topology-samples.v1",
+                        "time_s": list(table.time_s),
+                        "signals": {
+                            name: list(values)
+                            for name, values in sorted(table.signals.items())
+                        },
+                    },
+                    sort_keys=True,
+                ),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            _emit_rejection(
+                "CONFIG_REJECTED",
+                "invalid_request",
+                f"{args.output_dir}: {exc}",
+                reason="artifact_write_failed",
+            )
+            return 2
+
+    print(json.dumps(report, sort_keys=True))
     return 0
 
 
@@ -683,6 +889,34 @@ def main(argv: list[str] | None = None) -> int:
     )
     compile_topology_parser.add_argument("--output", type=Path, default=None)
     compile_topology_parser.add_argument("--json", action="store_true", dest="as_json")
+    simulate_topology_parser = sub.add_parser(
+        "simulate-topology",
+        help="compile and solve a topology document once at a constant duty",
+    )
+    simulate_topology_parser.add_argument("topology", type=Path)
+    simulate_topology_parser.add_argument("--duty", type=float, default=0.5)
+    simulate_topology_parser.add_argument("--duration", type=float, default=1e-3)
+    simulate_topology_parser.add_argument("--step", type=float, default=None)
+    simulate_topology_parser.add_argument(
+        "--control-period",
+        type=float,
+        default=None,
+        dest="control_period",
+        help="control window (seconds); defaults to one switching period",
+    )
+    simulate_topology_parser.add_argument(
+        "--carrier-phase",
+        type=float,
+        default=0.0,
+        dest="carrier_phase",
+        help="carrier position at the window start, modulo the switching period",
+    )
+    simulate_topology_parser.add_argument(
+        "--integrator", choices=("trap", "gear", "euler"), default="trap"
+    )
+    simulate_topology_parser.add_argument("--timeout", type=float, default=30.0)
+    simulate_topology_parser.add_argument("--ngspice", default=None)
+    simulate_topology_parser.add_argument("--output-dir", type=Path, default=None)
     preview = sub.add_parser(
         "preview-netlist",
         help="render the reviewed circuit netlist without executing a simulation",
@@ -723,6 +957,8 @@ def main(argv: list[str] | None = None) -> int:
             return _run_validate_topology(args)
         if args.command == "compile-topology":
             return _run_compile_topology(args)
+        if args.command == "simulate-topology":
+            return _run_simulate_topology(args)
         # The CLI is the composition root: it attaches the project-owned plant
         # registrations. The kernel never enumerates plants itself.  Kept
         # inside the try so a registration conflict is reported as JSON rather
