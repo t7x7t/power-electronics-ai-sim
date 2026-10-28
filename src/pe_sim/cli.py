@@ -319,6 +319,7 @@ def _run_compile_topology(args) -> int:
             duration_s=args.duration,
             sample_step_s=args.step,
             integrator=args.integrator,
+            carrier_phase_s=args.carrier_phase,
         )
     except CircuitCompileError as exc:
         _emit_rejection(
@@ -667,6 +668,16 @@ def main(argv: list[str] | None = None) -> int:
     compile_topology_parser.add_argument("--duty", type=float, default=0.5)
     compile_topology_parser.add_argument("--duration", type=float, default=1e-3)
     compile_topology_parser.add_argument("--step", type=float, default=None)
+    compile_topology_parser.add_argument(
+        "--carrier-phase",
+        type=float,
+        default=0.0,
+        dest="carrier_phase",
+        help=(
+            "carrier position at the window start (seconds, modulo the switching "
+            "period); pass it when solving one zero-order-hold window at a time"
+        ),
+    )
     compile_topology_parser.add_argument(
         "--integrator", choices=("trap", "gear", "euler"), default="trap"
     )

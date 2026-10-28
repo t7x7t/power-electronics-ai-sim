@@ -239,6 +239,32 @@ def test_compile_topology_refuses_an_impossible_duty(tmp_path, capsys):
     assert payload["compile_code"] == "invalid_duty"
 
 
+def test_compile_topology_accepts_a_carrier_phase(tmp_path, capsys):
+    path = _write(tmp_path, _buck_document())
+
+    assert (
+        cli_main(
+            [
+                "compile-topology",
+                str(path),
+                "--duty",
+                "0.5",
+                "--duration",
+                "3e-6",
+                "--carrier-phase",
+                "3e-6",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["carrier_phase_s"] == pytest.approx(3e-6)
+    assert payload["carrier_tail_s"] == pytest.approx(2e-6)
+    assert "PWL(" in payload["netlist"]
+
+
 def test_the_topology_surface_needs_no_registered_plant(tmp_path, capsys):
     """Compilation is a circuit question, so an empty registry must not matter."""
 

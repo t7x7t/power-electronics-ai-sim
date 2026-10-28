@@ -52,6 +52,7 @@ CIRCUIT_NETLIST_TEMPLATE_VERSION = "circuit-netlist-v1"
 CIRCUIT_COMPILE_CODES = frozenset(
     {
         "ambiguous_reference_net",
+        "invalid_carrier_phase",
         "invalid_duration",
         "invalid_duty",
         "invalid_integrator",
@@ -114,6 +115,8 @@ class CompiledCircuit:
     sample_step_s: float
     reference_net: str
     saved_signals: tuple[str, ...]
+    carrier_phase_s: float = 0.0
+    carrier_tail_s: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -126,6 +129,8 @@ class CompiledCircuit:
             "sample_step_s": self.sample_step_s,
             "reference_net": self.reference_net,
             "saved_signals": list(self.saved_signals),
+            "carrier_phase_s": self.carrier_phase_s,
+            "carrier_tail_s": self.carrier_tail_s,
         }
 
 
@@ -234,6 +239,20 @@ def _node(net_id: str, reference_net: str) -> str:
     return _REFERENCE_NODE if net_id == reference_net else net_id
 
 
+def _synthetic_node(base: str, taken: set[str]) -> str:
+    """Return a node name that no declared net uses.
+
+    The suffix grows until it is free rather than raising: a collision is a
+    naming accident, not a circuit defect, and appending an underscore is a
+    deterministic, readable resolution.
+    """
+
+    candidate = base
+    while candidate in taken:
+        candidate += "_"
+    return candidate
+
+
 def _render_options(
     options: Mapping[str, Any] | None, integrator: str
 ) -> str:
@@ -278,12 +297,19 @@ def compile_topology(
     integrator: str = "trap",
     options: Mapping[str, Any] | None = None,
     num_digits: int = 12,
+    carrier_phase_s: float = 0.0,
 ) -> CompiledCircuit:
     """Render ``descriptor`` as one ngspice netlist.
 
     ``duty`` is held constant for the whole window.  The carrier's pulse width is
     derived from it, so a descriptor declares the switching frequency and the
     caller declares the command - the two are never the same field.
+
+    ``carrier_phase_s`` is where the switching carrier stands at the window
+    start: the window's start time modulo the switching period.  A zero-order
+    hold consumer that solves one window at a time must pass it, or every
+    window would restart the carrier at a rising edge and silently change the
+    energy delivered.
     """
 
     duty_value = float(duty)
@@ -385,8 +411,35 @@ def compile_topology(
     amplitude = _parameter(carrier, "amplitude_v") or 1.0
     rise_time = _parameter(carrier, "rise_time_s") or 1e-9
     fall_time = _parameter(carrier, "fall_time_s") or 1e-9
+
     switching_period = 1.0 / switching_frequency
     pulse_width = max(duty_value * switching_period, 1e-15)
+    try:
+        phase = float(carrier_phase_s)
+    except (TypeError, ValueError) as exc:
+        raise CircuitCompileError(
+            "invalid_carrier_phase", "carrier_phase_s must be a number"
+        ) from exc
+    if not math.isfinite(phase):
+        raise CircuitCompileError(
+            "invalid_carrier_phase", "carrier_phase_s must be finite"
+        )
+    phase %= switching_period
+    # A phase within floating-point noise of one period is zero phase; leaving
+    # it as a whole period would make the carrier wait an extra period.
+    if switching_period - phase <= 1e-12 * max(1.0, switching_period):
+        phase = 0.0
+    pulse_delay = (-phase) % switching_period
+    if switching_period - pulse_delay <= 1e-12 * max(1.0, switching_period):
+        pulse_delay = 0.0
+    # Remaining on-time when the window starts inside an on-interval.  A phase
+    # at the rising edge is handled by the periodic source itself, and a phase
+    # at or after the falling edge has no tail.
+    tail_s = 0.0
+    if 0.0 < phase < pulse_width:
+        tail_s = pulse_width - phase
+    if tail_s <= 1e-12:
+        tail_s = 0.0
 
     step = (
         default_sample_step_s(switching_period, duration)
@@ -400,6 +453,10 @@ def compile_topology(
     cards: list[str] = []
     model_cards: list[str] = []
     saved: list[str] = []
+    # Synthetic carrier nodes must not shadow a declared net: a descriptor that
+    # happens to use the same name is a legitimate descriptor, and silently
+    # merging the two nodes would change the circuit.
+    taken_nodes: set[str] = set(nets)
 
     for component in descriptor.components:
         canonical = canonical_device_kind(component.kind)
@@ -428,11 +485,39 @@ def compile_topology(
                 f"{_format(_parameter(component, 'voltage_v', required=True))}"
             )
         elif canonical == "pulse_source":
-            cards.append(
-                f"{name} {nodes['positive']} {nodes['negative']} PULSE("
-                f"0 {_format(amplitude)} 0 {_format(rise_time)} {_format(fall_time)} "
+            control_node = nodes["positive"]
+            pulse_card = (
+                f"0 {_format(amplitude)} {_format(pulse_delay)} "
+                f"{_format(rise_time)} {_format(fall_time)} "
                 f"{_format(pulse_width)} {_format(switching_period)})"
             )
+            if tail_s > 0.0:
+                # The window starts inside an on-interval, so the remaining
+                # on-time cannot be a shifted rising edge.  Render it as a
+                # second, finite pulse summed onto the control net; without the
+                # tail the window silently loses the rest of that pulse and
+                # delivers the wrong energy while every sample still looks
+                # plausible.
+                pulse_node = _synthetic_node(f"{control_node}_pulse", taken_nodes)
+                tail_node = _synthetic_node(f"{control_node}_tail", taken_nodes)
+                taken_nodes.update({pulse_node, tail_node})
+                cards.append(
+                    f"{name} {pulse_node} {nodes['negative']} PULSE({pulse_card}"
+                )
+                counters["V"] = counters.get("V", 0) + 1
+                cards.append(
+                    f"V{counters['V']} {tail_node} {nodes['negative']} PWL("
+                    f"0 1 {_format(tail_s)} 1 {_format(tail_s + 1e-9)} 0)"
+                )
+                counters["B"] = counters.get("B", 0) + 1
+                cards.append(
+                    f"B{counters['B']} {control_node} {nodes['negative']} "
+                    f"V = V({pulse_node}) + V({tail_node})"
+                )
+            else:
+                cards.append(
+                    f"{name} {control_node} {nodes['negative']} PULSE({pulse_card}"
+                )
         elif canonical == "inductor":
             cards.append(
                 f"{name} {nodes['input']} {nodes['output']} "
@@ -516,6 +601,8 @@ def compile_topology(
         sample_step_s=step,
         reference_net=reference_net,
         saved_signals=tuple(saved),
+        carrier_phase_s=phase,
+        carrier_tail_s=tail_s,
     )
 
 

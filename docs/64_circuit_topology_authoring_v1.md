@@ -186,19 +186,49 @@ fingerprint)`。schema 不识别时 `checked` 为空；文档没有 `fingerprint
 描述符声明载波频率，调用方声明命令。二者永不合并成同一个字段，因此同一份描述符
 可以为任意占空比编译，且 `digest` 会随之改变（`descriptor_fingerprint` 不变）。
 
-### 5.3 封闭的 13 个拒绝码
+### 5.3 载波相位与尾脉冲
 
-`ambiguous_reference_net`、`invalid_duration`、`invalid_duty`、`invalid_integrator`、
-`invalid_option`、`invalid_parameter`、`invalid_sample_step`、`missing_parameter`、
-`multiple_actuators`、`multiple_carriers`、`no_carrier`、`not_compilable`、
-`unsupported_net_kind`。
+`carrier_phase_s` 是求解窗口开始时载波所在的相位（窗口起点模开关周期）。分段
+（零阶保持）运行必须传它：不传就等于每个窗口都把载波重启在上升沿，会在所有采样
+值都看起来合理的情况下每周期多送或少送能量。
+
+相位落在**导通区间内部**时，SPICE 无法用“平移的上升沿”表达“一个在 t=0 之前
+就开始的脉冲还剩多少”。渲染器因此引入两个**合成节点**和一个求和源：
+
+```text
+V2 pwm_pulse 0 PULSE(0 1 7e-06 1e-09 1e-09 5e-06 1e-05)
+V3 pwm_tail  0 PWL(0 1 2e-06 1 2.001e-06 0)
+B1 pwm 0 V = V(pwm_pulse) + V(pwm_tail)
+```
+
+合成节点名在冲突时追加下划线直到不撞名 —— 描述符里恰好用了同名网络是合法文档，
+把两个节点静默合并会污染电路。这是**载波的渲染细节**，不是对电路的修改，因此控制
+网上仍然只有一个驱动元件的声明事实不变。
+
+实测（同一电路、四个相位，D = 0.5，120 µs 窗口，末 30 个样本均值）：
+
+| 相位 | 尾宽 | vout 差 | iL 差 |
+| --- | --- | --- | --- |
+| 0 | 0 | 6.1e-05 | — |
+| 3 µs | 2 µs | 1.3e-04 | — |
+| 6 µs | 0 | 2.3e-04 | — |
+| 9.9 µs | 0 | 3.9e-05 | — |
+
+最大偏差 2.4e-04，相对于 iL ≈ 6.8 A 是 3.5e-05 相对误差。
+
+### 5.4 封闭的 14 个拒绝码
+
+`ambiguous_reference_net`、`invalid_carrier_phase`、`invalid_duration`、`invalid_duty`、
+`invalid_integrator`、`invalid_option`、`invalid_parameter`、`invalid_sample_step`、
+`missing_parameter`、`multiple_actuators`、`multiple_carriers`、`no_carrier`、
+`not_compilable`、`unsupported_net_kind`。
 
 其中 `multiple_actuators` 有一条重要的物理理由必须写在文档里：**同一个控制网驱动
 两个开关，会把互补器件渲染成同时导通。** 同步 Buck 有两个栅极网，因此当前编译器
-拒绝它 —— 这不是缺陷，而是"双控制网与单一占空比的推导关系尚未声明"这一事实的
+拒绝它 —— 这不是缺陷，而是“双控制网与单一占空比的推导关系尚未声明”这一事实的
 诚实表达。见 §7。
 
-### 5.4 与已评审模板的等价性
+### 5.5 与已评审模板的等价性
 
 编译器的正确性不是断言出来的，是对比出来的。对同一电路、同一命令：
 
@@ -225,7 +255,7 @@ delta     vout=4.077e-05  iL=1.190e-05
 | --- | --- | --- |
 | `pe-sim describe-devices [kind]` | 打印器件词表或单个器件声明 | 0；未知种类 2 |
 | `pe-sim validate-topology <file>` | 打印 `pe-sim.topology-validation.v1` 信封 | 无错误 0，否则 2 |
-| `pe-sim compile-topology <file> [--duty D] [--duration S] [--step S] [--integrator trap\|gear\|euler] [--output P] [--json]` | 编译并打印/写出网表 | 0；否则 2 |
+| `pe-sim compile-topology <file> [--duty D] [--duration S] [--step S] [--carrier-phase S] [--integrator trap\|gear\|euler] [--output P] [--json]` | 编译并打印/写出网表 | 0；否则 2 |
 
 三个命令都在 `load_builtin_plants()` **之前**分派：电路问题不需要任何 plant 注册，
 也不需要求解器。拒绝信封沿用 `pe-sim.rejection.v1`，`compile-topology` 的编译失败
@@ -248,10 +278,7 @@ delta     vout=4.077e-05  iL=1.190e-05
   下一步是让描述符声明"多个控制网如何从单一占空比推导"（例如
   `metadata.control = {mode: "single_duty_complementary", dead_time_s: ...}`），
   并在编译器里实现；本次**未做**。
-- **`carrier_phase_s` 未实现。** 已评审的 Buck 模板支持从窗口中途开始的载波相位与
-  剩余导通时间补片；通用编译器只写相位为 0 的单段载波，因此不适用于 ZOH 分段运行。
-  这是 `CircuitPlant`（§8）之前必须补的一项。
-- **`dead_time_s` 被记录但不渲染。** 它声明在 `pulse_source` 上，因为描述符若有
+- **`dead_time_s` 被记录但不渲染。** 声明在 `pulse_source` 上，因为描述符若有
   两个载波就必须说明它们的关系；单执行器编译器没有位置应用它。
 - 不做 SPICE 子集导入（Step C）。
 
@@ -262,7 +289,6 @@ delta     vout=4.077e-05  iL=1.190e-05
 - `CircuitPlant`：从 `NgspiceBuckPlant` 抽出、以描述符驱动网表渲染与信号名解析的
   执行适配器；
 - 通用 `ModelBuilder`：与 `BuckNetlistParameters` 解耦的模型参数载体；
-- 载波相位与 ZOH 分段支持（见 §7），这是 `CircuitPlant` 的前置条件；
 - 互补控制的声明与实现（见 §7）。
 
 这些都需要触及 `pe_sim.backends` 与评审身份（`reviewed_identities.json`），因此
@@ -273,7 +299,7 @@ delta     vout=4.077e-05  iL=1.190e-05
 | 测试 | 固定的事实 |
 | --- | --- |
 | `tests/test_topology_validation.py` | 26 码封闭、6 份内置描述符零错误、单缺陷单报告、建议安全门、`checked` 真实性、`build_descriptor` 与 `from_dict` 一致、标识符规则与 `topology._ID_RE` 一致 |
-| `tests/test_circuit_compile.py` | 13 码封闭、结构与已评审 Buck 逐端子一致、摘要稳定与可复算、全部拒绝路径、无 backend 导入 |
+| `tests/test_circuit_compile.py` | 14 码封闭、结构与已评审 Buck 逐端子一致、摘要稳定与可复算、相位与尾脉冲（真实 ngspice 三个相位均一致）、全部拒绝路径、无 backend 导入 |
 | `tests/test_agent_topology_surface.py` | 三个 CLI 命令的信封、退出码、不建目录、空注册表可用 |
 
 ## 10. 相关文档

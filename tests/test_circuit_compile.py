@@ -353,6 +353,7 @@ def test_compile_codes_are_a_closed_set():
     assert CIRCUIT_COMPILE_CODES == frozenset(
         {
             "ambiguous_reference_net",
+            "invalid_carrier_phase",
             "invalid_duration",
             "invalid_duty",
             "invalid_integrator",
@@ -374,6 +375,97 @@ def test_a_compile_error_carries_a_machine_readable_record():
 
     assert error.to_dict()["code"] == "invalid_duty"
     assert "duty" in error.to_dict()["message"]
+
+
+# ---------------------------------------------------------------------------
+# Carrier phase
+# ---------------------------------------------------------------------------
+
+
+def _pulse_fields(netlist: str) -> list[float]:
+    pulse = next(line for line in netlist.splitlines() if "PULSE(" in line)
+    window = pulse[pulse.index("PULSE(") + len("PULSE(") : pulse.rindex(")")]
+    return [float(field) for field in window.replace(",", " ").split()]
+
+
+def test_a_zero_phase_renders_one_carrier_on_the_control_net():
+    compiled = _compile(carrier_phase_s=0.0)
+
+    assert compiled.carrier_tail_s == 0.0
+    carrier = next(
+        line for line in compiled.netlist.splitlines() if "PULSE(" in line
+    )
+    # name, positive, negative
+    assert carrier.split()[1:3] == ["pwm", "0"]
+    assert "PWL(" not in compiled.netlist
+    assert not any(
+        line.strip().startswith("B") for line in compiled.netlist.splitlines()
+    )
+
+
+def test_a_phase_inside_the_on_interval_renders_the_remaining_tail():
+    compiled = _compile(duty=0.5, carrier_phase_s=3e-6)
+
+    assert compiled.carrier_tail_s == pytest.approx(5e-6 - 3e-6)
+    assert "PWL(" in compiled.netlist
+    # The tail is summed onto the control net instead of being lost, because a
+    # shifted rising edge cannot express a pulse that began before the window.
+    assert "V = V(pwm_pulse) + V(pwm_tail)" in compiled.netlist
+    fields = _pulse_fields(compiled.netlist)
+    assert fields[2] == pytest.approx(7e-6)  # delay to the next rising edge
+
+
+def test_a_phase_at_or_after_the_falling_edge_renders_no_tail():
+    for phase in (5e-6, 6e-6, 9.9e-6):
+        compiled = _compile(duty=0.5, carrier_phase_s=phase)
+        assert compiled.carrier_tail_s == 0.0, phase
+        assert "PWL(" not in compiled.netlist, phase
+
+
+def test_a_phase_of_one_full_period_normalises_to_zero():
+    zero = _compile(carrier_phase_s=0.0)
+    wrapped = _compile(carrier_phase_s=1.0 / FSW)
+
+    assert wrapped.carrier_phase_s == 0.0
+    assert wrapped.carrier_tail_s == 0.0
+    assert wrapped.digest == zero.digest
+
+
+def test_a_synthetic_carrier_node_cannot_shadow_a_declared_net():
+    from pe_sim.topology import TopologyNet
+
+    descriptor = _buck_descriptor()
+    shadowed = type(descriptor)(
+        descriptor.topology_id,
+        descriptor.components,
+        descriptor.nets + (TopologyNet("pwm_pulse", None, "electrical"),),
+        metadata=descriptor.metadata,
+    )
+
+    netlist = _compile(shadowed, carrier_phase_s=3e-6).netlist
+
+    assert "pwm_pulse_" in netlist
+    # The declared net keeps its own identity: no element card uses bare
+    # ``pwm_pulse`` as a node.
+    for line in netlist.splitlines():
+        tokens = line.split()
+        if len(tokens) > 2 and tokens[0][:1].upper() in {"V", "S", "L", "C", "R", "D"}:
+            assert tokens[1] != "pwm_pulse", line
+
+
+@pytest.mark.parametrize(
+    "phase", [float("nan"), float("inf"), "not-a-number", None]
+)
+def test_an_impossible_carrier_phase_is_refused(phase):
+    assert _error(None, carrier_phase_s=phase).code == "invalid_carrier_phase"
+
+
+def test_the_phase_changes_the_digest_but_not_the_descriptor_identity():
+    left = _compile(carrier_phase_s=0.0)
+    right = _compile(carrier_phase_s=3e-6)
+
+    assert left.digest != right.digest
+    assert left.descriptor_fingerprint == right.descriptor_fingerprint
 
 
 # ---------------------------------------------------------------------------
@@ -483,4 +575,42 @@ def test_a_compiled_circuit_solves_to_the_same_operating_point():
     # And the operating point is the one the converter should have.
     assert mean_tail(left["v(vout)"]) == pytest.approx(
         DUTY * VIN, abs=0.15
+    )
+
+
+@needs_ngspice
+@pytest.mark.parametrize("phase", [0.0, 3e-6, 6e-6])
+def test_a_phase_shifted_circuit_matches_the_reviewed_template(phase):
+    """The tail-pulse rendering is the part a reviewer cannot eyeball."""
+
+    from pe_sim.backends.netlist import BuckNetlistParameters, render_buck_netlist
+    from pe_sim.backends.settings import NgspiceSolverSettings
+
+    duration = 120e-6
+    compiled = _compile(duration_s=duration, carrier_phase_s=phase)
+    reviewed = render_buck_netlist(
+        BuckNetlistParameters(
+            input_voltage_v=VIN,
+            inductance_h=L_H,
+            capacitance_f=C_F,
+            load_resistance_ohm=R_OHM,
+            switching_frequency_hz=FSW,
+        ),
+        duty=DUTY,
+        duration_s=duration,
+        solver=NgspiceSolverSettings(),
+        carrier_phase_s=phase,
+    )
+
+    left = _solve(compiled.netlist)
+    right = _solve(reviewed)
+
+    def mean_tail(values: list[float], count: int = 30) -> float:
+        return sum(values[-count:]) / len(values[-count:])
+
+    assert mean_tail(left["v(vout)"]) == pytest.approx(
+        mean_tail(right["v(vout)"]), abs=1e-3
+    )
+    assert mean_tail(left["i(l1)"]) == pytest.approx(
+        mean_tail(right["i(l1)"]), abs=1e-3
     )
