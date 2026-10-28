@@ -13,8 +13,8 @@ from .applicability import ApplicabilityPolicy
 from .attestation import attest_run, verify_attestation
 from .cancellation import FileCancelToken
 from .capabilities import capability_report
-from .contracts import ExperimentSpec, validate_experiment_document
-from .error_codes import RequestRejected, rejection_document
+from .contracts import ExperimentSpec
+from .error_codes import REQUEST_REJECTION_CODES, RequestRejected, rejection_document
 from .qualification_rules import QualificationRulePack
 from .run_events import DEMO_RESULT_SCHEMA, RUN_RESULT_SCHEMA, ProgressPolicy
 from .run_store import discovery_root
@@ -31,7 +31,15 @@ from .capability_analysis import (
 from .builtin_controllers import load_builtin_controllers
 from .builtin_plants import PlantBuildContext, load_builtin_plants
 from .controller_registry import ControllerBuildContext, resolve_controller
+from .plant_parameters import describe_plant
 from .plant_registry import PlantRegistration, plant_catalog, resolve
+from .spec_validation import (
+    SPEC_VALIDATION_SCHEMA,
+    SpecValidationError,
+    collect_issues,
+    validate_document,
+    validation_document,
+)
 from .time_model import TIME_MODEL_STEPPED, TIME_MODEL_WHOLE_RUN, TIME_MODELS
 from .backends import (
     BackendConfigError,
@@ -103,6 +111,81 @@ def _emit_rejection(status: str, code: str, error: str, **extra: Any) -> None:
     """Print one versioned rejection envelope; the caller owns the exit code."""
 
     print(json.dumps(rejection_document(status, code, error, extra), sort_keys=True))
+
+
+def _run_validate(args) -> int:
+    """Validate one experiment document and print its issue envelope.
+
+    This is the agent's compile-time loop.  It reads the document, the
+    packaged (or explicit) JSON Schema, the plant's declared parameter surface,
+    and the schedule vocabulary, then prints ``pe-sim.spec-validation.v1``.
+    It never builds a plant, imports an adapter, starts a solver, or creates a
+    run directory, so it is safe to call before any run exists and costs
+    nothing when the document is wrong.
+
+    ``--backend`` is a consistency assertion, not a build request: the
+    registration is looked up only to compare ``backend_id``, and a mismatch
+    is rejected with the existing ``backend_mismatch`` code.  The envelope is
+    always plain JSON — this surface is machine-consumed, so a ``--json``
+    switch would only add a way to get the wrong format.
+    """
+
+    try:
+        document = json.loads(Path(args.config).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        _emit_rejection(
+            "CONFIG_REJECTED",
+            "invalid_request",
+            str(exc),
+            reason="invalid_document",
+        )
+        return 2
+    if args.backend is not None and isinstance(document, Mapping):
+        # A mismatch says the caller's claim about the document is wrong, so it
+        # is a rejected request rather than one more validation issue.  Resolving
+        # the claim needs the shipped registrations, so this is the one branch
+        # that attaches the composition root.
+        load_builtin_plants()
+        _select_registration(document, args.backend)
+    declared = document.get("plant_id") if isinstance(document, Mapping) else None
+    payload = validation_document(
+        document,
+        issues=collect_issues(document, schema_path=args.schema),
+        plant_id=declared if isinstance(declared, str) else None,
+    )
+    print(json.dumps(payload, sort_keys=True))
+    return 0 if payload["ok"] is True else 2
+
+
+def _run_describe(args) -> int:
+    """Print one plant's declared parameter surface without building it.
+
+    The declaration is data owned by ``pe_sim.plant_parameters``, so answering
+    needs no adapter import, no solver probe, and no run directory.  An unknown
+    id is reported with the closed ``unknown_plant`` code because a misspelled
+    name is a request-shape problem, not a document issue.
+    """
+
+    try:
+        payload = describe_plant(args.plant_id)
+    except KeyError as exc:
+        _emit_rejection("CONFIG_REJECTED", "unknown_plant", str(exc))
+        return 2
+    print(json.dumps(payload, sort_keys=True))
+    return 0
+
+
+def _validate_run_document(document: dict[str, Any]) -> None:
+    """Refuse a document before anything is built or written.
+
+    The structured checker knows the shipped parameter tables and, through the
+    registry, any plant a distribution registered.  A plant it cannot resolve
+    at all is reported as ``unknown_plant``, which is the same outcome
+    ``_select_registration`` would produce later - only earlier and with a
+    machine-readable path, so no run directory is created for a typo.
+    """
+
+    validate_document(document)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -377,6 +460,27 @@ def main(argv: list[str] | None = None) -> int:
         "list-plants",
         help="list registered plants and the inputs each one declares",
     )
+    validate = sub.add_parser(
+        "validate",
+        help="validate an experiment document without building a plant or starting a solver",
+    )
+    validate.add_argument("config", type=Path)
+    validate.add_argument(
+        "--schema",
+        type=Path,
+        default=None,
+        help="experiment JSON Schema; defaults to the packaged schema",
+    )
+    validate.add_argument(
+        "--backend",
+        default=None,
+        help="assert that the document's plant_id resolves to this backend",
+    )
+    describe = sub.add_parser(
+        "describe",
+        help="print the declared plant_config surface of one plant",
+    )
+    describe.add_argument("plant_id")
     preview = sub.add_parser(
         "preview-netlist",
         help="render the reviewed circuit netlist without executing a simulation",
@@ -401,6 +505,16 @@ def main(argv: list[str] | None = None) -> int:
     service.add_argument("--port", type=int, default=8765)
     args = parser.parse_args(argv)
     try:
+        # ``describe`` reads only the declared parameter table and ``validate``
+        # only needs the registry when the document carries a schedule or the
+        # caller asserts a backend, so both are served before the composition
+        # root runs.  That keeps the two query commands answerable on a machine
+        # with no simulator installed, which is exactly when an agent is still
+        # deciding what to write.
+        if args.command == "describe":
+            return _run_describe(args)
+        if args.command == "validate":
+            return _run_validate(args)
         # The CLI is the composition root: it attaches the project-owned plant
         # registrations. The kernel never enumerates plants itself.  Kept
         # inside the try so a registration conflict is reported as JSON rather
@@ -695,6 +809,28 @@ def main(argv: list[str] | None = None) -> int:
             reason=exc.reason,
         )
         return 2
+    except SpecValidationError as exc:
+        # ``SpecValidationError`` is a ``ValueError`` subclass, so this branch
+        # must come before the generic one: the structured issue list is the
+        # whole point of the surface, and the generic envelope would flatten it
+        # back into one string the agent cannot repair from.
+        #
+        # An issue code that also names a rejection code keeps that code.  A
+        # client already branching on ``unknown_plant`` must not have to start
+        # parsing ``issues`` to recognise the outcome it already understands.
+        mapped = [
+            issue
+            for issue in exc.issues
+            if issue.severity == "error" and issue.code in REQUEST_REJECTION_CODES
+        ]
+        _emit_rejection(
+            "CONFIG_REJECTED",
+            mapped[0].code if mapped else "invalid_request",
+            str(exc),
+            validation=SPEC_VALIDATION_SCHEMA,
+            issues=[issue.to_dict() for issue in exc.issues],
+        )
+        return 2
     except (OSError, RuntimeError, ValueError, TypeError) as exc:
         # Configuration and preflight errors are machine-readable and must not
         # start a partial run. JSONDecodeError is a ValueError subclass and is
@@ -819,8 +955,11 @@ def _execute_experiment(
     document = json.loads(config.read_text(encoding="utf-8"))
     # Validate the serialized contract before the compatibility reader
     # constructs an ExperimentSpec.  This prevents unknown or misspelled
-    # fields from being silently ignored at the CLI boundary.
-    validate_experiment_document(document)
+    # fields from being silently ignored at the CLI boundary.  When the plant
+    # declares a parameter surface the structured validator also checks it and
+    # raises ``SpecValidationError``, so the CLI can return the issue list
+    # instead of one flattened string.
+    _validate_run_document(document)
     registration = _select_registration(document, backend)
     _validate_schedule_keys(document, registration)
     if mode == "formal_comparison" and registration.time_model == TIME_MODEL_WHOLE_RUN:
@@ -1074,7 +1213,9 @@ def _run_preview_netlist(args) -> int:
     """Render the reviewed netlist without starting a simulator."""
 
     document = json.loads(args.config.read_text(encoding="utf-8"))
-    validate_experiment_document(document)
+    # Same structured pre-flight as ``run``: a preview is cheap, but a caller
+    # repairing a document should see the pointer-addressed issue here too.
+    validate_document(document)
     registration = _select_registration(document, None)
     _validate_schedule_keys(document, registration)
     spec = ExperimentSpec.from_dict(document)

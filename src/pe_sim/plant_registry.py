@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any, Callable, Mapping
 
@@ -107,6 +107,17 @@ class PlantRegistration:
     #: in its manifest.  The registry validates that it is callable and reports
     #: whether it exists; it never calls it and never imports a topology module.
     topology_exporter: Callable[[Mapping[str, Any]], Any] | None = None
+    #: Declared JSON Schema for ``plant_config``; ``None`` means the plant
+    #: publishes no machine-readable parameter surface.  The registry checks the
+    #: shape only (a closed object whose properties match ``config_keys``); it
+    #: never validates a document against this schema.  ``compare=False`` and
+    #: ``hash=False`` are required because the value is a mapping: including it
+    #: in equality would make ``load_builtin_plants`` depend on dict identity and
+    #: ordering, and including it in the hash would make the frozen registration
+    #: unhashable.
+    parameter_schema: Mapping[str, Any] | None = field(
+        default=None, repr=False, compare=False, hash=False
+    )
 
 
 _REGISTRATIONS: dict[str, PlantRegistration] = {}
@@ -131,6 +142,87 @@ def _freeze_keys(name: str, value: Any) -> frozenset[str] | None:
         if not isinstance(item, str) or not item:
             raise ValueError(f"{name} must contain non-empty strings, got {item!r}")
     return items
+
+
+def _freeze_parameter_schema(
+    plant_id: str,
+    value: Any,
+    config_keys: frozenset[str] | None,
+) -> Mapping[str, Any] | None:
+    """Validate the declared schema's shape and freeze it for publishing.
+
+    This module must not import ``pe_sim.plant_parameters``: it is the
+    kernel-side registry and depends on no declaration table, adapter, or
+    engine.  What it can still enforce is the promise the catalog makes.  The
+    only reason to declare a schema here is to publish a *closed* object, so
+    ``type: object`` and ``additionalProperties: false`` are mandatory; an
+    open schema would accept a key the factory then rejects, which is exactly
+    the contradiction this declaration exists to remove.
+
+    When ``config_keys`` is also declared, the two key sets must be identical.
+    The catalog and the validator are two views of one contract: if the
+    catalog advertised one set of keys while validation accepted another, an
+    agent would get two contradictory answers for the same plant.
+
+    Both published levels are frozen, so a caller holding the original dict
+    cannot change what was registered after the fact.  Nested property entries
+    stay ordinary dicts; only the key set is part of this module's contract.
+    """
+
+    if value is None:
+        return None
+    try:
+        declared = dict(value)
+    except (TypeError, ValueError):
+        raise TypeError(
+            f"plant_id {plant_id!r} parameter_schema must be a mapping or None, "
+            f"got {type(value).__name__}"
+        ) from None
+    if declared.get("type") != "object":
+        raise ValueError(
+            f"plant_id {plant_id!r} parameter_schema must declare type 'object', "
+            f"got {declared.get('type')!r}"
+        )
+    if declared.get("additionalProperties") is not False:
+        raise ValueError(
+            f"plant_id {plant_id!r} parameter_schema must declare "
+            "'additionalProperties': false; an open schema would accept keys "
+            "the factory rejects, which is the only reason to declare one"
+        )
+    properties = declared.get("properties")
+    if not isinstance(properties, Mapping):
+        raise ValueError(
+            f"plant_id {plant_id!r} parameter_schema must declare a 'properties' "
+            f"mapping, got {type(properties).__name__}"
+        )
+    if config_keys is not None:
+        declared_keys = set(properties)
+        if declared_keys != set(config_keys):
+            raise ValueError(
+                f"plant_id {plant_id!r} declares config_keys "
+                f"{sorted(set(config_keys), key=str)} but its parameter_schema "
+                f"properties {sorted(declared_keys, key=str)}; the catalog and "
+                "the validator must accept the same keys"
+            )
+    return MappingProxyType(
+        {**declared, "properties": MappingProxyType(dict(properties))}
+    )
+
+
+def _json_safe(value: Any) -> Any:
+    """Rebuild read-only containers as plain JSON-safe data.
+
+    ``plant_catalog`` is consumed as JSON, and ``MappingProxyType`` is not
+    serializable; the copy also keeps a client from mutating the registered
+    declaration through the value it receives.  Only containers are rebuilt;
+    scalars pass through unchanged.
+    """
+
+    if isinstance(value, Mapping):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
 
 
 def _validated(registration: PlantRegistration) -> PlantRegistration:
@@ -173,10 +265,16 @@ def _validated(registration: PlantRegistration) -> PlantRegistration:
             f"plant_id {plant_id!r} topology_exporter must be callable or None, "
             f"got {type(registration.topology_exporter).__name__}"
         )
+    schedule_keys = _freeze_keys("schedule_keys", registration.schedule_keys)
+    config_keys = _freeze_keys("config_keys", registration.config_keys)
+    parameter_schema = _freeze_parameter_schema(
+        plant_id, registration.parameter_schema, config_keys
+    )
     return replace(
         registration,
-        schedule_keys=_freeze_keys("schedule_keys", registration.schedule_keys),
-        config_keys=_freeze_keys("config_keys", registration.config_keys),
+        schedule_keys=schedule_keys,
+        config_keys=config_keys,
+        parameter_schema=parameter_schema,
     )
 
 
@@ -252,6 +350,9 @@ def plant_catalog(*, discover: bool = False) -> dict[str, Any]:
             "config_keys": None
             if registration.config_keys is None
             else sorted(registration.config_keys),
+            # Published as plain JSON rather than as the frozen mapping the
+            # registry keeps, so a client can serialize (and own) its copy.
+            "parameter_schema": _json_safe(registration.parameter_schema),
             "trust_level": registration.trust_level,
             "export_eligible": registration.export_eligible,
             # A capability flag, never the callable: the catalog stays JSON-safe

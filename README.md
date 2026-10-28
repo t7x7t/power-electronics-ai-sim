@@ -113,6 +113,13 @@ usable in the current process, and how to enable it. `--require <id>` makes it a
 scriptable preflight check. See
 [docs/49_optional_capabilities_v1.md](docs/49_optional_capabilities_v1.md).
 
+Before writing a configuration, `pe-sim describe <plant_id>` prints that
+plant's declared `plant_config` surface (types, units, bounds, defaults), and
+`pe-sim validate <config>` checks a document against those declarations, the
+experiment schema, and the plant's schedule vocabulary without building a
+plant, starting a solver, or creating a run directory. See
+[docs/63_agent_facing_spec_validation_v1.md](docs/63_agent_facing_spec_validation_v1.md).
+
 The demo is an exploratory run of a project-owned averaged reference model. It
 records `evidence_level: functional`; it is not a physical, formal-comparison,
 or hardware claim. The consumer creates one configuration file and otherwise

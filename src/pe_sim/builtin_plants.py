@@ -57,6 +57,9 @@ from .backends import (
 )
 from .contracts import Timebase
 from .multiphase_plants import MultiphaseBuckPlant
+# ``plant_parameters`` is stdlib-only, so importing it here cannot create a
+# cycle: the declarations are data, not an adapter import.
+from .plant_parameters import parameter_schema
 from .plant_registry import PlantRegistration, register_plant, registered_plants
 from .reference_plants import BuckPlant, BoostPlant
 from .runtime import FakeLoadPlant, FakePlant
@@ -589,6 +592,7 @@ _BUILTIN_REGISTRATIONS: tuple[PlantRegistration, ...] = (
         config_keys=_FAKE_CONFIG_KEYS,
         trust_level="fixture",
         export_eligible=True,
+        parameter_schema=parameter_schema("fake"),
     ),
     PlantRegistration(
         plant_id="fake-load",
@@ -599,6 +603,7 @@ _BUILTIN_REGISTRATIONS: tuple[PlantRegistration, ...] = (
         config_keys=_FAKE_CONFIG_KEYS,
         trust_level="fixture",
         export_eligible=True,
+        parameter_schema=parameter_schema("fake-load"),
     ),
     PlantRegistration(
         plant_id="buck",
@@ -612,6 +617,7 @@ _BUILTIN_REGISTRATIONS: tuple[PlantRegistration, ...] = (
         control_location=CONTROL_LOCATION_KERNEL,
         event_granularity=EVENT_GRANULARITY_WINDOW,
         topology_exporter=_export_buck_topology,
+        parameter_schema=parameter_schema("buck"),
     ),
     PlantRegistration(
         plant_id="boost",
@@ -625,6 +631,7 @@ _BUILTIN_REGISTRATIONS: tuple[PlantRegistration, ...] = (
         control_location=CONTROL_LOCATION_KERNEL,
         event_granularity=EVENT_GRANULARITY_WINDOW,
         topology_exporter=_export_boost_topology,
+        parameter_schema=parameter_schema("boost"),
     ),
     PlantRegistration(
         plant_id="multiphase-buck",
@@ -638,6 +645,7 @@ _BUILTIN_REGISTRATIONS: tuple[PlantRegistration, ...] = (
         control_location=CONTROL_LOCATION_KERNEL,
         event_granularity=EVENT_GRANULARITY_WINDOW,
         topology_exporter=_export_multiphase_buck_topology,
+        parameter_schema=parameter_schema("multiphase-buck"),
     ),
     PlantRegistration(
         plant_id="ngspice-buck",
@@ -645,7 +653,10 @@ _BUILTIN_REGISTRATIONS: tuple[PlantRegistration, ...] = (
         factory=_build_ngspice_buck,
         class_name="NgspiceBuckPlant",
         schedule_keys=_BASE_SCHEDULE_KEYS | _EXTERNAL_INPUT_SCHEDULE_KEYS,
-        config_keys=None,
+        # ``_build_ngspice_buck`` already rejects every key outside this set
+        # through ``_reject_unknown_keys``; declaring it here moves that
+        # existing constraint to validation time instead of adding a new one.
+        config_keys=frozenset(_NGSPICE_BUCK_DEFAULTS),
         trust_level="reference",
         export_eligible=True,
         control_location=CONTROL_LOCATION_KERNEL,
@@ -654,6 +665,7 @@ _BUILTIN_REGISTRATIONS: tuple[PlantRegistration, ...] = (
         # inside a control window is solved where it is declared.
         event_granularity=EVENT_GRANULARITY_CONTINUOUS,
         topology_exporter=_export_ngspice_buck_topology,
+        parameter_schema=parameter_schema("ngspice-buck"),
     ),
     PlantRegistration(
         plant_id="ngspice-sync-buck",
@@ -661,12 +673,15 @@ _BUILTIN_REGISTRATIONS: tuple[PlantRegistration, ...] = (
         factory=_build_ngspice_sync_buck,
         class_name="NgspiceSyncBuckPlant",
         schedule_keys=_BASE_SCHEDULE_KEYS | _EXTERNAL_INPUT_SCHEDULE_KEYS,
-        config_keys=None,
+        # Same reasoning as ``ngspice-buck``: the factory's whitelist is now
+        # also declared, so validation refuses the key before a run exists.
+        config_keys=frozenset(_NGSPICE_SYNC_BUCK_DEFAULTS),
         trust_level="reference",
         export_eligible=True,
         control_location=CONTROL_LOCATION_KERNEL,
         event_granularity=EVENT_GRANULARITY_CONTINUOUS,
         topology_exporter=_export_ngspice_sync_buck_topology,
+        parameter_schema=parameter_schema("ngspice-sync-buck"),
     ),
     PlantRegistration(
         plant_id="whole-run-buck",
@@ -681,6 +696,7 @@ _BUILTIN_REGISTRATIONS: tuple[PlantRegistration, ...] = (
         control_location=CONTROL_LOCATION_MODEL,
         event_granularity=EVENT_GRANULARITY_WINDOW,
         topology_exporter=_export_whole_run_buck_topology,
+        parameter_schema=parameter_schema("whole-run-buck"),
     ),
     PlantRegistration(
         plant_id="model-control-buck",
@@ -694,6 +710,7 @@ _BUILTIN_REGISTRATIONS: tuple[PlantRegistration, ...] = (
         control_location=CONTROL_LOCATION_MODEL,
         event_granularity=EVENT_GRANULARITY_WINDOW,
         topology_exporter=_export_model_control_buck_topology,
+        parameter_schema=parameter_schema("model-control-buck"),
     ),
     PlantRegistration(
         plant_id="peak-current-buck",
@@ -707,6 +724,7 @@ _BUILTIN_REGISTRATIONS: tuple[PlantRegistration, ...] = (
         control_location=CONTROL_LOCATION_MODEL,
         event_granularity=EVENT_GRANULARITY_WINDOW,
         topology_exporter=_export_peak_current_buck_topology,
+        parameter_schema=parameter_schema("peak-current-buck"),
     ),
     PlantRegistration(
         plant_id="whole-run-switching-buck",
@@ -721,6 +739,7 @@ _BUILTIN_REGISTRATIONS: tuple[PlantRegistration, ...] = (
         control_location=CONTROL_LOCATION_MODEL,
         event_granularity=EVENT_GRANULARITY_WINDOW,
         topology_exporter=_export_whole_run_switching_buck_topology,
+        parameter_schema=parameter_schema("whole-run-switching-buck"),
     ),
 )
 

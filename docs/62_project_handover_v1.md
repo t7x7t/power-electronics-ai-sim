@@ -2,11 +2,12 @@
 
 **文档性质：** 维护者交接说明。它不是发布批准、不是工程结论，也不改变任何运行时行为。
 
-**适用基线：** 2026-10-28，`main` 的 0.18.0 收口提交（其父提交为 `8011127`），版本
-`0.18.0`，`origin/main` 已同步。
+**适用基线：** 2026-10-28，`95b1eae`（0.18.0 收口提交）之上的**未提交** 0.19.0 改动；
+版本 `0.19.0`；`origin/main` 仍指向 `95b1eae`。
 
-**当前阶段：** S0–S9 已交付；S10 的文档与版本收口已完成，正式 gate / release record /
-人工批准 / tag 仍待执行。
+**当前阶段：** S0–S9 已交付；S10 的 0.18.0 文档收口完成，但该版本的 gate 证据与
+release record 已被本轮改动作废（`source_input_digests` 已改变），需重新跑门禁链；
+0.19.0 的 Agent 接入面（`docs/63`）已实现并通过全量测试，尚未提交。
 
 ---
 
@@ -56,27 +57,27 @@
 
 | 项 | 当前值 |
 | --- | --- |
-| 分支/提交 | `main` = 0.18.0 收口提交（见 `docs/releases/v0.18.0.md`；其父为 `8011127`）= `origin/main` |
-| 版本 | `0.18.0`（`src/pe_sim/_version.py` 与 `pyproject.toml` 一致） |
+| 分支/提交 | 工作树：`95b1eae` + 未提交的 0.19.0 改动；`origin/main` = `95b1eae` |
+| 版本 | `0.19.0`（`src/pe_sim/_version.py` 与 `pyproject.toml` 一致） |
 | 覆盖矩阵 | 35 行：34 `covered`，1 `out_of_scope`（C8 电热/热网络） |
 | 开放行 | 无 `kernel_gap` / `expressible` |
 | 当前 Python 环境 | `d:\power-electronics-ai-sim\.venv\Scripts\python.exe`（本地为 3.13.2） |
-| 全量测试（含 ngspice 41） | `1733 passed / 2 skipped` |
-| 全量测试（无 ngspice） | `1723 passed / 12 skipped` |
-| 发布 gate / tag | **未完成**；仅通过 `release_record.py check-identity`，没有正式 gate 证据、release record 或 tag |
+| 全量测试（无 ngspice） | `1795 passed / 12 skipped`（2026-10-28 实测，收集 1807 项） |
+| 全量测试（含 ngspice 41） | 本轮未重跑；上一已知值为 0.18.0 的 `1733 passed / 2 skipped` |
+| 发布 gate / tag | **无有效证据**：0.18.0 的 gate 证据与 release record 已因本轮改动失效；0.19.0 未跑 gate，无 tag |
 
-`pe-sim --version` 应输出 `0.18.0`。正式发布 gate 使用 `docs/29` 的隔离环境
+`pe-sim --version` 应输出 `0.19.0`。正式发布 gate 使用 `docs/29` 的隔离环境
 （Python 3.12.7 + 固定 pin），与当前开发 venv 不是同一件事。
 
 ### 2.1 交接资产
 
 | 资产 | 状态/位置 |
 | --- | --- |
-| 源码仓库 | `https://github.com/t7x7t/power-electronics-ai-sim.git`，`main` = 0.18.0 收口提交 |
+| 源码仓库 | `https://github.com/t7x7t/power-electronics-ai-sim.git`；`origin/main` = `95b1eae`（0.18.0 收口提交），工作树另有未提交的 0.19.0 改动 |
 | 本地开发环境 | `d:\power-electronics-ai-sim\.venv`（Python 3.13.2）；venv 不入库，换机需按 `pyproject.toml` / `requirements-tested.txt` / `requirements-release.txt` 重建 |
 | ngspice（可选） | 当前验证路径 `D:\Applications\Anaconda3\envs\pe-sim-spice\Library\bin\ngspice_con.exe`，通过 `PE_SIM_NGSPICE` 启用 |
 | PySpice（可选） | 不是运行时依赖；未安装时相关能力报告为不可用，不是失败 |
-| 发布证据/record/tag | **无 0.18.0 的正式 gate 证据、release record 或 tag**；只有 `check-identity` 通过 |
+| 发布证据/record/tag | **无有效工件**：`D:\release-evidence\v0.18.0\*` 是作废的历史证据（绑定 `95b1eae`）；0.19.0 的 gate / record / tag 均未产生 |
 | 凭据/密钥 | 仓库与交接材料中不应包含任何凭据或私有数据 |
 
 ---

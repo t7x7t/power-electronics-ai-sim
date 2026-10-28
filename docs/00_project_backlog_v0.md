@@ -175,8 +175,9 @@ The immediate genericity gap for Stage 5 is now closed: action handling is
 finite-only by default and no longer assumes a universal `[0, 1]` actuator
 range. A Plant declaration or explicit `RunOptions(action_policy=...)` selects
 bounded projection when required. The current acceptance evidence is the full
-local suite (57 tests); this remains an infrastructure behavior result, not a
-physical-model or hardware result.
+local suite (1807 collected: 1795 passed / 12 skipped without ngspice); this
+remains an infrastructure behavior result, not a physical-model or hardware
+result.
 
 `docs/21_stage5_preflight_and_state_protocol_v1.md` records the next focused
 Stage 5 increment: safe identifiers and output conflicts are rejected before

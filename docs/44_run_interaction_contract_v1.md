@@ -42,9 +42,15 @@ pe-sim list-plants
 The answer carries `"schema": "pe-sim.plant-catalog.v1"` and one entry per
 registered plant: `plant_id`, `backend_id`, `class_name`, `time_model`,
 `control_location`, `event_granularity`, `schedule_keys`, `config_keys`,
-`trust_level`, `export_eligible`, `topology_export`. `config_keys:
-null` means the factory validates its own keys, not that any key is accepted.
-The catalog exposes declarations only; the factory stays in-process.
+`trust_level`, `export_eligible`, `topology_export`, `parameter_schema`.
+`config_keys: null` means the factory validates its own keys, not that any key
+is accepted. `parameter_schema: null` means the plant publishes no
+machine-readable `plant_config` surface; when it is present it is a JSON Schema
+object with `additionalProperties: false` whose property names are exactly
+`config_keys`, and `pe-sim describe <plant_id>` prints it together with the
+per-field unit, bound, and default (see
+`docs/63_agent_facing_spec_validation_v1.md`). The catalog exposes declarations
+only; the factory stays in-process.
 `pe-sim list-runs` serves the same purpose for packages already produced. Its
 root resolves as an explicit argument, then `PE_SIM_RUNS_ROOT`, then `./runs`;
 see `docs/47_compatibility_policy_v1.md`.

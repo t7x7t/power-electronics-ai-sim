@@ -33,6 +33,8 @@ Every CLI refusal prints exactly one JSON object on stdout:
 Rules:
 
 - Branch on `error_code`; `error` is human text and may change.
+- A structured `invalid_request` may also carry `validation` and `issues`
+  (§2.1). These are additional keys, not new rejection codes.
 - `status` keeps the pre-0.5.7 value (`CONFIG_REJECTED`,
   `FORMAL_COMPARISON_REJECTED`, `RUN_INSPECTION_REJECTED`,
   `UNKNOWN_BACKEND`, `USAGE`), so existing consumers keep working.
@@ -55,6 +57,42 @@ unrecognized `error_code` as a refusal (never as success) and fall back to
 
 `TypeError` from an adapter or plugin protocol violation is part of
 `invalid_request`; it no longer escapes as a traceback.
+
+### 2.1 Structured spec issues on `invalid_request`
+
+Since 0.19.0 a refused `run` may carry two optional keys in the same
+`CONFIG_REJECTED` envelope when the experiment document itself has structured
+problems:
+
+| Key | Value |
+| --- | --- |
+| `validation` | the schema tag `pe-sim.spec-validation.v1` |
+| `issues` | an array of `SpecIssue` records |
+
+Each `SpecIssue` has `code`, `path`, `message`, `expected`, `suggestion`, and
+`severity` (`error` or `warning`). `path` is an RFC 6901 JSON Pointer into the
+submitted document; `""` is the document root, `/plant_config/vin` is one
+`plant_config` field, and `/input_schedule/0/vinn_v` is one field of the first
+schedule entry. `expected` and `suggestion` may be null: the first says what
+the field should look like, the second says what the caller probably meant.
+
+**`issues[].code` is not a rejection code.** It comes from the closed spec
+vocabulary `pe_sim.spec_validation.SPEC_ISSUE_CODES`:
+`invalid_document`, `schema_violation`, `unknown_plant`, `unknown_parameter`,
+`invalid_parameter_value`, `unknown_schedule_key`, `value_suggestion`, and
+`exploratory_contract_default`. Do not mix it with `REQUEST_REJECTION_CODES`.
+Branch on `error_code` first; use `issues[].code` only to explain and repair a
+document. `exploratory_contract_default` is a warning, not an error, and does
+not make `ok` false.
+
+**`REQUEST_REJECTION_CODES` did not change in 0.19.0.** The refusal is still
+`invalid_request`, and no new rejection code was added.
+
+`pe-sim validate` prints the `pe-sim.spec-validation.v1` envelope directly
+(with `ok`, `error_count`, `warning_count`, `issues`, and `checked`) instead of
+a rejection envelope; exit code 0 means "no error-level issue". The two
+surfaces carry the same issue records, so an agent can repair a document with
+either one. See `docs/63_agent_facing_spec_validation_v1.md`.
 
 ## 3. Failure categories
 
@@ -134,7 +172,8 @@ qualification level is presented in the current vocabulary
   must tolerate unknown values as described above.
 - Renaming or removing a code, or changing its meaning, requires a v2 tag.
 - The envelope keys `schema`, `status`, `error_code`, `error` are fixed for
-  v1. Additional keys may appear.
+  v1. Additional keys may appear; `validation` and `issues` on
+  `invalid_request` (§2.1) are such additions.
 
 ## 6. Non-goals
 
