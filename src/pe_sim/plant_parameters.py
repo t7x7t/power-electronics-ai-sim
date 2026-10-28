@@ -491,6 +491,45 @@ PLANT_PARAMETERS: Mapping[str, Mapping[str, ParameterSpec]] = MappingProxyType(
 )
 
 
+#: The ``input_schedule`` keys each built-in plant accepts.  These are declared
+#: here for the same reason as the parameter table: an agent that writes a
+#: document from ``describe`` alone must not have to guess the schedule
+#: vocabulary, and an undeclared key is rejected only after the document is
+#: already written.  ``tests/test_plant_parameters.py`` pins both tables to the
+#: registrations in ``pe_sim.builtin_plants``.
+PLANT_SCHEDULE_KEYS: Mapping[str, frozenset[str]] = MappingProxyType(
+    {
+        "fake": frozenset({"time_s", "vref"}),
+        "fake-load": frozenset({"time_s", "vref", "load"}),
+        "buck": frozenset(
+            {"time_s", "vref", "vin_v", "input_voltage_v", "load_ohm", "load_resistance_ohm"}
+        ),
+        "boost": frozenset(
+            {"time_s", "vref", "vin_v", "input_voltage_v", "load_ohm", "load_resistance_ohm"}
+        ),
+        "multiphase-buck": frozenset(
+            {"time_s", "vref", "vin_v", "input_voltage_v", "load_ohm", "load_resistance_ohm"}
+        ),
+        "ngspice-buck": frozenset(
+            {"time_s", "vref", "vin_v", "input_voltage_v", "load_ohm", "load_resistance_ohm"}
+        ),
+        "ngspice-sync-buck": frozenset(
+            {"time_s", "vref", "vin_v", "input_voltage_v", "load_ohm", "load_resistance_ohm"}
+        ),
+        "whole-run-buck": frozenset({"time_s", "vref"}),
+        "model-control-buck": frozenset(
+            {"time_s", "vref", "vin_v", "input_voltage_v", "load_ohm", "load_resistance_ohm"}
+        ),
+        "peak-current-buck": frozenset(
+            {"time_s", "vref", "vin_v", "input_voltage_v", "load_ohm", "load_resistance_ohm"}
+        ),
+        "whole-run-switching-buck": frozenset(
+            {"time_s", "vref", "vin_v", "input_voltage_v", "load_ohm", "load_resistance_ohm"}
+        ),
+    }
+)
+
+
 def _parameters_of(plant_id: str) -> Mapping[str, ParameterSpec]:
     """Return one plant's declaration, failing with the whole known list.
 
@@ -555,6 +594,9 @@ def describe_plant(plant_id: str) -> dict[str, Any]:
         "plant_id": plant_id,
         "parameters": [parameters[name].as_dict() for name in sorted(parameters)],
         "parameter_schema": parameter_schema(plant_id),
+        # Published with the parameters because a document needs both halves:
+        # a correct ``plant_config`` next to a made-up schedule key still fails.
+        "schedule_keys": sorted(PLANT_SCHEDULE_KEYS[plant_id]),
         "unknown_keys": "rejected",
     }
 
@@ -562,6 +604,7 @@ def describe_plant(plant_id: str) -> dict[str, Any]:
 __all__ = [
     "PLANT_PARAMETERS",
     "PLANT_PARAMETERS_SCHEMA",
+    "PLANT_SCHEDULE_KEYS",
     "ParameterSpec",
     "describe_plant",
     "parameter_schema",

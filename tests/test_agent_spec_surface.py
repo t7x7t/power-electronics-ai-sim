@@ -89,6 +89,10 @@ def test_describe_prints_the_declared_parameter_schema(capsys):
     assert payload["schema"] == PLANT_PARAMETERS_SCHEMA
     assert payload["plant_id"] == "ngspice-buck"
     assert payload["parameter_schema"]["additionalProperties"] is False
+    # A document needs both halves: a correct ``plant_config`` next to an
+    # invented schedule key still fails, so the vocabulary travels with it.
+    assert payload["schedule_keys"] == sorted(payload["schedule_keys"])
+    assert "vin_v" in payload["schedule_keys"]
 
 
 def test_describe_rejects_an_unknown_plant(capsys):
@@ -96,6 +100,12 @@ def test_describe_rejects_an_unknown_plant(capsys):
     payload = json.loads(capsys.readouterr().out)
 
     assert payload["error_code"] == "unknown_plant"
+    # Same envelope shape as a refused ``run``: one parser for one class of
+    # error, and ``expected`` carries the list a caller can correct from.
+    assert payload["validation"] == SPEC_VALIDATION_SCHEMA
+    assert payload["issues"][0]["code"] == "unknown_plant"
+    assert payload["issues"][0]["path"] == "/plant_id"
+    assert "buck" in payload["issues"][0]["expected"]
 
 
 # ---------------------------------------------------------------------------

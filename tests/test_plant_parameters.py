@@ -27,6 +27,7 @@ from pe_sim.multiphase_plants import _phase_count
 from pe_sim.plant_parameters import (
     PLANT_PARAMETERS,
     PLANT_PARAMETERS_SCHEMA,
+    PLANT_SCHEDULE_KEYS,
     ParameterSpec,
     describe_plant,
     parameter_schema,
@@ -186,3 +187,30 @@ def test_parameter_spec_accepts_a_unitless_declaration_with_a_stated_dimension()
     )
     assert spec.unit is None
     assert spec.as_dict()["name"] == "kp"
+
+
+def test_declared_schedule_keys_match_the_registrations():
+    """The schedule vocabulary is published too, so it must not drift.
+
+    An agent writing a document from ``describe`` alone needs both halves:
+    the ``plant_config`` names and the ``input_schedule`` names.  Publishing
+    only the first half is what made the surface incomplete; publishing a
+    stale copy would be worse than publishing none.
+    """
+
+    from pe_sim.builtin_plants import builtin_registrations
+
+    registrations = {item.plant_id: item for item in builtin_registrations()}
+    assert set(PLANT_SCHEDULE_KEYS) == set(registrations)
+    for plant_id, registration in registrations.items():
+        assert set(PLANT_SCHEDULE_KEYS[plant_id]) == set(
+            registration.schedule_keys
+        ), plant_id
+
+
+def test_describe_publishes_the_schedule_vocabulary():
+    buck = describe_plant("buck")
+    assert buck["schedule_keys"] == sorted(buck["schedule_keys"])
+    assert "vin_v" in buck["schedule_keys"]
+    assert "load" not in buck["schedule_keys"]
+    assert "load" in describe_plant("fake-load")["schedule_keys"]

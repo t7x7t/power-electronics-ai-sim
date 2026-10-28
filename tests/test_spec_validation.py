@@ -113,6 +113,24 @@ def test_out_of_range_parameter_value_is_reported():
     assert invalid[0].expected == "number > 0"
 
 
+def test_a_long_unknown_key_gets_no_suggestion():
+    """A junk key must not be "repaired" into a real parameter.
+
+    ``not_a_key`` shares as many letters with ``input_voltage_v`` as the
+    genuine abbreviation ``vin`` does, so a purely score-based fallback would
+    suggest it.  An agent following that suggestion would silently turn a junk
+    field into a live parameter - a worse outcome than no suggestion, because
+    ``expected`` already lists every legal name.
+    """
+
+    issues = collect_issues(_document(plant_config={"not_a_key": 1.0}))
+
+    unknown = [issue for issue in issues if issue.code == "unknown_parameter"]
+    assert len(unknown) == 1
+    assert unknown[0].suggestion is None
+    assert "input_voltage_v" in (unknown[0].expected or "")
+
+
 def test_an_integer_is_not_a_boolean():
     issues = collect_issues(
         _document(plant_id="whole-run-buck", plant_config={"anti_windup": 1})

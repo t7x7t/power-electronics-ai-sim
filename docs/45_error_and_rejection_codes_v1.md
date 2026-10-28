@@ -48,7 +48,7 @@ Rules:
 | `unknown_plant` | `plant_id` is not registered, including after entry-point discovery. |
 | `backend_mismatch` | The requested `--backend` is not the backend declared by the plant registration. |
 | `unknown_backend` | A backend name is not known to the backend registry. |
-| `formal_comparison_rejected` | A formal comparison was refused for missing or dirty provenance; `worktree_analysis` is included. |
+| `formal_comparison_rejected` | A formal comparison was refused for missing or dirty provenance, or because the plant's route cannot support in-run enforcement. `worktree_analysis` is included only when the refusal came from the worktree check. |
 | `run_inspection_rejected` | A run package cannot be inspected at all. |
 
 Unknown codes are forward-compatible additions: a client must treat an
@@ -79,18 +79,22 @@ the field should look like, the second says what the caller probably meant.
 **`issues[].code` is not a rejection code.** It comes from the closed spec
 vocabulary `pe_sim.spec_validation.SPEC_ISSUE_CODES`:
 `invalid_document`, `schema_violation`, `unknown_plant`, `unknown_parameter`,
-`invalid_parameter_value`, `unknown_schedule_key`, `value_suggestion`, and
+`invalid_parameter_value`, `unknown_schedule_key`, and
 `exploratory_contract_default`. Do not mix it with `REQUEST_REJECTION_CODES`.
 Branch on `error_code` first; use `issues[].code` only to explain and repair a
 document. `exploratory_contract_default` is a warning, not an error, and does
-not make `ok` false.
+not make `ok` false. A code is admitted only once some check emits it, so a
+client never has to write a branch that cannot run.
 
 **`REQUEST_REJECTION_CODES` did not change in 0.19.0.** The refusal is still
 `invalid_request`, and no new rejection code was added.
 
 `pe-sim validate` prints the `pe-sim.spec-validation.v1` envelope directly
 (with `ok`, `error_count`, `warning_count`, `issues`, and `checked`) instead of
-a rejection envelope; exit code 0 means "no error-level issue". The two
+a rejection envelope; exit code 0 means "no error-level issue". `checked` lists
+the stages that actually ran for that document, so "clean" and "not examined"
+stay distinguishable. `pe-sim describe` also carries `validation` and `issues`
+when it refuses an unknown plant, so one parser serves both commands. The two
 surfaces carry the same issue records, so an agent can repair a document with
 either one. See `docs/63_agent_facing_spec_validation_v1.md`.
 

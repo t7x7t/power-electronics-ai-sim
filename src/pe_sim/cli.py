@@ -31,10 +31,11 @@ from .capability_analysis import (
 from .builtin_controllers import load_builtin_controllers
 from .builtin_plants import PlantBuildContext, load_builtin_plants
 from .controller_registry import ControllerBuildContext, resolve_controller
-from .plant_parameters import describe_plant
+from .plant_parameters import PLANT_PARAMETERS, describe_plant
 from .plant_registry import PlantRegistration, plant_catalog, resolve
 from .spec_validation import (
     SPEC_VALIDATION_SCHEMA,
+    SpecIssue,
     SpecValidationError,
     collect_issues,
     validate_document,
@@ -169,7 +170,22 @@ def _run_describe(args) -> int:
     try:
         payload = describe_plant(args.plant_id)
     except KeyError as exc:
-        _emit_rejection("CONFIG_REJECTED", "unknown_plant", str(exc))
+        # Mirror the shape ``run`` uses for the same mistake, so a client needs
+        # one parser for one class of error.  ``path`` points at the field an
+        # experiment document would have carried the name in.
+        issue = SpecIssue(
+            code="unknown_plant",
+            path="/plant_id",
+            message=str(exc),
+            expected="one of: " + ", ".join(sorted(PLANT_PARAMETERS)),
+        )
+        _emit_rejection(
+            "CONFIG_REJECTED",
+            "unknown_plant",
+            str(exc),
+            validation=SPEC_VALIDATION_SCHEMA,
+            issues=[issue.to_dict()],
+        )
         return 2
     print(json.dumps(payload, sort_keys=True))
     return 0
@@ -837,7 +853,16 @@ def main(argv: list[str] | None = None) -> int:
         # therefore covered here as well. TypeError covers adapter protocol
         # violations so they surface as JSON rather than as a traceback.
         code = exc.code if isinstance(exc, RequestRejected) else "invalid_request"
-        _emit_rejection("CONFIG_REJECTED", code, str(exc))
+        # ``docs/45`` documents one status per refusal family.  A route that
+        # cannot support a formal comparison is refused for provenance reasons
+        # even when the worktree is clean, and a client branching on ``status``
+        # must not read that as a configuration mistake.
+        status = (
+            "FORMAL_COMPARISON_REJECTED"
+            if code == "formal_comparison_rejected"
+            else "CONFIG_REJECTED"
+        )
+        _emit_rejection(status, code, str(exc))
         return 2
 
 
@@ -952,7 +977,14 @@ def _execute_experiment(
     so the zero-configuration entry point cannot drift from the normal CLI.
     """
 
-    document = json.loads(config.read_text(encoding="utf-8"))
+    try:
+        document = json.loads(config.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        # ``json`` reports a bare position, and the caller may be editing
+        # several files at once, so the path has to travel with the message.
+        raise RequestRejected(
+            "invalid_request", f"{config}: {exc}"
+        ) from exc
     # Validate the serialized contract before the compatibility reader
     # constructs an ExperimentSpec.  This prevents unknown or misspelled
     # fields from being silently ignored at the CLI boundary.  When the plant

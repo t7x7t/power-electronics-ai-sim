@@ -238,6 +238,15 @@ def _closest(candidate: Any, allowed: Sequence[str]) -> str | None:
     matches = difflib.get_close_matches(text, names, n=1)
     if matches:
         return matches[0]
+    # The word-level pass exists only for short aliases such as ``vin``.  A
+    # long candidate that merely shares letters is not an abbreviation, and
+    # without this gate the pass fires on garbage: ``not_a_key`` scores the same
+    # 0.5 against ``input_voltage_v`` that ``vin`` does.  An agent would then
+    # "repair" a junk field into a real one, silently changing what the document
+    # means.  Omitting the suggestion is safe because ``expected`` already lists
+    # every valid name.
+    if len(text) > 6:
+        return None
     best_name: str | None = None
     best_score = 0.0
     for name in names:
@@ -261,11 +270,13 @@ def _load_schema(schema_path: str | Path | None) -> Mapping[str, Any]:
 
     if schema_path is not None:
         path = Path(schema_path)
+        label = str(path)
         try:
             text = path.read_text(encoding="utf-8")
         except OSError as exc:
             raise RuntimeError(f"experiment schema could not be loaded: {path}") from exc
     else:
+        label = "packaged experiment.schema.json"
         try:
             text = (
                 resources.files("pe_sim.schemas")
@@ -277,7 +288,9 @@ def _load_schema(schema_path: str | Path | None) -> Mapping[str, Any]:
     try:
         return json.loads(text)
     except json.JSONDecodeError as exc:
-        raise RuntimeError("experiment schema is not valid JSON") from exc
+        # Naming the source matters when one batch passes several ``--schema``
+        # files: "not valid JSON" alone cannot tell a caller which one failed.
+        raise RuntimeError(f"{label} is not valid JSON") from exc
 
 
 def _expected_from_error(error: Any) -> str:

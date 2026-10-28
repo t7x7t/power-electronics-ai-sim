@@ -82,6 +82,7 @@ unsupported ngspice-buck plant_config fields: ['not_a_key']
       }
     }
   },
+  "schedule_keys": ["input_voltage_v", "load_ohm", "load_resistance_ohm", "time_s", "vin_v", "vref"],
   "unknown_keys": "rejected"
 }
 ```
@@ -95,10 +96,15 @@ unsupported ngspice-buck plant_config fields: ['not_a_key']
   `maximum` / `default`，带量纲的字段带 `x-unit`（JSON Schema 没有单位词表，这里
   不要求读者从字段名推断单位）。
 - `unknown_keys: "rejected"` 声明工厂行为：未知 `plant_config` 键不会被"忽略"。
+- `schedule_keys` 是 `input_schedule` 接受的键词表。它必须和参数表一起给出：只用
+  `describe` 写文档的 agent，如果不知道调度词表，会把 `plant_config` 写对、却在
+  `input_schedule` 里编造一个键。该表同样由 `tests/test_plant_parameters.py` 钉在
+  注册表上。
 - 表的唯一性由 `tests/test_plant_parameters.py` 保证：它把声明与
   `builtin_plants` 的 `*_DEFAULTS` 与工厂构造器逐项对照，工厂改了而声明没改会失败。
 - 未知 `plant_id` 返回拒绝信封：`status: CONFIG_REJECTED`，
-  `error_code: unknown_plant`，退出码 2。
+  `error_code: unknown_plant`，并**同样**携带 `validation` 与 `issues`（`path` 为
+  `/plant_id`），因此 `describe` 与 `run` 的拒绝可以用同一个解析器处理。
 
 `describe` 只读声明表，不构建 plant、不调用工厂、不探测后端。
 
@@ -207,6 +213,10 @@ CONFIG_REJECTED`，`error_code: invalid_request`），并额外带两个可选�
    `ok` 仍然是 `true`。
 2. 词表只收录**有产生者**的码。一个永远不会出现的码会让客户端写出永远不执行的分支，
    所以它不被接受进词表；新增一个码属于契约事件，需要同步更新本文件与测试。
+3. `suggestion` 是**提示而非权威**，且宁缺不错。只有当错字与某个真实字段名足够接近
+   （整串相似度达阈，或短别名如 `vin`）时才给出；像 `not_a_key` 这样的长垃圾键不会
+   得到建议，因为把它"修"成一个真实字段会静默改变文档语义。缺建议不是死路：
+   `expected` 总是列出全部合法名。
 
 ### 4.1 去重规则
 
