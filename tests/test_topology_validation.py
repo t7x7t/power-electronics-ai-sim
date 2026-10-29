@@ -148,6 +148,57 @@ def _sync_document_without_control_declaration() -> dict:
     return document
 
 
+def test_an_interleaved_declaration_that_does_not_fit_is_not_a_stated_relation():
+    """A declaration that contradicts the graph must not silence the warning.
+
+    The validator only reads the declaration's shape, but "shape is wrong" is
+    not the same answer as "nothing was declared": the first one is a sentence
+    that contradicts the drawing, and the author has to hear that here rather
+    than at the first compile.
+    """
+
+    document = copy.deepcopy(
+        _shipped_descriptors()["ngspice_sync_buck"].to_dict()
+    )
+    document.pop("fingerprint", None)
+    document["metadata"]["control"] = {
+        "mode": "single_duty_interleaved",
+        "phases": 4,
+    }
+
+    issues = [
+        issue for issue in collect_topology_issues(document)
+        if issue.code == "multiple_control_nets"
+    ]
+
+    assert len(issues) == 1
+    assert issues[0].severity == "warning"
+    # The message must say that a declaration exists and was rejected for its
+    # shape, not that nothing was declared.
+    assert "single_duty_interleaved" in issues[0].message
+    assert "does not fit this graph" in issues[0].message
+
+
+def test_an_interleaved_declaration_that_fits_is_a_stated_relation():
+    """The suppression must still work for a declaration that matches."""
+
+    document = copy.deepcopy(
+        _shipped_descriptors()["ngspice_sync_buck"].to_dict()
+    )
+    document.pop("fingerprint", None)
+    document["metadata"]["control"] = {
+        "mode": "single_duty_interleaved",
+        "phases": 2,
+    }
+
+    issues = [
+        issue for issue in collect_topology_issues(document)
+        if issue.code == "multiple_control_nets"
+    ]
+
+    assert issues == []
+
+
 # ---------------------------------------------------------------------------
 # The closed vocabulary
 # ---------------------------------------------------------------------------

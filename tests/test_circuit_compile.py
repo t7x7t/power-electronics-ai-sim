@@ -323,6 +323,374 @@ def test_a_dead_time_at_half_the_switching_period_is_refused():
     assert error.details["dead_time_s"] == pytest.approx(5e-6)
 
 
+# ---------------------------------------------------------------------------
+# Interleaved phases: one duty, several gates spread across one period
+# ---------------------------------------------------------------------------
+
+
+def _interleaved_descriptor(phases: int = 3, control: dict | None = None):
+    """A ``phases``-leg interleaved buck built directly as a descriptor."""
+
+    from pe_sim.topology import (
+        TopologyComponent,
+        TopologyDescriptor,
+        TopologyNet,
+        TopologyPort,
+    )
+
+    nets = [TopologyNet("vin"), TopologyNet("gnd", kind="reference")]
+    components = []
+
+    def add(component_id, kind, ports, parameters):
+        components.append(
+            TopologyComponent(
+                component_id,
+                kind,
+                tuple(
+                    TopologyPort(port_id, net_id, direction)
+                    for port_id, net_id, direction in ports
+                ),
+                parameters=parameters,
+            )
+        )
+
+    add(
+        "vin_source",
+        "voltage_source",
+        (("positive", "vin", "output"), ("negative", "gnd", "passive")),
+        {"voltage_v": VIN},
+    )
+    for index in range(1, phases + 1):
+        gate = f"pwm_{index}"
+        node = f"sw_{index}"
+        nets.append(TopologyNet(gate, kind="control"))
+        nets.append(TopologyNet(node))
+        add(
+            f"carrier_{index}",
+            "pulse_source",
+            (("positive", gate, "output"), ("negative", "gnd", "passive")),
+            {"switching_frequency_hz": FSW},
+        )
+        add(
+            f"switch_{index}",
+            "voltage_controlled_switch",
+            (
+                ("input", "vin", "input"),
+                ("output", node, "output"),
+                ("control", gate, "control"),
+            ),
+            {},
+        )
+        add(
+            f"diode_{index}",
+            "freewheeling_diode",
+            (("anode", "gnd", "passive"), ("cathode", node, "passive")),
+            {},
+        )
+        add(
+            f"inductor_{index}",
+            "inductor",
+            (("input", node, "passive"), ("output", "vout", "passive")),
+            {"inductance_h": 220e-6},
+        )
+    nets.append(TopologyNet("vout"))
+    add(
+        "output_capacitor",
+        "capacitor",
+        (("positive", "vout", "passive"), ("negative", "gnd", "passive")),
+        {"capacitance_f": C_F},
+    )
+    add(
+        "load",
+        "resistor_load",
+        (("positive", "vout", "passive"), ("negative", "gnd", "passive")),
+        {"resistance_ohm": R_OHM},
+    )
+
+    metadata = {
+        "control": (
+            {"mode": "single_duty_interleaved", "phases": phases}
+            if control is None
+            else control
+        )
+    }
+    return TopologyDescriptor(
+        "interleaved_buck", tuple(components), tuple(nets), metadata=metadata
+    )
+
+
+def test_a_declared_interleaved_set_spreads_its_gates_evenly():
+    compiled = _compile(_interleaved_descriptor(3))
+
+    assert compiled.control_mode == "single_duty_interleaved"
+    assert compiled.phases == 3
+    rises = dict(compiled.gate_first_rise_s)
+    period = 1.0 / FSW
+    assert rises["pwm_1"] == pytest.approx(0.0, abs=1e-15)
+    assert rises["pwm_2"] == pytest.approx(period / 3.0)
+    assert rises["pwm_3"] == pytest.approx(2.0 * period / 3.0)
+    # The rendered netlist must agree with the record: the delay field of each
+    # PULSE is that phase's first rising edge, and every phase keeps the one
+    # commanded width.  A phase whose pulse straddles the window start is
+    # rendered on a synthetic node with a PWL tail summed onto the gate net, so
+    # the node name carries a ``_pulse`` suffix there.
+    seen = set()
+    for node, fields in _gate_pulses(compiled.netlist):
+        control_net = node[: -len("_pulse")] if node.endswith("_pulse") else node
+        assert fields[2] == pytest.approx(rises[control_net], abs=1e-12)
+        assert fields[5] == pytest.approx(DUTY * period, abs=1e-12)
+        seen.add(control_net)
+    assert seen == {"pwm_1", "pwm_2", "pwm_3"}
+
+
+def test_interleaved_phases_all_keep_the_commanded_duty():
+    compiled = _compile(_interleaved_descriptor(4), duty=0.25)
+
+    widths = {node: fields[5] for node, fields in _gate_pulses(compiled.netlist)}
+    assert set(widths) == {"pwm_1", "pwm_2", "pwm_3", "pwm_4"}
+    for width in widths.values():
+        assert width == pytest.approx(0.25 / FSW)
+
+
+def test_gate_order_is_the_firing_order():
+    control = {
+        "mode": "single_duty_interleaved",
+        "phases": 3,
+        "gate_order": ["pwm_3", "pwm_1", "pwm_2"],
+    }
+    compiled = _compile(_interleaved_descriptor(3, control))
+
+    rises = dict(compiled.gate_first_rise_s)
+    period = 1.0 / FSW
+    assert rises["pwm_3"] == pytest.approx(0.0, abs=1e-15)
+    assert rises["pwm_1"] == pytest.approx(period / 3.0)
+    assert rises["pwm_2"] == pytest.approx(2.0 * period / 3.0)
+
+
+def test_a_gate_order_that_is_not_a_permutation_is_refused():
+    control = {
+        "mode": "single_duty_interleaved",
+        "phases": 3,
+        "gate_order": ["pwm_1", "pwm_2", "pwm_9"],
+    }
+    error = _error(_interleaved_descriptor(3, control))
+
+    assert error.code == "invalid_control_declaration"
+    assert error.details["gate_nets"] == ["pwm_1", "pwm_2", "pwm_3"]
+
+
+def test_a_phase_count_that_does_not_match_the_gates_is_refused():
+    control = {"mode": "single_duty_interleaved", "phases": 4}
+    error = _error(_interleaved_descriptor(3, control))
+
+    assert error.code == "invalid_control_declaration"
+    assert error.details["phases"] == 4
+    assert error.details["gate_nets"] == ["pwm_1", "pwm_2", "pwm_3"]
+
+
+def test_a_one_phase_interleaved_declaration_is_refused():
+    error = _error(
+        _interleaved_descriptor(1, {"mode": "single_duty_interleaved", "phases": 1})
+    )
+
+    assert error.code == "invalid_control_declaration"
+    assert error.details["phases"] == 1
+
+
+def test_an_interleaved_declaration_without_a_phase_count_is_refused():
+    error = _error(_interleaved_descriptor(3, {"mode": "single_duty_interleaved"}))
+
+    assert error.code == "invalid_control_declaration"
+    assert "phases" in str(error)
+
+
+def test_a_phase_without_a_carrier_is_refused():
+    descriptor = _interleaved_descriptor(3)
+    components = tuple(
+        item for item in descriptor.components if item.component_id != "carrier_2"
+    )
+    rebuilt = type(descriptor)(
+        descriptor.topology_id, components, descriptor.nets, metadata=descriptor.metadata
+    )
+
+    error = _error(rebuilt)
+
+    assert error.code == "no_carrier"
+    assert error.details["nets"] == ["pwm_2"]
+
+
+def test_interleaved_phases_must_share_one_frequency():
+    descriptor = _interleaved_descriptor(3)
+    components = tuple(
+        type(item)(
+            item.component_id,
+            item.kind,
+            item.ports,
+            parameters={"switching_frequency_hz": FSW * 2.0},
+        )
+        if item.component_id == "carrier_3"
+        else item
+        for item in descriptor.components
+    )
+    rebuilt = type(descriptor)(
+        descriptor.topology_id, components, descriptor.nets, metadata=descriptor.metadata
+    )
+
+    assert _error(rebuilt).code == "invalid_control_declaration"
+
+
+def test_dead_time_is_not_part_of_an_interleaved_declaration():
+    """An ignored key would silently mean "no dead time", a different circuit."""
+
+    error = _error(
+        _interleaved_descriptor(
+            3,
+            {"mode": "single_duty_interleaved", "phases": 3, "dead_time_s": 1e-7},
+        )
+    )
+
+    assert error.code == "invalid_control_declaration"
+    assert "dead_time_s" in str(error)
+
+
+def test_a_phase_count_mismatch_names_the_two_gates_per_leg_problem():
+    """``phases`` counts gate signals, so paired legs cannot be declared here.
+
+    The message must say that, not merely "the numbers differ": an author who
+    has two legs with two gates each and writes ``phases: 4`` would otherwise
+    read the refusal as a counting mistake and correct the wrong thing.
+    """
+
+    error = _error(
+        _interleaved_descriptor(3, {"mode": "single_duty_interleaved", "phases": 4})
+    )
+
+    assert error.code == "invalid_control_declaration"
+    assert "high side" in str(error)
+    assert "paired high/low gates inside a leg" in str(error.details["expected"])
+
+
+def test_the_tail_plus_the_truncated_pulse_is_the_commanded_width():
+    """A phase whose pulse crosses the period boundary must not lose duty.
+
+    When ``delay + width > Tsw`` the rendered PULSE is cut off at the period
+    boundary by the solver and the remainder is supplied by the PWL tail.  This
+    pins the arithmetic identity that makes that safe, on a duty above one half
+    where several phases cross the boundary.
+    """
+
+    period = 1.0 / FSW
+    width = 0.6 * period
+    compiled = _compile(_interleaved_descriptor(3), duty=0.6)
+
+    tails = dict(compiled.carrier_tails_s)
+    crossing = 0
+    for control_net, first_rise in compiled.gate_first_rise_s:
+        tail = tails.get(control_net, 0.0)
+        delivered = min(width, period - first_rise) + tail
+        assert delivered == pytest.approx(width, abs=1e-12), control_net
+        if tail > 0.0:
+            crossing += 1
+    assert crossing >= 1, "the test needs a phase that straddles the boundary"
+
+
+def test_a_zero_duty_renders_a_gate_that_never_turns_on():
+    """Zero duty is a command, not a femtosecond pulse.
+
+    A one-femtosecond pulse is a turn-on the author did not ask for, and the
+    compile record would then have to report a first rise for a gate that never
+    conducts.
+    """
+
+    compiled = _compile(_interleaved_descriptor(3), duty=0.0)
+
+    assert compiled.gate_first_rise_s == ()
+    assert "PULSE(" not in compiled.netlist
+    assert compiled.netlist.count(" DC 0") >= 3
+
+
+def test_a_complementary_pair_is_one_phase_not_two():
+    """Two gates on one leg are not two interleaved phases."""
+
+    compiled = _compile(ngspice_sync_buck_topology_descriptor(_plant()))
+
+    assert compiled.phases == 1
+    assert len(compiled.gate_first_rise_s) == 2
+
+
+def test_a_carrier_dead_time_that_disagrees_with_the_declaration_is_refused():
+    """The declaration is the only authority, so two values cannot both hold.
+
+    ``pulse_source.dead_time_s`` is recorded rather than rendered.  A carrier
+    that states a *different* dead time than the declaration would leave the
+    author believing a value is in force that the netlist does not contain.
+    """
+
+    descriptor = ngspice_sync_buck_topology_descriptor(_plant(dead_time_s=1e-7))
+    metadata = dict(descriptor.metadata)
+    metadata["control"] = {
+        "mode": "single_duty_complementary",
+        "dead_time_s": 2e-7,
+    }
+
+    error = _error(_with_metadata(descriptor, metadata))
+
+    assert error.code == "invalid_control_declaration"
+    assert error.details["carrier_dead_time_s"] == pytest.approx(1e-7)
+    assert error.details["declaration_dead_time_s"] == pytest.approx(2e-7)
+
+
+def test_overriding_the_carrier_frequency_changes_the_rendered_period():
+    """A parameter override must reach every read of that parameter.
+
+    The periods, pulse widths and phases are derived from the carrier's
+    ``switching_frequency_hz``.  A white-listed override that has no effect
+    would report a window that is not the window that was solved.
+    """
+
+    compiled = _compile(
+        None,
+        parameter_overrides={"pwm_source": {"switching_frequency_hz": 50e3}},
+    )
+
+    gates = _gate_pulses(compiled.netlist)
+    assert len(gates) == 1
+    assert gates[0][1][6] == pytest.approx(1.0 / 50e3)
+
+
+def test_a_load_wired_to_a_control_net_is_refused_without_the_validator():
+    """The compiler is callable on its own, so it repeats the port/net rule."""
+
+    from pe_sim.topology import TopologyComponent, TopologyPort
+
+    descriptor = _buck_descriptor()
+    load = next(
+        item for item in descriptor.components if item.component_id == "load"
+    )
+    moved = TopologyComponent(
+        load.component_id,
+        load.kind,
+        (
+            TopologyPort("positive", "pwm", "passive"),
+            TopologyPort("negative", "gnd", "passive"),
+        ),
+        parameters=dict(load.parameters),
+    )
+    components = tuple(
+        moved if item.component_id == "load" else item
+        for item in descriptor.components
+    )
+    rebuilt = type(descriptor)(
+        descriptor.topology_id, components, descriptor.nets, metadata=descriptor.metadata
+    )
+
+    error = _error(rebuilt)
+
+    assert error.code == "unsupported_net_kind"
+    assert error.details["net_kind"] == "control"
+    assert error.details["port_id"] == "positive"
+
+
 def test_a_floating_gate_drive_compares_against_its_own_reference():
     """The switch must use the carrier's negative node, not node 0."""
 

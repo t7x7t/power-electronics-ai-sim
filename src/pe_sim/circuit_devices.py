@@ -330,10 +330,11 @@ _PULSE_SOURCE = DeviceSpec(
             default=None,
             nullable=True,
             description=(
-                "Dead time between this carrier and a complementary one.  "
-                "Recorded because a descriptor that has two carriers must state "
-                "how they relate; it is not rendered, because the current "
-                "compiler supports one actuator and therefore one carrier."
+                "Dead time recorded on the carrier itself.  It is never "
+                "rendered: ``metadata.control.dead_time_s`` is the single "
+                "authority the compiler renders, and the compiler refuses a "
+                "carrier value that disagrees with it.  Kept so a descriptor "
+                "can record what a reviewed template states."
             ),
         ),
     ),
@@ -348,8 +349,19 @@ _PULSE_SOURCE = DeviceSpec(
 _INDUCTOR = DeviceSpec(
     kind="inductor",
     ports=(
-        PortSpec("input", _ELECTRICAL, "passive", "First node of the element card."),
-        PortSpec("output", _ELECTRICAL, "passive", "Second node of the element card."),
+        PortSpec(
+            "input",
+            _ELECTRICAL_OR_REFERENCE,
+            "passive",
+            "First node of the element card.  An inductor is a two-terminal path "
+            "and either end may be the reference, as in a choke returned to ground.",
+        ),
+        PortSpec(
+            "output",
+            _ELECTRICAL_OR_REFERENCE,
+            "passive",
+            "Second node of the element card.",
+        ),
     ),
     parameters=(
         _quantity("inductance_h", "H", "Inductance; must be finite and positive."),
@@ -427,7 +439,14 @@ _RESISTOR_LOAD = DeviceSpec(
 _VOLTAGE_CONTROLLED_SWITCH = DeviceSpec(
     kind="voltage_controlled_switch",
     ports=(
-        PortSpec("input", _ELECTRICAL, "input", "Conducting path, source side."),
+        PortSpec(
+            "input",
+            _ELECTRICAL_OR_REFERENCE,
+            "input",
+            "Conducting path, first terminal.  A switch is a two-terminal path and "
+            "the element card is symmetric, so either end may be the reference; "
+            "the low-side orientation ``gnd -> node`` is a legal declaration.",
+        ),
         PortSpec(
             "output",
             _ELECTRICAL_OR_REFERENCE,
@@ -485,7 +504,12 @@ _FREEWHEELING_DIODE = DeviceSpec(
             "passive",
             "Anode node; a freewheeling diode's anode usually binds the reference net.",
         ),
-        PortSpec("cathode", _ELECTRICAL, "passive", "Cathode node."),
+        PortSpec(
+            "cathode",
+            _ELECTRICAL_OR_REFERENCE,
+            "passive",
+            "Cathode node; a diode returned to ground is a legal orientation too.",
+        ),
     ),
     parameters=(
         _positive(

@@ -171,9 +171,10 @@ netlist importer is described in
 Three complete descriptors live in
 [examples/topologies](examples/topologies) as reference designs: an
 asynchronous buck, a synchronous buck that declares its complementary gate
-relation, and an inverting buck-boost whose negative rail is expressed by
-binding the load and the capacitor to the reference node. They are data, not
-plants, and a test validates and compiles each one.
+relation, an inverting buck-boost whose negative rail is expressed by
+binding the load and the capacitor to the reference node, and a three-phase
+interleaved buck whose one duty drives three evenly spread gates. They are
+data, not plants, and a test validates and compiles each one.
 `circuit-topology` is also a registered Plant, so `pe-sim run` accepts an
 experiment document whose `plant_config.topology` is the descriptor and closes
 the loop with the kernel controller.
@@ -541,7 +542,19 @@ A refused request is a `pe-sim.rejection.v1` object with a stable
 `unknown_backend`, `formal_comparison_rejected`, `run_inspection_rejected`),
 and a failed run exposes `failure_category` in the terminal result. Branch on
 those codes, never on the `error` text. The vocabulary is in
-[docs/45_error_and_rejection_codes_v1.md](docs/45_error_and_rejection_codes_v1.md).
+[docs/45_error_and_rejection_codes_v1.md](docs/45_error_and_rejection_codes_v1.md);
+every `pe-sim.<name>.vN` envelope tag the project emits is listed with its
+producer in
+[docs/68_envelope_registry_v1.md](docs/68_envelope_registry_v1.md), so a
+client never has to guess which parser an envelope needs.
+
+What the substrate deliberately does **not** express is written down too:
+transformer/magnetic coupling, switch reverse recovery, nonlinear magnetics,
+thermal networks, sinusoidal sources, three-phase systems, multi-leg
+independent control, PSS/sweep analysis, built-in current-mode controllers, and
+any UI. Each entry names the refusal an author will actually see and the
+nearest honest substitute. See
+[docs/69_scope_boundaries_v1.md](docs/69_scope_boundaries_v1.md).
 
 ## Applicability and authenticity
 

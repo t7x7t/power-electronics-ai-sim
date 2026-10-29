@@ -1334,7 +1334,9 @@ def _build_document(
                 "multiple_carriers",
                 expected=(
                     'metadata.control = {"mode": "single_duty_complementary", '
-                    '"dead_time_s": <seconds>} when the two gates are complementary'
+                    '"dead_time_s": <seconds>} when the gates are complementary, '
+                    'or {"mode": "single_duty_interleaved", "phases": <n>} when '
+                    "they are phase-shifted shares of one duty"
                 ),
             )
 

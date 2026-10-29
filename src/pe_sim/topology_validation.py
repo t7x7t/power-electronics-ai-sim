@@ -110,7 +110,9 @@ ACTUATOR_KINDS = frozenset({"voltage_controlled_switch", "averaged_switch"})
 #: ``pe_sim.circuit_compile.SUPPORTED_CONTROL_MODES``; a test asserts the two
 #: sets are equal, so the validator cannot bless a mode the compiler refuses
 #: (or warn about one it understands).
-DECLARED_CONTROL_MODES = frozenset({"single_duty_complementary"})
+DECLARED_CONTROL_MODES = frozenset(
+    {"single_duty_complementary", "single_duty_interleaved"}
+)
 
 #: The component kind whose presence makes a circuit's output observable.  A
 #: topology without one is valid but has nothing to measure.
@@ -388,6 +390,11 @@ def _collect(document: Any) -> _Result:
 
     if result.checked.issuperset({"nets", "components"}) and net_kind_by_id and parsed:
         behavioural = _behavioural_nets(parsed)
+        control_nets = sorted(
+            net_id
+            for net_id, kind in net_kind_by_id.items()
+            if kind == NET_KIND_CONTROL
+        )
         _check_renderability(result, net_kind_by_id, parsed)
         _check_connectivity(result, net_kind_by_id, parsed, behavioural)
         _check_control(
@@ -395,7 +402,7 @@ def _collect(document: Any) -> _Result:
             net_kind_by_id,
             parsed,
             behavioural,
-            _declared_control_mode(document),
+            *_control_declaration_state(document, control_nets),
         )
         _check_sources(result, parsed)
 
@@ -1053,23 +1060,40 @@ def _disconnected_islands(parsed: Sequence[_ParsedComponent]) -> list[list[str]]
     return islands
 
 
-def _declared_control_mode(document: Mapping[str, Any]) -> str | None:
-    """Return a declared gate relation, when the document states one.
+def _control_declaration_state(
+    document: Mapping[str, Any], control_nets: Sequence[str]
+) -> tuple[str | None, str | None]:
+    """Return ``(effective_mode, declared_mode)``.
 
-    Only the mode string is read here.  Whether the declaration is complete,
-    consistent, and renderable is the compiler's question: the validator is
-    allowed to stop warning that two control nets have "no defined relation"
-    once the document says what that relation is.
+    ``effective_mode`` is the declared relation when it fits this graph and
+    ``None`` otherwise.  ``declared_mode`` is what the document says, so a
+    declaration that does not fit can be named in the warning instead of
+    silently reverting to "no relation declared".
+
+    Only the declaration's *shape* is checked here.  Whether the gates can be
+    rendered is the compiler's question, but a declaration that contradicts the
+    graph must not silence the ``multiple_control_nets`` warning: a document
+    saying ``{"mode": "single_duty_interleaved", "phases": 4}`` while declaring
+    three control nets is not "checked and clean", it is unchecked, and the
+    author would only learn that at compile time.
     """
 
     metadata = document.get("metadata")
     if not isinstance(metadata, Mapping):
-        return None
+        return None, None
     declaration = metadata.get("control")
     if not isinstance(declaration, Mapping):
-        return None
+        return None, None
     mode = declaration.get("mode")
-    return mode if isinstance(mode, str) else None
+    if not isinstance(mode, str) or mode not in DECLARED_CONTROL_MODES:
+        return None, mode if isinstance(mode, str) else None
+    if mode == "single_duty_interleaved":
+        phases = declaration.get("phases")
+        if isinstance(phases, bool) or not isinstance(phases, int):
+            return None, mode
+        if phases < 2 or phases != len(control_nets):
+            return None, mode
+    return mode, mode
 
 
 def _check_control(
@@ -1078,6 +1102,7 @@ def _check_control(
     parsed: Sequence[_ParsedComponent],
     behavioural: frozenset[str],
     control_mode: str | None = None,
+    declared_mode: str | None = None,
 ) -> None:
     result.checked.add("control")
 
@@ -1107,6 +1132,19 @@ def _check_control(
         net_id for net_id, kind in net_kind_by_id.items() if kind == NET_KIND_CONTROL
     ]
     if len(control_nets) > 1 and control_mode not in DECLARED_CONTROL_MODES:
+        # A declaration that exists but does not fit the graph is a different
+        # answer from "nothing was declared", and the author needs to hear the
+        # difference: the second one is a missing sentence, the first one is a
+        # sentence that contradicts the drawing.
+        unfit = (
+            f"The document declares metadata.control.mode = {declared_mode!r}, but "
+            "that declaration does not fit this graph (for "
+            "'single_duty_interleaved', 'phases' must be an integer of at least 2 "
+            "equal to the number of control nets), so it is not counted as a "
+            "stated relation.  "
+            if declared_mode is not None and declared_mode in DECLARED_CONTROL_MODES
+            else ""
+        )
         result.issues.append(
             TopologyIssue(
                 code="multiple_control_nets",
@@ -1116,12 +1154,14 @@ def _check_control(
                     f"{len(control_nets)} control nets ({', '.join(control_nets)}); the "
                     "kernel commands one dimensionless duty ratio and the current "
                     "compiler renders exactly one control net, so the extra nets are "
-                    "a declaration the compiler cannot honour yet"
-                ),
+                    "a declaration the compiler cannot honour yet.  "
+                    + unfit
+                ).strip(),
                 expected=(
                     f"exactly one net of kind {NET_KIND_CONTROL!r}, or none when the "
                     "descriptor is display-only, or metadata.control declaring how "
-                    "the nets derive from one duty"
+                    "the nets derive from one duty "
+                    f"({', '.join(sorted(DECLARED_CONTROL_MODES))})"
                 ),
                 severity="warning",
             )

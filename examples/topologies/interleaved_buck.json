@@ -1,0 +1,163 @@
+{
+  "schema": "topology-descriptor-v1",
+  "descriptor_version": "1.0",
+  "topology_id": "example_interleaved_buck",
+  "components": [
+    {
+      "component_id": "vin_source",
+      "kind": "voltage_source",
+      "ports": [
+        {"port_id": "positive", "net_id": "vin", "direction": "output"},
+        {"port_id": "negative", "net_id": "gnd", "direction": "passive"}
+      ],
+      "parameters": {"voltage_v": 12.0}
+    },
+    {
+      "component_id": "carrier_1",
+      "kind": "pulse_source",
+      "ports": [
+        {"port_id": "positive", "net_id": "pwm_1", "direction": "output"},
+        {"port_id": "negative", "net_id": "gnd", "direction": "passive"}
+      ],
+      "parameters": {"switching_frequency_hz": 100000.0}
+    },
+    {
+      "component_id": "carrier_2",
+      "kind": "pulse_source",
+      "ports": [
+        {"port_id": "positive", "net_id": "pwm_2", "direction": "output"},
+        {"port_id": "negative", "net_id": "gnd", "direction": "passive"}
+      ],
+      "parameters": {"switching_frequency_hz": 100000.0}
+    },
+    {
+      "component_id": "carrier_3",
+      "kind": "pulse_source",
+      "ports": [
+        {"port_id": "positive", "net_id": "pwm_3", "direction": "output"},
+        {"port_id": "negative", "net_id": "gnd", "direction": "passive"}
+      ],
+      "parameters": {"switching_frequency_hz": 100000.0}
+    },
+    {
+      "component_id": "switch_1",
+      "kind": "voltage_controlled_switch",
+      "ports": [
+        {"port_id": "input", "net_id": "vin", "direction": "input"},
+        {"port_id": "output", "net_id": "sw_1", "direction": "output"},
+        {"port_id": "control", "net_id": "pwm_1", "direction": "control"}
+      ],
+      "parameters": {"on_resistance_ohm": 0.001, "off_resistance_ohm": 1000000000.0}
+    },
+    {
+      "component_id": "switch_2",
+      "kind": "voltage_controlled_switch",
+      "ports": [
+        {"port_id": "input", "net_id": "vin", "direction": "input"},
+        {"port_id": "output", "net_id": "sw_2", "direction": "output"},
+        {"port_id": "control", "net_id": "pwm_2", "direction": "control"}
+      ],
+      "parameters": {"on_resistance_ohm": 0.001, "off_resistance_ohm": 1000000000.0}
+    },
+    {
+      "component_id": "switch_3",
+      "kind": "voltage_controlled_switch",
+      "ports": [
+        {"port_id": "input", "net_id": "vin", "direction": "input"},
+        {"port_id": "output", "net_id": "sw_3", "direction": "output"},
+        {"port_id": "control", "net_id": "pwm_3", "direction": "control"}
+      ],
+      "parameters": {"on_resistance_ohm": 0.001, "off_resistance_ohm": 1000000000.0}
+    },
+    {
+      "component_id": "diode_1",
+      "kind": "freewheeling_diode",
+      "ports": [
+        {"port_id": "anode", "net_id": "gnd", "direction": "passive"},
+        {"port_id": "cathode", "net_id": "sw_1", "direction": "passive"}
+      ],
+      "parameters": {}
+    },
+    {
+      "component_id": "diode_2",
+      "kind": "freewheeling_diode",
+      "ports": [
+        {"port_id": "anode", "net_id": "gnd", "direction": "passive"},
+        {"port_id": "cathode", "net_id": "sw_2", "direction": "passive"}
+      ],
+      "parameters": {}
+    },
+    {
+      "component_id": "diode_3",
+      "kind": "freewheeling_diode",
+      "ports": [
+        {"port_id": "anode", "net_id": "gnd", "direction": "passive"},
+        {"port_id": "cathode", "net_id": "sw_3", "direction": "passive"}
+      ],
+      "parameters": {}
+    },
+    {
+      "component_id": "inductor_1",
+      "kind": "inductor",
+      "ports": [
+        {"port_id": "input", "net_id": "sw_1", "direction": "passive"},
+        {"port_id": "output", "net_id": "vout", "direction": "passive"}
+      ],
+      "parameters": {"inductance_h": 0.00022, "initial_current_a": 0.0}
+    },
+    {
+      "component_id": "inductor_2",
+      "kind": "inductor",
+      "ports": [
+        {"port_id": "input", "net_id": "sw_2", "direction": "passive"},
+        {"port_id": "output", "net_id": "vout", "direction": "passive"}
+      ],
+      "parameters": {"inductance_h": 0.00022, "initial_current_a": 0.0}
+    },
+    {
+      "component_id": "inductor_3",
+      "kind": "inductor",
+      "ports": [
+        {"port_id": "input", "net_id": "sw_3", "direction": "passive"},
+        {"port_id": "output", "net_id": "vout", "direction": "passive"}
+      ],
+      "parameters": {"inductance_h": 0.00022, "initial_current_a": 0.0}
+    },
+    {
+      "component_id": "output_capacitor",
+      "kind": "capacitor",
+      "ports": [
+        {"port_id": "positive", "net_id": "vout", "direction": "passive"},
+        {"port_id": "negative", "net_id": "gnd", "direction": "passive"}
+      ],
+      "parameters": {"capacitance_f": 0.00047, "initial_voltage_v": 0.0}
+    },
+    {
+      "component_id": "load",
+      "kind": "resistor_load",
+      "ports": [
+        {"port_id": "positive", "net_id": "vout", "direction": "passive"},
+        {"port_id": "negative", "net_id": "gnd", "direction": "passive"}
+      ],
+      "parameters": {"resistance_ohm": 5.0}
+    }
+  ],
+  "nets": [
+    {"net_id": "vin", "kind": "electrical"},
+    {"net_id": "gnd", "kind": "reference"},
+    {"net_id": "pwm_1", "kind": "control"},
+    {"net_id": "pwm_2", "kind": "control"},
+    {"net_id": "pwm_3", "kind": "control"},
+    {"net_id": "sw_1", "kind": "electrical"},
+    {"net_id": "sw_2", "kind": "electrical"},
+    {"net_id": "sw_3", "kind": "electrical"},
+    {"net_id": "vout", "kind": "electrical"}
+  ],
+  "metadata": {
+    "control": {"mode": "single_duty_interleaved", "phases": 3},
+    "example": {
+      "purpose": "three-phase interleaved buck: one duty, three carriers spread evenly across the switching period",
+      "compile": {"duty": 0.5, "duration_s": 0.002}
+    }
+  }
+}

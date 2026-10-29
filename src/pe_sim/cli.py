@@ -89,6 +89,14 @@ from .visualization_service import serve as serve_visualization
 from .workbench_export import export_run_to_workbench_fixture
 
 
+#: Envelope tags for the two payloads only this module produces.  They are
+#: constants rather than inline strings so the tag is discoverable, greppable,
+#: and pinnable by ``tests/test_full_module_scan.py``; a client branches on the
+#: value it reads from the JSON, so nothing needs to import them.
+TOPOLOGY_SIMULATION_SCHEMA = "pe-sim.topology-simulation.v1"
+TOPOLOGY_SAMPLES_SCHEMA = "pe-sim.topology-samples.v1"
+
+
 def _parse_signal_tolerances(values: list[str] | None) -> tuple[tuple[str, float, float], ...]:
     """Parse repeated ``NAME:ABSOLUTE:RELATIVE`` CLI tolerance declarations."""
 
@@ -237,7 +245,7 @@ def _run_describe_devices(args) -> int:
     try:
         payload = describe_device(args.device_kind)
     except KeyError as exc:
-        from .circuit_devices import CIRCUIT_DEVICES
+        from .circuit_devices import CIRCUIT_DEVICE_SCHEMA, CIRCUIT_DEVICES
 
         message = _key_error_text(exc)
         print(
@@ -247,7 +255,12 @@ def _run_describe_devices(args) -> int:
                     "invalid_request",
                     message,
                     {
-                        "validation": "pe-sim.circuit-devices.v1",
+                        # Not ``validation``: docs/45 reserves that key for the
+                        # spec-validation schema, and a client that switches on
+                        # it to pick an issue parser would otherwise read a
+                        # device-vocabulary envelope with a spec parser.  This
+                        # names the schema that produced ``issues`` instead.
+                        "issues_schema": CIRCUIT_DEVICE_SCHEMA,
                         "issues": [
                             {
                                 "code": "unsupported_device_kind",
@@ -523,7 +536,7 @@ def _run_simulate_topology(args) -> int:
         print(
             json.dumps(
                 {
-                    "schema": "pe-sim.topology-simulation.v1",
+                    "schema": TOPOLOGY_SIMULATION_SCHEMA,
                     "status": "FAILED",
                     "category": exc.category,
                     "error": str(exc),
@@ -537,11 +550,12 @@ def _run_simulate_topology(args) -> int:
     compiled = plant.last_compiled()
     assert table is not None and compiled is not None
     report = {
-        "schema": "pe-sim.topology-simulation.v1",
+        "schema": TOPOLOGY_SIMULATION_SCHEMA,
         "status": "COMPLETED",
         "topology_id": compiled.topology_id,
         "descriptor_fingerprint": compiled.descriptor_fingerprint,
         "control_mode": compiled.control_mode,
+        "phases": compiled.phases,
         "duty": compiled.duty,
         "duration_s": compiled.duration_s,
         "carrier_phase_s": compiled.carrier_phase_s,
@@ -554,6 +568,9 @@ def _run_simulate_topology(args) -> int:
             "saved_signals": list(compiled.saved_signals),
             "element_names": dict(compiled.element_names),
             "output_net": compiled.output_net,
+            # When each gate first turns on, so a reader can check the declared
+            # control relation against the solved window instead of trusting it.
+            "gate_first_rise_s": dict(compiled.gate_first_rise_s),
         },
         "solver": plant.backend_provenance(),
         "observation": {
@@ -602,7 +619,7 @@ def _run_simulate_topology(args) -> int:
             samples_path.write_text(
                 json.dumps(
                     {
-                        "schema": "pe-sim.topology-samples.v1",
+                        "schema": TOPOLOGY_SAMPLES_SCHEMA,
                         "time_s": list(table.time_s),
                         "signals": {
                             name: list(values)

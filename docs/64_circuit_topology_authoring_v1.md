@@ -81,14 +81,29 @@ Step B 的目标是把描述符从"展示用途的单向导出"变成"可校验�
 
 ### 3.4 端口的网种类约束
 
-- `control` 端口只能接 `control` 网；
-- 电源类元件的 `negative` 端口可接 `electrical` 或 `reference`（浮地源是合法电路，
-  高边栅极驱动的参考节点就是开关节点）；
-- `capacitor` / `resistor_load` 的**两个**端子都可接 `electrical` 或 `reference`。
-  它们是电学对称元件，把哪个端子叫 positive 只是标签；限制 positive 只能接
-  `electrical` 会让**负输出轨道**（反相 buck-boost、负轨）无法表达，而那条限制
-  本身不携带任何信息；
-- `freewheeling_diode.anode` 可接 `electrical` 或 `reference`。
+规则只有一条：**控制网只能接控制端口，功率端口只能接 `electrical` 或
+`reference`**。`electrical` 与 `reference` 之间的区分不携带安全信息——它只说
+"这个节点是参考节点"，而几乎所有两端元件都是电学对称的，把哪个端子画在地上只是
+画法。
+
+- `control` 端口只能接 `control` 网（`pulse_source.positive`、
+  各类执行器的 `control`）；
+- `voltage_source.negative`、`pulse_source.negative` 可接 `electrical` 或
+  `reference`（浮地源是合法电路，高边栅极驱动的参考节点就是开关节点）；
+- `capacitor` / `resistor_load` 的**两个**端子都可接 `electrical` 或
+  `reference`。限制 `positive` 只能接 `electrical` 会让**负输出轨道**
+  （反相 buck-boost、负轨）无法表达，而那条限制本身不携带任何信息；
+- `voltage_controlled_switch`、`inductor`、`freewheeling_diode` 的**两个**功率
+  端子同理都可接 `electrical` 或 `reference`。低边开关天然画成 `gnd → 节点`，
+  把地画在 `input` 还是 `output` 只是元件卡的节点顺序；
+  `import-spice` 会原样保留 SPICE 里的节点顺序，若词表只允许 `output` 接地，
+  它导入的同步整流网表就会被自己的校验器判为 `port_net_kind_mismatch`——
+  这是 2026-10-29 修掉的一处自相矛盾；
+- `averaged_switch` 不是可渲染元件，它的端口约束只影响校验。
+
+编译器**自己**也复查这条规则（`compile_topology` 可以被单独调用，不经过校验器）。
+没有它，一个接在控制网上的负载会被渲染成一张完全合法的 `R` 卡：每一行都像电路，
+而那不是作者声明的电路。
 
 `thermal` 与 `other` 网在描述符契约里合法，但没有电学含义，因此校验器报
 `unsupported_net_kind`，编译器拒绝。
@@ -282,7 +297,9 @@ delta     vout=4.077e-05  iL=1.190e-05
 
 `dead_time_s` 只从 `metadata.control` 读取。`pulse_source.dead_time_s` 仍然被记录
 （描述符表达两个载波的关系时需要它），但不参与渲染 —— 一个声明只能有一个权威
-来源。
+来源。**两处写了不同的值时编译器拒绝**（`invalid_control_declaration`，
+`details` 同时给出 `carrier_dead_time_s` 与 `declaration_dead_time_s`）：若只忽略
+载波上的那个值，作者会以为自己写的死区生效了，而网表里是另一个数。
 
 2026-10-29 实测（D = 0.5，Vin = 12 V，100 kHz，td = 100 ns，120 µs 窗口，
 末 30 个样本均值）：编译网表与 `render_sync_buck_netlist` 在相位 0、3 µs、6 µs
@@ -291,6 +308,59 @@ delta     vout=4.077e-05  iL=1.190e-05
 另外，开关的栅极参考节点现在取自**驱动它的载波的负端**，而不是无条件取节点 0。
 浮地/高边栅极驱动是合法电路；把它的栅极电压拿去和地比较，会让每一条元件卡看起来
 都合法而控制关系是错的。
+
+### 5.7 交错控制声明
+
+多相 DC-DC 的每个桥臂都有自己的栅极，但内核仍然只命令一个占空比。描述符用
+**数据**说明"N 个栅极共享一个 duty、按整个周期等分"：
+
+```json
+"metadata": {
+  "control": {"mode": "single_duty_interleaved", "phases": 3}
+}
+```
+
+规则：
+
+- 三个字段 `mode`、`phases` 必填，`gate_order` 可选；
+- `phases` 必须等于开关所绑定的**不同控制网**数量，也必须等于载波数量；
+  "声明三相却只接了两个载波"是拒绝，不是静默按两相编译；
+- **每个相位就是一个栅极信号。** 一条腿上的高边/低边是两个栅极，但它们不是两个
+  相位：本模式没有"哪个栅极与哪个互补"的词。若一条腿有两个栅极（同步整流的每相
+  都是这样），`phases` 与栅极数的冲突会以 `invalid_control_declaration` 拒绝，
+  `expected` 会直接说明"每腿成对栅极尚不能表达"。**不要**为了让数字对齐而写成
+  `phases: 4`：那会编译出四个同时导通的栅极，其中同一腿的高边与低边在高占空比下
+  直通——校验与编译都会成功；
+- 每个栅极一律得到 `[0, D·Tsw)` 的导通窗口——**分的是相位，不是占空比**；
+- 第 k 个相位在 `k·Tsw/N` 处第一次开通；
+- `gate_order` 是**开通顺序**，不给则按控制网 id 排序；相位编号本身没有物理
+  含义（交换两个桥臂的相位是同一个电路换了标签），所以编译器把解析结果写进
+  `CompiledCircuit.gate_first_rise_s`，读者不必反推；
+- 声明里出现 `dead_time_s` 是拒绝：交错的一个相位只有一个开关，"死区"在那
+  里没有相对的另一半开关，静默忽略会让作者以为写下了另一个电路。
+- **占空比为 0 时栅极完全不导通。** 编译器不再为了保证 PULSE 宽度非零而给一个
+  `1e-15 s` 的下限：那是一次作者没有命令的导通，且编译记录会报出一个从未导通的
+  栅极的首次上升沿。现在 `duty = 0` 渲染为 `DC 0`，`gate_first_rise_s` 为空。
+- 相位跨越周期边界（`delay + width > Tsw`）时，渲染出的 PULSE 由求解器在周期边界
+  截断，剩下的部分由 PWL 尾脉冲补上；两个部分之和恰好等于 `duty·Tsw`，
+  `tests/test_circuit_compile.py` 用恒等式 `min(width, Tsw − delay) + tail = width`
+  把这一条钉住（含 `duty = 0.6`、三相的情形）。
+
+`pe-sim compile-topology` 的摘要和 `simulate-topology` 的 `netlist` 块都带
+`phases` 与 `gate_first_rise_s`，所以"三个栅极是否真的等分"可以直接核对。
+
+2026-10-29 实测（`examples/topologies/interleaved_buck.json`，D = 0.5，
+Vin = 12 V，100 kHz，200 µs 窗口，初值 iL = 0.4 A/相、vC = 6 V）：
+
+```text
+gate_first_rise_s: pwm_1=0.000 µs  pwm_2=3.333 µs  pwm_3=6.667 µs
+解算样本的上升沿:  pwm_1=0.001 µs  pwm_2=3.334 µs  pwm_3=6.667 µs
+实测占空比:        0.500964       0.502891        0.498160
+v(vout) 均值:      5.9247 V       （D·Vin = 6.0 V，差值来自二极管正向压降）
+```
+
+相位差 3.333 µs = Tsw/3，三个栅极确实被等分；`vout` 落在 D·Vin 附近说明这不是
+"三个栅极各自为政"的电路。
 
 ## 6. CLI 表面
 
@@ -327,10 +397,12 @@ delta     vout=4.077e-05  iL=1.190e-05
   下都不可能是 `comparable`。
 - **一次只有八个器件、三种网种类**，没有互感、变压器、受控源、非线性器件、
   子电路、`.include`。
-- **互补控制只支持一种声明。** `single_duty_complementary` 覆盖同步 Buck 的双栅极
-  情形；模型侧控制 Buck 与峰值电流 Buck 的两个开关共用同一个栅极网（控制发生在
-  模型内部），它们不是互补电路，编译器仍然拒绝。多相、交错、三电平之类的关系
-  都需要各自的声明与渲染，本次**未做**。
+- **两种控制声明。** `single_duty_complementary`（§5.6）覆盖同步 Buck 的双栅极
+  情形；`single_duty_interleaved`（§5.7）覆盖 N 个等间隔相位的多相 DC-DC。
+  模型侧控制 Buck 与峰值电流 Buck 的两个开关共用同一个栅极网（控制发生在模型
+  内部），它们不是互补电路，编译器仍然拒绝。**同一 duty 下两条桥臂各自互补**
+  （半桥/全桥的双桥臂调制）仍需要把声明推广到成对分组，本次**未做**；三相逆变
+  器需要三个独立相位指令，受“一个标量指令”限制，见 `docs/69`。
 - **`dead_time_s` 的唯一权威来源是 `metadata.control`。** `pulse_source` 上的同名字段
   被记录但不渲染，避免两处声明打架。
 - 不做 SPICE 子集导入的**反向**保证：`docs/66` 能把网表翻译成描述符，但编译
@@ -345,11 +417,12 @@ delta     vout=4.077e-05  iL=1.190e-05
 
 仍未做：
 
-- 多相/交错/三电平控制关系（§5.6 只支持一种声明）。
+- 成对互补分组（半桥双桥臂、全桥单 duty 双极性调制）。
+- 独立多桥臂控制：`ActionRequest` 只携带一个标量占空比，见 `docs/69`。
 
-互补控制的声明与渲染已在 §5.6 完成（只落在编写层，不碰后端）；执行适配器在
-`pe_sim.backends` 里新增模块并只做**运行时**求解路径声明，因此
-`reviewed_identities.json` 未变。
+互补控制的声明与渲染已在 §5.6 完成，交错控制在 §5.7 完成（两者都只落在编写层，
+不碰后端）；执行适配器在 `pe_sim.backends` 里新增模块并只做**运行时**求解路径
+声明，因此 `reviewed_identities.json` 未变。
 
 SPICE 网表子集导入（原 Step C）已交付，见 `docs/66`。它只做前端：产出的仍然是
 本文件的描述符，因此不构成第二条执行路径。

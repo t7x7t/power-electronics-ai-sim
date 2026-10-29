@@ -149,9 +149,11 @@ circuit-topology` 仍然能回答“这个 plant_config 能写什么”。
 
 ## 8. 未做
 
-- **多控制关系。** 编译器只理解 `single_duty_complementary`。多相、交错、三电平
-  需要各自的声明与渲染。
-- 子电路、`.include`、SPICE 子集导入（Step C）。
+- **成对互补分组。** 编译器理解的声明是 `single_duty_complementary`（一对互补
+  栅极，含死区）与 `single_duty_interleaved`（N 个等间隔相位共享一个 duty）。
+  "两条桥臂各自互补"（半桥双桥臂、全桥单 duty 双极性调制）需要把声明推广到成对
+  分组；三电平需要另一套渲染。其余边界见 `docs/69`。
+- 子电路、`.include`（SPICE 子集的**正向**导入已交付，见 `docs/66`）。
 
 ## 9. 证据
 

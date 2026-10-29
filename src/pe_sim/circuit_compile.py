@@ -20,8 +20,9 @@ Three properties are deliberate:
   ratio.  A descriptor may declare how several gate signals derive from it.
   Without a declaration the compiler requires exactly one actuator and exactly
   one carrier; with ``metadata.control.mode = "single_duty_complementary"`` it
-  renders a high-side and a low-side gate from the same duty and refuses a
-  topology whose switches it cannot classify.  Either way the pulse width is
+  renders a high-side and a low-side gate from the same duty; with
+  ``"single_duty_interleaved"`` it renders ``phases`` gates whose carriers are
+  spread evenly across one switching period.  Either way the pulse width is
   derived from the commanded duty, never read out of the descriptor.
 
 The compiler does not execute anything and imports no backend: the text it
@@ -41,6 +42,7 @@ from typing import Any, Mapping, Sequence
 from .circuit_devices import (
     COMPILABLE_NET_KINDS,
     NET_KIND_REFERENCE,
+    RENDERABLE_DEVICE_KINDS,
     canonical_device_kind,
     device_spec,
 )
@@ -77,13 +79,36 @@ CIRCUIT_COMPILE_CODES = frozenset(
 #: names; the project does not reinterpret them.
 SUPPORTED_INTEGRATORS = frozenset({"trap", "gear", "euler"})
 
-#: The one declared relation between several gate signals and the commanded
-#: duty that the compiler understands.  The declaration lives in
-#: ``descriptor.metadata.control`` and is validated here rather than in the
-#: topology validator, because "which switch is the low side" is a rendering
-#: question, not a graph-shape question.
+#: Declared relations between several gate signals and the commanded duty.
+#: The declaration lives in ``descriptor.metadata.control`` and is validated
+#: here rather than in the topology validator, because "which switch is the low
+#: side" and "which carrier is phase two" are rendering questions, not
+#: graph-shape questions.
+#:
+#: ``single_duty_complementary`` renders a high-side and a low-side gate from
+#: one duty with dead time between them.
+#:
+#: ``single_duty_interleaved`` renders ``phases`` gates from one duty, each on
+#: its own carrier delayed by a whole fraction of the switching period.  It is
+#: the multiphase counterpart: the same command produces N pulses that are
+#: spread evenly across one period, so the input current ripples at N times the
+#: per-phase switching frequency without any phase having a different duty.
 CONTROL_MODE_COMPLEMENTARY = "single_duty_complementary"
-SUPPORTED_CONTROL_MODES = frozenset({CONTROL_MODE_COMPLEMENTARY})
+CONTROL_MODE_INTERLEAVED = "single_duty_interleaved"
+SUPPORTED_CONTROL_MODES = frozenset(
+    {CONTROL_MODE_COMPLEMENTARY, CONTROL_MODE_INTERLEAVED}
+)
+
+#: Declaration keys each mode admits.  A key outside its mode's set is refused
+#: rather than ignored: ``dead_time_s`` on an interleaved declaration would
+#: silently mean "no dead time", which is a different circuit than the one the
+#: author believed they wrote.
+_CONTROL_KEYS: Mapping[str, frozenset[str]] = MappingProxyType(
+    {
+        CONTROL_MODE_COMPLEMENTARY: frozenset({"mode", "dead_time_s"}),
+        CONTROL_MODE_INTERLEAVED: frozenset({"mode", "phases", "gate_order"}),
+    }
+)
 
 #: Numerical options written when the caller supplies none.  They are the
 #: conservative values a switching solve needs, and they are *written into the
@@ -131,11 +156,22 @@ class CompiledCircuit:
     carrier_phase_s: float = 0.0
     carrier_tail_s: float = 0.0
     #: ``single_duty`` for one commanded gate, ``single_duty_complementary`` for
-    #: the declared high-side/low-side pair.
+    #: the declared high-side/low-side pair, ``single_duty_interleaved`` for a
+    #: declared set of phase-shifted gates.
     control_mode: str = "single_duty"
     #: The remaining on-time rendered as a finite tail, per control net.  Empty
     #: when no gate was already on at the window start.
     carrier_tails_s: tuple[tuple[str, float], ...] = ()
+    #: The first rising edge of every rendered gate inside the compiled window,
+    #: in seconds from the window start.  Interleaved phases differ here.  A gate
+    #: that is already conducting at the window start reports its *next* rise,
+    #: and the pulse that straddles the start is rendered as a finite tail; a
+    #: gate that never turns on is absent from the record.
+    gate_first_rise_s: tuple[tuple[str, float], ...] = ()
+    #: Number of switching phases the one commanded duty drove.  A single gate
+    #: and a complementary pair are both one phase: they are one switching leg
+    #: whose gates are derived from each other, not several evenly spaced legs.
+    phases: int = 1
     #: Component id to SPICE element name, in descriptor order.  A consumer that
     #: holds the descriptor needs this to name the saved current/voltage of an
     #: element it did not render itself.
@@ -159,6 +195,10 @@ class CompiledCircuit:
             "carrier_phase_s": self.carrier_phase_s,
             "carrier_tail_s": self.carrier_tail_s,
             "control_mode": self.control_mode,
+            "gate_first_rise_s": {
+                net_id: value for net_id, value in self.gate_first_rise_s
+            },
+            "phases": self.phases,
             "carrier_tails_s": {
                 net_id: tail for net_id, tail in self.carrier_tails_s
             },
@@ -340,13 +380,17 @@ def _bound_net(component: Any, port_id: str) -> str:
 
 def _control_declaration(
     descriptor: TopologyDescriptor,
-) -> tuple[str, float] | None:
+) -> "_ControlDeclaration | None":
     """Read ``metadata.control`` and validate the declaration's shape.
 
     A descriptor without the key is a single-actuator circuit.  A descriptor
     with the key has promised that several gates derive from one duty, so an
     unreadable declaration is a refusal: silently falling back to one actuator
     would render a different circuit than the descriptor declares.
+
+    Only the shape is checked here.  Whether the declaration *fits the graph*
+    (two switches and two carriers, three phases and three carriers) needs the
+    rendered components, so it is decided where those are known.
     """
 
     metadata = descriptor.metadata
@@ -358,22 +402,50 @@ def _control_declaration(
             "invalid_control_declaration",
             "metadata.control must be an object declaring how the commanded duty "
             "maps to the gate signals",
-            expected="an object with 'mode' and optional 'dead_time_s'",
-        )
-    unknown = sorted(set(declaration) - {"mode", "dead_time_s"})
-    if unknown:
-        raise CircuitCompileError(
-            "invalid_control_declaration",
-            "metadata.control contains unknown fields: " + ", ".join(unknown),
-            expected="'mode' and optional 'dead_time_s'",
+            expected="an object with 'mode' and the keys that mode declares",
         )
     mode = declaration.get("mode")
-    if mode not in SUPPORTED_CONTROL_MODES:
+    if not isinstance(mode, str) or mode not in SUPPORTED_CONTROL_MODES:
         raise CircuitCompileError(
             "invalid_control_declaration",
             f"unsupported control mode {mode!r}",
             supported=sorted(SUPPORTED_CONTROL_MODES),
         )
+    allowed = _CONTROL_KEYS[mode]
+    unknown = sorted(set(declaration) - allowed)
+    if unknown:
+        raise CircuitCompileError(
+            "invalid_control_declaration",
+            f"metadata.control declares {unknown} which mode {mode!r} does not "
+            "understand; an unrecognised key would change the circuit silently",
+            mode=mode,
+            expected="only " + ", ".join(sorted(allowed)),
+        )
+    if mode == CONTROL_MODE_COMPLEMENTARY:
+        return _ControlDeclaration(mode, dead_time_s=_dead_time(declaration))
+    return _ControlDeclaration(
+        mode,
+        phases=_phase_count(declaration),
+        gate_order=_gate_order(declaration),
+    )
+
+
+@dataclass(frozen=True)
+class _ControlDeclaration:
+    """One parsed ``metadata.control`` record.
+
+    ``dead_time_s`` belongs to the complementary relation and ``phases`` /
+    ``gate_order`` to the interleaved one; the mode decides which fields carry
+    meaning, and the other fields keep their "not declared" values.
+    """
+
+    mode: str
+    dead_time_s: float = 0.0
+    phases: int | None = None
+    gate_order: tuple[str, ...] | None = None
+
+
+def _dead_time(declaration: Mapping[str, Any]) -> float:
     raw = declaration.get("dead_time_s", 0.0)
     if isinstance(raw, bool) or not isinstance(raw, (int, float)):
         raise CircuitCompileError(
@@ -386,7 +458,71 @@ def _control_declaration(
             "invalid_control_declaration",
             "metadata.control.dead_time_s must be finite and non-negative",
         )
-    return str(mode), dead_time
+    return dead_time
+
+
+def _phase_count(declaration: Mapping[str, Any]) -> int:
+    """Read the declared phase count.
+
+    The count is required even though it is derivable from the graph.  A
+    document that says "three phases" but wires two carriers is not a two-phase
+    circuit: it is a document whose author and whose netlist disagree, and the
+    refusal names both numbers instead of quietly rendering the smaller one.
+    """
+
+    raw = declaration.get("phases")
+    if raw is None:
+        raise CircuitCompileError(
+            "invalid_control_declaration",
+            "single_duty_interleaved requires 'phases', the number of gate "
+            "signals the one duty drives",
+            expected="an integer of at least 2",
+        )
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        raise CircuitCompileError(
+            "invalid_control_declaration",
+            "metadata.control.phases must be an integer",
+            phases=raw,
+        )
+    if isinstance(raw, float) and not float(raw).is_integer():
+        raise CircuitCompileError(
+            "invalid_control_declaration",
+            "metadata.control.phases must be a whole number of phases",
+            phases=raw,
+        )
+    phases = int(raw)
+    if phases < 2:
+        raise CircuitCompileError(
+            "invalid_control_declaration",
+            "metadata.control.phases must be at least 2; a one-phase "
+            "declaration is a single-actuator circuit and needs no control "
+            "declaration at all",
+            phases=phases,
+        )
+    return phases
+
+
+def _gate_order(declaration: Mapping[str, Any]) -> tuple[str, ...] | None:
+    raw = declaration.get("gate_order")
+    if raw is None:
+        return None
+    if not isinstance(raw, (list, tuple)) or not all(
+        isinstance(name, str) for name in raw
+    ):
+        raise CircuitCompileError(
+            "invalid_control_declaration",
+            "metadata.control.gate_order must be an array of control net ids",
+            expected="a list of net ids, one per phase",
+        )
+    order = tuple(str(name) for name in raw)
+    if len(set(order)) != len(order):
+        raise CircuitCompileError(
+            "invalid_control_declaration",
+            "metadata.control.gate_order names the same control net twice; "
+            "each phase needs its own gate",
+            gate_order=list(order),
+        )
+    return order
 
 
 def _complementary_switches(
@@ -418,6 +554,117 @@ def _complementary_switches(
             low_side=[component.component_id for component in low],
         )
     return high[0], low[0]
+
+
+def _interleaved_gates(
+    *,
+    declaration: _ControlDeclaration,
+    actuators: Sequence[Any],
+    carrier_by_net: Mapping[str, Any],
+    duty_value: float,
+) -> tuple[dict[str, tuple[float, float]], float, dict[str, float]]:
+    """Derive one gate window and one carrier offset per interleaved phase.
+
+    Returns ``(gate_windows, switching_period, delay_by_net)``.
+
+    Every phase carries the *same* on-width, because the kernel commands one
+    duty ratio; what differs is when each phase's carrier starts.  Phase ``k``
+    of ``N`` is delayed by ``k*Tsw/N``, so the pulses tile the switching period
+    and the sum of the phase currents ripples at ``N`` times the per-phase
+    frequency.
+
+    The choice of which phase is "first" is a labelling choice, not a physical
+    one: spreading the same offsets over the same legs in a different order
+    describes the same aggregate behaviour, only with the legs renamed.  The
+    compiler therefore uses the declared ``gate_order`` when the author gave
+    one and the sorted control-net ids otherwise, then reports the resolved
+    assignment so a reader never has to guess which leg leads.
+    """
+
+    phases = declaration.phases
+    assert phases is not None
+    gate_nets: list[str] = []
+    for component in actuators:
+        net = _bound_net(component, "control")
+        if net not in gate_nets:
+            gate_nets.append(net)
+    if len(gate_nets) != phases:
+        raise CircuitCompileError(
+            "invalid_control_declaration",
+            "single_duty_interleaved declares "
+            f"{phases} phases but the switches bind {len(gate_nets)} distinct "
+            f"control nets ({', '.join(gate_nets) or 'none'}).  Each phase is "
+            "exactly one gate signal, and every phase gets the same duty; if "
+            "your legs have two gates each (a high side and a low side) this "
+            "mode cannot express them, because it has no word for which gate "
+            "is complementary to which",
+            phases=phases,
+            gate_nets=sorted(gate_nets),
+            expected=(
+                "one control net per phase with 'phases' equal to their count, "
+                "and one switch per control net; paired high/low gates inside a "
+                "leg are not expressible yet (docs/69)"
+            ),
+        )
+    order = declaration.gate_order
+    if order is None:
+        order = tuple(sorted(gate_nets))
+    elif set(order) != set(gate_nets):
+        raise CircuitCompileError(
+            "invalid_control_declaration",
+            "metadata.control.gate_order must list exactly the control nets the "
+            "switches bind",
+            gate_order=list(order),
+            gate_nets=sorted(gate_nets),
+        )
+    missing = [net for net in order if net not in carrier_by_net]
+    if missing:
+        raise CircuitCompileError(
+            "no_carrier",
+            f"phase control nets {missing} have no carrier; the commanded duty "
+            "has no pulse source to derive a pulse width from",
+            nets=missing,
+            expected="one pulse_source per phase, its 'positive' port on that net",
+        )
+    extra = sorted(set(carrier_by_net) - set(order))
+    if extra:
+        raise CircuitCompileError(
+            "invalid_control_declaration",
+            f"carriers drive {extra}, which are not phase control nets; a "
+            "carrier on an unrelated net would be a second independent gate",
+            carrier_nets=extra,
+            gate_nets=sorted(order),
+            expected="exactly one carrier per phase control net, and none elsewhere",
+        )
+    frequencies: list[float] = []
+    for net in order:
+        frequency = _parameter(
+            carrier_by_net[net], "switching_frequency_hz", required=True
+        )
+        assert frequency is not None
+        frequencies.append(frequency)
+    reference = frequencies[0]
+    for net, frequency in zip(order, frequencies):
+        if abs(frequency - reference) > 1e-12 * max(1.0, abs(reference)):
+            raise CircuitCompileError(
+                "invalid_control_declaration",
+                "every phase of an interleaved set must declare the same "
+                "switching frequency; phase "
+                f"{net!r} declares {frequency!r} against {reference!r}",
+                frequencies={
+                    name: value for name, value in zip(order, frequencies)
+                },
+                expected="one switching_frequency_hz for every phase",
+            )
+    switching_period = 1.0 / reference
+    # No lower floor: ``duty == 0`` renders a gate that never turns on, so no
+    # phase reports a first rise and none writes a femtosecond-wide pulse.
+    pulse_width = duty_value * switching_period
+    gate_windows = {net: (0.0, pulse_width) for net in order}
+    offset_by_net = {
+        net: index * switching_period / phases for index, net in enumerate(order)
+    }
+    return gate_windows, switching_period, offset_by_net
 
 
 def _render_gate(
@@ -613,6 +860,7 @@ def compile_topology(
                 f"component {component.component_id!r} declares unknown device kind "
                 f"{component.kind!r}",
                 component_id=component.component_id,
+                expected="one of " + ", ".join(sorted(RENDERABLE_DEVICE_KINDS)),
             )
         if not device_spec(canonical).renderable:
             raise CircuitCompileError(
@@ -622,11 +870,46 @@ def compile_topology(
                 "as a circuit",
                 component_id=component.component_id,
                 kind=canonical,
+                expected=(
+                    "a renderable kind: "
+                    + ", ".join(sorted(RENDERABLE_DEVICE_KINDS))
+                ),
             )
 
     components_by_id = {
         component.component_id: component for component in descriptor.components
     }
+
+    # The compiler can be called without the validator having run, so it repeats
+    # the one structural rule whose violation is invisible in the rendered
+    # netlist: a port bound to a net of a kind its device does not accept.  A
+    # resistor load wired between a gate net and ground renders as a perfectly
+    # legal ``R`` card, every other card looks fine, and the circuit is not the
+    # one the author declared.
+    for component in descriptor.components:
+        canonical = canonical_device_kind(component.kind)
+        if canonical is None:  # already refused above
+            continue
+        spec = device_spec(canonical)
+        for port in component.ports:
+            declaration = spec.port(port.port_id)
+            if declaration is None:
+                continue
+            net_kind = nets.get(port.net_id)
+            if net_kind is None:
+                continue  # an unknown net is the caller's bug, refused by _bound_net
+            if net_kind not in declaration.net_kinds:
+                raise CircuitCompileError(
+                    "unsupported_net_kind",
+                    f"component {component.component_id!r} binds its "
+                    f"{port.port_id!r} port to net {port.net_id!r} of kind "
+                    f"{net_kind!r}, which that port does not accept",
+                    component_id=component.component_id,
+                    port_id=port.port_id,
+                    net_id=port.net_id,
+                    net_kind=net_kind,
+                    expected="one of " + ", ".join(sorted(declaration.net_kinds)),
+                )
     if initial_conditions:
         unknown = sorted(set(initial_conditions) - set(components_by_id))
         if unknown:
@@ -716,8 +999,9 @@ def compile_topology(
                     carrier.component_id,
                 ],
             )
-        carrier_by_net[carrier_net] = carrier
+        carrier_by_net[carrier_net] = _component_view(carrier, parameter_overrides)
 
+    delays: dict[str, float] = {}
     if declaration is None:
         if len(actuators) != 1:
             raise CircuitCompileError(
@@ -735,6 +1019,10 @@ def compile_topology(
                 "no_carrier",
                 "the descriptor declares no carrier, so there is no gate signal to "
                 "derive from the commanded duty",
+                expected=(
+                    "a pulse_source whose 'positive' port binds the switch's "
+                    "control net, with switching_frequency_hz set"
+                ),
             )
         if len(carriers) > 1:
             raise CircuitCompileError(
@@ -742,6 +1030,11 @@ def compile_topology(
                 "the descriptor declares more than one carrier; the commanded duty "
                 "buys exactly one pulse width",
                 carriers=len(carriers),
+                expected=(
+                    "one carrier, or metadata.control declaring how several "
+                    "carriers derive from the one duty "
+                    f"({', '.join(sorted(SUPPORTED_CONTROL_MODES))})"
+                ),
             )
         actuator = actuators[0]
         actuator_net = _bound_net(actuator, "control")
@@ -753,25 +1046,38 @@ def compile_topology(
                 "carrier elsewhere in the descriptor does not drive the switch",
                 control_net=actuator_net,
                 carrier_nets=sorted(carrier_by_net),
+                expected=(
+                    f"a pulse_source whose 'positive' port binds {actuator_net!r}"
+                ),
             )
         switching_frequency = _parameter(
             carrier, "switching_frequency_hz", required=True
         )
         assert switching_frequency is not None
         switching_period = 1.0 / switching_frequency
-        pulse_width = max(duty_value * switching_period, 1e-15)
+        # No lower floor on the width: a commanded duty of zero must render a
+        # gate that never turns on (``DC 0``) rather than a pulse one femtosecond
+        # wide, which is a turn-on the author did not ask for and a first rise
+        # the record would then have to report.
+        pulse_width = duty_value * switching_period
         gate_windows: dict[str, tuple[float, float]] = {
             actuator_net: (0.0, pulse_width)
         }
         control_mode = "single_duty"
-    else:
-        mode, dead_time = declaration
+    elif declaration.mode == CONTROL_MODE_COMPLEMENTARY:
+        dead_time = declaration.dead_time_s
         if len(actuators) != 2:
             raise CircuitCompileError(
                 "ambiguous_complementary_control",
                 "single-duty complementary control needs exactly two switches, "
                 f"and the descriptor declares {len(actuators)}",
                 actuators=len(actuators),
+                expected=(
+                    "exactly two switches for a complementary pair; N evenly "
+                    "spaced single-switch phases use 'single_duty_interleaved'; "
+                    "paired legs of several legs have no declaration yet "
+                    "(docs/69)"
+                ),
             )
         high_side, low_side = _complementary_switches(actuators, reference_net)
         high_net = _bound_net(high_side, "control")
@@ -815,7 +1121,36 @@ def compile_topology(
                 "switching period",
                 dead_time_s=dead_time,
                 switching_period_s=switching_period,
+                expected=(
+                    f"dead_time_s below {switching_period / 2.0:.6g} s, or a "
+                    "lower switching_frequency_hz"
+                ),
             )
+        # The declaration is the single authority for the dead time.  A carrier
+        # that carries its own ``dead_time_s`` is recorded rather than rendered,
+        # so a *disagreeing* value would be a second authority the author
+        # believes is in force.  Agreement is accepted; disagreement is not.
+        for net in (high_net, low_net):
+            declared_on_carrier = _parameter(
+                carrier_by_net[net], "dead_time_s"
+            )
+            if declared_on_carrier is None:
+                continue
+            if abs(declared_on_carrier - dead_time) > 1e-12:
+                raise CircuitCompileError(
+                    "invalid_control_declaration",
+                    f"carrier on {net!r} declares dead_time_s="
+                    f"{declared_on_carrier!r} but metadata.control declares "
+                    f"{dead_time!r}; the declaration is the only authority the "
+                    "compiler renders, so two different values cannot both hold",
+                    net=net,
+                    carrier_dead_time_s=declared_on_carrier,
+                    declaration_dead_time_s=dead_time,
+                    expected=(
+                        "either delete dead_time_s from the carrier, or make the "
+                        "two values equal, or delete it from metadata.control"
+                    ),
+                )
         # The cycle is: high side on [0, duty*Tsw - dead_time], low side on
         # [duty*Tsw, Tsw - dead_time].  The two dead-time intervals have both
         # gates low, exactly as the reviewed synchronous reference renders them.
@@ -824,7 +1159,21 @@ def compile_topology(
             high_net: (0.0, high_width),
             low_net: (high_width + dead_time, switching_period - dead_time),
         }
-        control_mode = mode
+        control_mode = declaration.mode
+    elif declaration.mode == CONTROL_MODE_INTERLEAVED:
+        gate_windows, switching_period, delays = _interleaved_gates(
+            declaration=declaration,
+            actuators=actuators,
+            carrier_by_net=carrier_by_net,
+            duty_value=duty_value,
+        )
+        control_mode = declaration.mode
+    else:  # pragma: no cover - guarded by ``_control_declaration``
+        raise CircuitCompileError(
+            "invalid_control_declaration",
+            f"mode {declaration.mode!r} parsed but has no rendering branch",
+            supported=sorted(SUPPORTED_CONTROL_MODES),
+        )
 
     try:
         phase = float(carrier_phase_s)
@@ -841,6 +1190,36 @@ def compile_topology(
     # it as a whole period would make the carrier wait an extra period.
     if switching_period - phase <= 1e-12 * max(1.0, switching_period):
         phase = 0.0
+
+    # The declared base phase applies to every gate; an interleaved phase adds
+    # its own share of a period on top.  The renderer *advances* a carrier by
+    # the phase it is given, so a phase that must fire later is written as a
+    # negative advance.  Each value is normalised here because ``_render_gate``
+    # compares the phase against the on-window to decide whether a pulse spans
+    # the window start, and that comparison is only meaningful inside one
+    # period.
+    phase_by_net: dict[str, float] = {}
+    for control_net in gate_windows:
+        value = (phase - delays.get(control_net, 0.0)) % switching_period
+        if switching_period - value <= 1e-12 * max(1.0, switching_period):
+            value = 0.0
+        phase_by_net[control_net] = value
+
+    # The record answers "when does this gate next rise inside the compiled
+    # window", which is the fact a reader can check against the netlist.  A
+    # phase value would answer the same question backwards - the renderer
+    # advances a carrier by the phase, so its first rising edge is one period
+    # later minus that advance - and a record a reader has to invert is a record
+    # that gets misread.  A gate with an empty on-window is absent: it never
+    # turns on, so it has no first rise to report.
+    gate_first_rise_s: dict[str, float] = {}
+    for control_net, (start_s, stop_s) in gate_windows.items():
+        if stop_s <= start_s:
+            continue
+        first_rise = (start_s - phase_by_net[control_net]) % switching_period
+        if switching_period - first_rise <= 1e-12 * max(1.0, switching_period):
+            first_rise = 0.0
+        gate_first_rise_s[control_net] = first_rise
 
     step = (
         default_sample_step_s(switching_period, duration)
@@ -887,7 +1266,7 @@ def compile_topology(
         elif canonical == "pulse_source":
             control_net = _bound_net(view, "positive")
             window = gate_windows.get(control_net)
-            if window is None:  # only reachable in complementary mode
+            if window is None:
                 raise CircuitCompileError(
                     "ambiguous_complementary_control",
                     f"carrier {component.component_id!r} drives {control_net!r}, "
@@ -903,7 +1282,7 @@ def compile_topology(
                 negative_node=nodes["negative"],
                 start_s=start_s,
                 stop_s=stop_s,
-                phase_s=phase,
+                phase_s=phase_by_net[control_net],
                 switching_period_s=switching_period,
                 taken_nodes=taken_nodes,
                 counters=counters,
@@ -1027,6 +1406,12 @@ def compile_topology(
         carrier_tail_s=max(carrier_tails.values(), default=0.0),
         control_mode=control_mode,
         carrier_tails_s=tuple(sorted(carrier_tails.items())),
+        gate_first_rise_s=tuple(sorted(gate_first_rise_s.items())),
+        phases=(
+            len(gate_windows)
+            if control_mode == CONTROL_MODE_INTERLEAVED
+            else 1
+        ),
         element_names=tuple(element_names.items()),
         output_net=output_net,
     )
@@ -1044,6 +1429,7 @@ __all__ = [
     "CIRCUIT_COMPILE_CODES",
     "CIRCUIT_NETLIST_TEMPLATE_VERSION",
     "CONTROL_MODE_COMPLEMENTARY",
+    "CONTROL_MODE_INTERLEAVED",
     "DEFAULT_CIRCUIT_OPTIONS",
     "SUPPORTED_CONTROL_MODES",
     "SUPPORTED_INTEGRATORS",

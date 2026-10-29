@@ -113,6 +113,22 @@ def test_describe_devices_rejects_an_unknown_kind(capsys):
     assert payload["issues"][0]["path"] == "/kind"
     # ``KeyError`` must not leak its repr quoting into a prose message.
     assert "'nope'" in payload["error"]
+
+
+def test_a_device_rejection_does_not_claim_the_spec_validation_schema(capsys):
+    """``validation`` is reserved for ``pe-sim.spec-validation.v1``.
+
+    docs/45 states the rule, and a client branches on that key to choose an
+    issue parser.  A device-vocabulary envelope that filled the same key with a
+    different schema would be parsed by the wrong reader - silently, because
+    both envelopes carry an ``issues`` array.
+    """
+
+    assert cli_main(["describe-devices", "nope"]) == 2
+    payload = json.loads(capsys.readouterr().out)
+
+    assert "validation" not in payload
+    assert payload["issues_schema"] == CIRCUIT_DEVICE_SCHEMA
     assert not payload["error"].startswith('"')
 
 
