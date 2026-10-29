@@ -156,7 +156,12 @@ cannot render exactly instead of approximating. None of the first three builds
 a plant, imports an adapter, starts a solver, or creates a run directory.
 `simulate-topology` is the execution check: it solves one constant-duty window
 through the same ngspice process boundary and reports bounded signal summaries
-(and, with `--output-dir`, the full samples). A compiled netlist is a
+(and, with `--output-dir`, the full samples). Its report also carries a `metrics`
+block measured from those samples: input and load power, the stored-energy rate,
+the loss between them, efficiency, and the duty the circuit actually saw. The
+measurement names no converter, so it answers for any circuit the vocabulary can
+express; efficiency is withheld when the window is still a transient. See
+[docs/67_waveform_metrics_v1.md](docs/67_waveform_metrics_v1.md). A compiled netlist is a
 well-formed circuit, not a reviewed model: a topology an agent authors can
 reach at most `limited` evidence. See
 [docs/64_circuit_topology_authoring_v1.md](docs/64_circuit_topology_authoring_v1.md)

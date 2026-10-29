@@ -84,10 +84,14 @@ pe-sim simulate-topology <topology.json> \
 
 - 成功：`pe-sim.topology-simulation.v1`，退出码 0；
 - 文档/编译/请求问题：沿用 `pe-sim.rejection.v1`，退出码 2；
-- 求解器失败：`status = "FAILED"`、`category = "backend_process_failure"`，退出码 1。
+- 求解器失败：`status = "FAILED"`、`category` 取适配器自己的分类
+  （`backend_timeout` / `numerical_nonconvergence` / `backend_process_failure`），
+  退出码 1。
 
-报告包含网表摘要、描述符指纹、控制模式、求解器身份、末点观测，以及每个信号的
-`min`/`max`/`last`。带 `--output-dir` 时额外写出：
+报告包含网表摘要、描述符指纹、控制模式、求解器身份、末点观测、每个信号的
+`min`/`max`/`last`，以及 `metrics`：从同一窗口的样本积分出来的输入功率、负载功率、
+储能变化率、损耗、效率、实测占空比与电感电流统计（`docs/67`）。带 `--output-dir`
+时额外写出：
 
 - `simulation.json`：与 stdout 相同的报告（含 `artifacts` 路径）；
 - `samples.json`：`pe-sim.topology-samples.v1`，`time_s` 与全部信号列。
@@ -122,11 +126,11 @@ pe-sim simulate-topology <topology.json> \
 
 `circuit-topology` 已注册为内置 Plant，可以在实验文档里直接写：
 
-```text
+```json
 {
   "plant_id": "circuit-topology",
   "plant_config": {
-    "topology": { <完整的 topology-descriptor-v1 文档> },
+    "topology": { "schema": "topology-descriptor-v1", "...": "..." },
     "control_period_s": 1e-05,
     "sample_step_s": 5e-08
   }

@@ -880,6 +880,10 @@ def compile_topology(
                 f"{name} {nodes['positive']} {nodes['negative']} DC "
                 f"{_format(_parameter(view, 'voltage_v', required=True))}"
             )
+            # Its current is what makes an energy balance possible: without it a
+            # solved window cannot report input power at all, and "no measurement"
+            # would look like "no loss".
+            saved.append(f"i({name})")
         elif canonical == "pulse_source":
             control_net = _bound_net(view, "positive")
             window = gate_windows.get(control_net)
@@ -907,6 +911,7 @@ def compile_topology(
             cards.extend(gate_cards)
             if tail_s > 0.0:
                 carrier_tails[control_net] = tail_s
+            saved.append(f"i({name})")
         elif canonical == "inductor":
             initial = _parameter(view, "initial_current_a")
             if initial_conditions and component.component_id in initial_conditions:

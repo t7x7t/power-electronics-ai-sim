@@ -34,6 +34,7 @@ from .builtin_plants import PlantBuildContext, load_builtin_plants
 from .circuit_compile import CircuitCompileError, compile_topology
 from .circuit_devices import describe_devices, describe_device
 from .spice_import import SPICE_IMPORT_SCHEMA, spice_import_document
+from .waveform_metrics import waveform_metrics
 from .controller_registry import ControllerBuildContext, resolve_controller
 from .plant_parameters import PLANT_PARAMETERS, describe_plant
 from .plant_registry import PlantRegistration, plant_catalog, resolve
@@ -480,8 +481,9 @@ def _run_simulate_topology(args) -> int:
         return 2
 
     try:
+        descriptor = build_descriptor(document)
         plant = CircuitPlant(
-            build_descriptor(document),
+            descriptor,
             control_period_s=args.control_period,
             integrator=args.integrator,
             ngspice_executable=resolution.executable,
@@ -564,6 +566,11 @@ def _run_simulate_topology(args) -> int:
             "end_time_s": table.end_time_s,
             "signals": _topology_signal_summary(table),
         },
+        # Measured, not modelled: the same block answers for any circuit because
+        # it integrates the solved waveforms instead of naming a converter.
+        "metrics": waveform_metrics(
+            descriptor, table, element_names=dict(compiled.element_names)
+        ),
         "evidence_level": "limited",
         "limitation": (
             "no review record exists for a caller-authored topology; this "

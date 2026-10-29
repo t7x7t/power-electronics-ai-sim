@@ -239,8 +239,8 @@ fsw = 100 kHz，10 ms）：把 `compile-topology` 的输出重新导入再编译
 
 ```text
 lines differing (comments excluded): 1
-  reviewed: wrdata output.dat v(vin) v(sw) v(vout) v(pwm) i(L1)
-  imported: wrdata output.dat v(vin) v(pwm) v(sw) v(vout) i(L1)
+  reviewed: wrdata output.dat v(vin) v(sw) v(vout) v(pwm) i(V1) i(V2) i(L1)
+  imported: wrdata output.dat v(vin) v(pwm) v(sw) v(vout) i(V1) i(V2) i(L1)
 rows: 225870 225870
 v(vout)  mean 5.891977557  delta 0.000e+00
 i(l1)    mean 0.660046660  delta 0.000e+00
