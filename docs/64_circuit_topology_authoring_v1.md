@@ -292,10 +292,11 @@ delta     vout=4.077e-05  iL=1.190e-05
 | --- | --- | --- |
 | `pe-sim describe-devices [kind]` | 打印器件词表或单个器件声明 | 0；未知种类 2 |
 | `pe-sim validate-topology <file>` | 打印 `pe-sim.topology-validation.v1` 信封 | 无错误 0，否则 2 |
+| `pe-sim import-spice <netlist> [--topology-id ID] [--output P]` | 把 SPICE 网表子集翻译成拓扑文档（`docs/66`） | `ok` 为真 0，否则 2 |
 | `pe-sim compile-topology <file> [--duty D] [--duration S] [--step S] [--carrier-phase S] [--integrator trap\|gear\|euler] [--output P] [--json]` | 编译并打印/写出网表 | 0；否则 2 |
 | `pe-sim simulate-topology <file> [--duty D --duration S ...]` | 编译并执行一次开环窗口 | 0；请求/文档错误 2；求解失败 1 |
 
-前三个命令都在 `load_builtin_plants()` **之前**分派：电路问题不需要任何 plant
+前四个命令都在 `load_builtin_plants()` **之前**分派：电路问题不需要任何 plant
 注册，也不需要求解器。拒绝信封沿用 `pe-sim.rejection.v1`，`compile-topology` 的
 编译失败额外带 `compile_code` 与 `details`；**没有新增拒绝码**，
 `REQUEST_REJECTION_CODES` 未变。`simulate-topology` 需要求解器，但与
@@ -320,7 +321,8 @@ delta     vout=4.077e-05  iL=1.190e-05
   都需要各自的声明与渲染，本次**未做**。
 - **`dead_time_s` 的唯一权威来源是 `metadata.control`。** `pulse_source` 上的同名字段
   被记录但不渲染，避免两处声明打架。
-- 不做 SPICE 子集导入（Step C）。
+- 不做 SPICE 子集导入的**反向**保证：`docs/66` 能把网表翻译成描述符，但编译
+  出的网表不保证还能导回来（窗口起点落在脉冲内部时，渲染会用到 `B` 源）。
 
 ## 8. 执行层与仍未做
 
@@ -332,11 +334,13 @@ delta     vout=4.077e-05  iL=1.190e-05
 仍未做：
 
 - 多相/交错/三电平控制关系（§5.6 只支持一种声明）。
-- Step C 的 SPICE 子集导入。
 
 互补控制的声明与渲染已在 §5.6 完成（只落在编写层，不碰后端）；执行适配器在
 `pe_sim.backends` 里新增模块并只做**运行时**求解路径声明，因此
 `reviewed_identities.json` 未变。
+
+SPICE 网表子集导入（原 Step C）已交付，见 `docs/66`。它只做前端：产出的仍然是
+本文件的描述符，因此不构成第二条执行路径。
 
 ## 9. 证据
 
@@ -352,6 +356,7 @@ delta     vout=4.077e-05  iL=1.190e-05
 | --- | --- |
 | `docs/63_agent_facing_spec_validation_v1.md` | Step A：`plant_config` 的声明与校验 |
 | `docs/65_circuit_execution_v1.md` | 执行适配器、窗口续跑与 `simulate-topology` |
+| `docs/66_spice_netlist_import_v1.md` | SPICE 网表子集导入，产出本文件的描述符 |
 | `docs/24_stage11_contracts_v1.md` | `TopologyDescriptor` 契约 |
 | `docs/43_kernel_roadmap_v1.md` | 不变量 I5（内核不命名拓扑） |
 | `docs/22_stage12_evidence_levels_v1.md` | 证据阶梯 |

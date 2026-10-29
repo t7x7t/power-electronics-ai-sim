@@ -1,5 +1,5 @@
 """The agent-facing topology surface: ``describe-devices``, ``validate-topology``,
-``compile-topology``.
+``compile-topology``, ``import-spice``.
 
 These tests go through the CLI because that is the interface an agent calls.
 They hold the same three promises the specification surface holds, for the other
@@ -11,6 +11,9 @@ half of authoring a circuit:
   start a solver, or create a run directory;
 - a refusal carries a structured issue list, so an agent repairs a document
   instead of parsing one flattened string.
+
+``import-spice`` holds a fourth: a netlist that already exists reaches the same
+descriptor contract, so importing never becomes a second execution path.
 """
 
 from __future__ import annotations
@@ -285,3 +288,99 @@ def test_the_topology_surface_works_with_the_shipped_registrations_loaded(
 
     assert cli_main(["validate-topology", str(path)]) == 0
     assert json.loads(capsys.readouterr().out)["ok"] is True
+
+
+# ---------------------------------------------------------------------------
+# import-spice
+# ---------------------------------------------------------------------------
+
+
+NETLIST = """* buck from a netlist
+V1 vin 0 DC 12
+Vpwm pwm 0 PULSE(0 1 0 1e-9 1e-9 5e-06 1e-05)
+S1 vin sw pwm 0 SWMOD
+D1 0 sw DMOD
+L1 sw vout 100u
+C1 vout 0 470u
+R1 vout 0 10
+.model SWMOD SW(Ron=1m Roff=1g Vt=0.5 Vh=0)
+.model DMOD D(Is=1e-12 N=0.02)
+.tran 1u 20m
+.end
+"""
+
+
+def _netlist_file(tmp_path: Path, text: str = NETLIST) -> Path:
+    path = tmp_path / "circuit.cir"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_import_spice_writes_a_document_that_then_compiles(tmp_path, capsys):
+    source = _netlist_file(tmp_path)
+    destination = tmp_path / "out" / "topology.json"
+
+    assert (
+        cli_main(
+            [
+                "import-spice",
+                str(source),
+                "--topology-id",
+                "from_netlist",
+                "--output",
+                str(destination),
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["ok"] is True
+    assert payload["topology_id"] == "from_netlist"
+    assert payload["output"] == str(destination)
+    assert destination.is_file()
+    written = json.loads(destination.read_text(encoding="utf-8"))
+    assert written["topology_id"] == "from_netlist"
+    assert "fingerprint" not in written
+
+    assert cli_main(["compile-topology", str(destination), "--json"]) == 0
+    compiled = json.loads(capsys.readouterr().out)
+    assert compiled["topology_id"] == "from_netlist"
+    assert len(compiled["digest"]) == 64
+
+
+def test_import_spice_refuses_a_netlist_it_cannot_express(tmp_path, capsys):
+    source = _netlist_file(
+        tmp_path, "* include\n.include other.cir\nV1 vin 0 DC 12\nR1 vin 0 10\n"
+    )
+    destination = tmp_path / "never.json"
+
+    assert cli_main(["import-spice", str(source), "--output", str(destination)]) == 2
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["ok"] is False
+    assert payload["import_ok"] is False
+    assert payload["descriptor"] is None
+    assert payload["issues"][0]["code"] == "unsupported_directive"
+    assert not destination.exists()
+
+
+def test_import_spice_names_the_file_it_could_not_read(tmp_path, capsys):
+    missing = tmp_path / "absent.cir"
+
+    assert cli_main(["import-spice", str(missing)]) == 2
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["status"] == "CONFIG_REJECTED"
+    assert payload["error_code"] == "invalid_request"
+    assert str(missing) in payload["error"]
+
+
+def test_import_spice_creates_nothing_it_was_not_asked_for(tmp_path, capsys):
+    source = _netlist_file(tmp_path)
+
+    assert cli_main(["import-spice", str(source)]) == 0
+    capsys.readouterr()
+
+    assert not (tmp_path / "runs").exists()
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["circuit.cir"]

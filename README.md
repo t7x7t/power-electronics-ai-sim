@@ -130,6 +130,21 @@ pe-sim compile-topology .\topology.json --duty 0.5 --output circuit.cir
 pe-sim simulate-topology .\topology.json --duty 0.5 --duration 1e-3
 ```
 
+If the circuit already exists as a SPICE netlist, `pe-sim import-spice` translates
+the part of SPICE this vocabulary can express into the same descriptor document,
+so the rest of the loop is unchanged:
+
+```powershell
+pe-sim import-spice .\circuit.cir --topology-id from_netlist --output .\topology.json
+```
+
+The importer drops directives that describe *how* a netlist is run (including a
+whole `.control` block) and lists every drop; it refuses `.include`, `.subckt`
+and parameter expressions, because those would make the circuit depend on text
+it never read. It does not guess: a carrier's pulse width is a duty ratio, which
+this project treats as a compile-time command, so it is reported as an observed
+value rather than imported.
+
 `describe-devices` prints the closed device vocabulary (ordered ports, allowed
 net kinds, parameters with units, and whether a kind has an element card at
 all). `validate-topology` reports pointer-addressed issues for unknown ports,
@@ -145,7 +160,9 @@ through the same ngspice process boundary and reports bounded signal summaries
 well-formed circuit, not a reviewed model: a topology an agent authors can
 reach at most `limited` evidence. See
 [docs/64_circuit_topology_authoring_v1.md](docs/64_circuit_topology_authoring_v1.md)
-and [docs/65_circuit_execution_v1.md](docs/65_circuit_execution_v1.md).
+and [docs/65_circuit_execution_v1.md](docs/65_circuit_execution_v1.md); the
+netlist importer is described in
+[docs/66_spice_netlist_import_v1.md](docs/66_spice_netlist_import_v1.md).
 `circuit-topology` is also a registered Plant, so `pe-sim run` accepts an
 experiment document whose `plant_config.topology` is the descriptor and closes
 the loop with the kernel controller.

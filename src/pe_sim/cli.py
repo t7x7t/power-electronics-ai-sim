@@ -33,6 +33,7 @@ from .builtin_controllers import load_builtin_controllers
 from .builtin_plants import PlantBuildContext, load_builtin_plants
 from .circuit_compile import CircuitCompileError, compile_topology
 from .circuit_devices import describe_devices, describe_device
+from .spice_import import SPICE_IMPORT_SCHEMA, spice_import_document
 from .controller_registry import ControllerBuildContext, resolve_controller
 from .plant_parameters import PLANT_PARAMETERS, describe_plant
 from .plant_registry import PlantRegistration, plant_catalog, resolve
@@ -345,6 +346,42 @@ def _run_compile_topology(args) -> int:
     else:
         print(compiled.netlist, end="" if compiled.netlist.endswith("\n") else "\n")
     return 0
+
+
+def _run_import_spice(args) -> int:
+    """Translate one SPICE netlist into a topology document.
+
+    This answers a third question, different from ``validate-topology`` and
+    ``compile-topology``: not "is this graph self-consistent" and not "can it be
+    rendered", but "can this netlist be expressed in the closed vocabulary at
+    all".  The document is only written when there is one, so a failed import
+    never leaves a partial file for a later command to trust.
+    """
+
+    try:
+        text = Path(args.netlist).read_text(encoding="utf-8")
+    except (OSError, ValueError) as exc:
+        _emit_rejection(
+            "CONFIG_REJECTED",
+            "invalid_request",
+            f"{args.netlist}: {exc}",
+            reason="invalid_document",
+        )
+        return 2
+
+    payload = spice_import_document(text, topology_id=args.topology_id)
+    if args.output is not None and payload["descriptor"] is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(
+            json.dumps(
+                payload["descriptor"], indent=2, sort_keys=True, ensure_ascii=True
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        payload = {**payload, "output": str(args.output)}
+    print(json.dumps(payload, sort_keys=True))
+    return 0 if payload["ok"] is True else 2
 
 
 def _topology_signal_summary(table) -> dict[str, dict[str, float]]:
@@ -889,6 +926,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     compile_topology_parser.add_argument("--output", type=Path, default=None)
     compile_topology_parser.add_argument("--json", action="store_true", dest="as_json")
+    import_spice_parser = sub.add_parser(
+        "import-spice",
+        help="translate a SPICE netlist into a circuit topology document",
+    )
+    import_spice_parser.add_argument("netlist", type=Path)
+    import_spice_parser.add_argument(
+        "--topology-id",
+        default="imported",
+        dest="topology_id",
+        help="identifier to give the imported topology",
+    )
+    import_spice_parser.add_argument("--output", type=Path, default=None)
     simulate_topology_parser = sub.add_parser(
         "simulate-topology",
         help="compile and solve a topology document once at a constant duty",
@@ -957,6 +1006,8 @@ def main(argv: list[str] | None = None) -> int:
             return _run_validate_topology(args)
         if args.command == "compile-topology":
             return _run_compile_topology(args)
+        if args.command == "import-spice":
+            return _run_import_spice(args)
         if args.command == "simulate-topology":
             return _run_simulate_topology(args)
         # The CLI is the composition root: it attaches the project-owned plant
