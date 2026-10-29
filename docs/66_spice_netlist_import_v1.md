@@ -218,7 +218,10 @@ pe-sim import-spice .\circuit.cir --topology-id buck_from_netlist --output .\top
 | `pe-sim import-spice <netlist> [--topology-id ID] [--output P]` | 打印信封；给了 `--output` 时把描述符写到 `P` | 0；`ok` 为假 2 |
 
 - 读不到文件是**请求**被拒绝（`invalid_request`），因为根本没有文档；
-- 只有 `descriptor` 存在时才写文件，因此一次失败的导入不会留下一份半对的文档；
+- 只有导入**整体**成功时才写文件：`ok` 同时要求“网表翻译成功”与“产出的描述符通过
+  结构校验”。一份能翻译但拓扑不自洽的网表（例如有悬空端子）会退出 2、不写任何文件，
+  因此后续命令不会拿到一份看起来可用的半对文档；
+- `--output` 只在真正写盘时出现在信封里，失败时没有 `output` 字段；
 - 与 `validate-topology`/`compile-topology` 一样在注册表加载之前分派，不需要任何
   已注册 plant，不需要求解器；
 - 没有新增拒绝码，`REQUEST_REJECTION_CODES` 未变。

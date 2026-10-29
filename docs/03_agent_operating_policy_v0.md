@@ -73,6 +73,7 @@
 5. 若任务新建或修改实验文档（`pe-sim run` 的输入），在创建任何运行目录之前运行
    `pe-sim validate <config>`，并按 `issues[].path` 修到 `ok: true`。该命令不构建
    plant、不实例化或调用适配器、不启动求解器、不创建运行目录，是零副作用自检回路；
+   它同时比对控制器注册声明（`controller_id` 与 `controller_config` 的键名）。
    通过只表示文档与当前声明一致，不表示电路正确或可发布（`docs/63`）。
 6. 若任务编写或修改电路拓扑文档，先按 `pe-sim describe-devices` 的声明写；从已有
    网表起步时用 `pe-sim import-spice` 生成初稿（它只产出同一种描述符，不是第二条

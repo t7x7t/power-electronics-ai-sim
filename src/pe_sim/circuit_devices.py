@@ -368,7 +368,14 @@ _INDUCTOR = DeviceSpec(
 _CAPACITOR = DeviceSpec(
     kind="capacitor",
     ports=(
-        PortSpec("positive", _ELECTRICAL, "passive", "Positive plate node."),
+        PortSpec(
+            "positive",
+            _ELECTRICAL_OR_REFERENCE,
+            "passive",
+            "Plate node.  The element is electrically symmetric, so binding this "
+            "terminal to the reference net expresses a negative output rail; an "
+            "electrical-only rule here carried no information.",
+        ),
         PortSpec(
             "negative",
             _ELECTRICAL_OR_REFERENCE,
@@ -389,11 +396,17 @@ _CAPACITOR = DeviceSpec(
     spicetype="c",
     description="Ideal linear capacitor of the declared capacitance.",
 )
-
 _RESISTOR_LOAD = DeviceSpec(
     kind="resistor_load",
     ports=(
-        PortSpec("positive", _ELECTRICAL, "passive", "Load node carrying the output voltage."),
+        PortSpec(
+            "positive",
+            _ELECTRICAL_OR_REFERENCE,
+            "passive",
+            "Load terminal.  The element is electrically symmetric, so binding it "
+            "to the reference net expresses a negative output rail; an "
+            "electrical-only rule here carried no information.",
+        ),
         PortSpec(
             "negative",
             _ELECTRICAL_OR_REFERENCE,

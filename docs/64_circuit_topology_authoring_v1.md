@@ -84,7 +84,10 @@ Step B 的目标是把描述符从"展示用途的单向导出"变成"可校验�
 - `control` 端口只能接 `control` 网；
 - 电源类元件的 `negative` 端口可接 `electrical` 或 `reference`（浮地源是合法电路，
   高边栅极驱动的参考节点就是开关节点）；
-- `capacitor` / `resistor_load` 的 `negative` 同理；
+- `capacitor` / `resistor_load` 的**两个**端子都可接 `electrical` 或 `reference`。
+  它们是电学对称元件，把哪个端子叫 positive 只是标签；限制 positive 只能接
+  `electrical` 会让**负输出轨道**（反相 buck-boost、负轨）无法表达，而那条限制
+  本身不携带任何信息；
 - `freewheeling_diode.anode` 可接 `electrical` 或 `reference`。
 
 `thermal` 与 `other` 网在描述符契约里合法，但没有电学含义，因此校验器报
@@ -301,6 +304,12 @@ delta     vout=4.077e-05  iL=1.190e-05
 编译失败额外带 `compile_code` 与 `details`；**没有新增拒绝码**，
 `REQUEST_REJECTION_CODES` 未变。`simulate-topology` 需要求解器，但与
 `load_builtin_plants()` 无关，因此同样在注册表加载前分派。
+
+`compile-topology` 与 `simulate-topology` 的 `--duty`、`--duration`、
+`--carrier-phase` 都有默认值，但**默认值是一个调用方没有做出的决定**：网表不携带
+脉宽，一份 0.3 占空的电路被默认编译成 0.5 占空时，退出码仍是 0。两者因此都在输出
+里给出 `duty_defaulted` / `duration_defaulted` / `carrier_phase_defaulted`，让
+“我选了它”与“它被填上了”不再无法区分。
 
 `describe-devices` 与 `describe` 对拼错的名称使用同一类信封：一个是
 `unknown_plant`（Step A 已有的码），一个是 `unsupported_device_kind` 放在 `issues`

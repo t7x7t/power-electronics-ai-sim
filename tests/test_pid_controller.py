@@ -184,9 +184,11 @@ def test_cli_lists_supported_controllers(tmp_path, capsys, monkeypatch):
 
     assert main(["run", str(config)]) == 2
     payload = json.loads(capsys.readouterr().out)
-    # The experiment schema now accepts this safe identifier; the controller
-    # registry rejects it while building the controller and names the
-    # registered controllers in the error.
+    # The experiment schema accepts any safe identifier, so the document checker
+    # reports the unregistered id before anything is built, and names the
+    # registered controllers both in the issue and in the one-line summary.
+    assert payload["issues"][0]["code"] == "unknown_controller"
+    assert payload["issues"][0]["path"] == "/controller_id"
     assert "controller_id" in payload["error"]
     assert "pid" in payload["error"]
 

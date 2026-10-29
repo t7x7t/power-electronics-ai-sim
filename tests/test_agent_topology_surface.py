@@ -27,6 +27,7 @@ import pytest
 from pe_sim.builtin_plants import load_builtin_plants
 from pe_sim.circuit_devices import CIRCUIT_DEVICE_SCHEMA, RENDERABLE_DEVICE_KINDS
 from pe_sim.cli import main as cli_main
+from pe_sim.contracts import BackendTimeoutError
 from pe_sim.plant_registry import clear_registrations
 from pe_sim.topology import buck_topology_descriptor, ngspice_buck_topology_descriptor
 from pe_sim.topology_validation import TOPOLOGY_VALIDATION_SCHEMA
@@ -384,3 +385,117 @@ def test_import_spice_creates_nothing_it_was_not_asked_for(tmp_path, capsys):
 
     assert not (tmp_path / "runs").exists()
     assert sorted(path.name for path in tmp_path.iterdir()) == ["circuit.cir"]
+
+
+def test_import_spice_writes_nothing_when_the_topology_does_not_validate(
+    tmp_path, capsys
+):
+    """``ok`` also covers validation, so a translated-but-invalid import writes nothing.
+
+    The load's second terminal binds a node nothing else touches, so the graph has
+    an ``isolated_net``.  The netlist itself translated fine, which is exactly the
+    case where writing the file would leave a document later commands could
+    mistake for a usable one.
+    """
+
+    source = _netlist_file(
+        tmp_path, NETLIST.replace(".end\n", "R2 vout orphan 1k\n.end\n")
+    )
+    destination = tmp_path / "never.json"
+
+    assert cli_main(["import-spice", str(source), "--output", str(destination)]) == 2
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["import_ok"] is True
+    assert payload["ok"] is False
+    assert payload["descriptor"] is not None
+    assert "isolated_net" in [
+        issue["code"] for issue in payload["validation"]["issues"]
+    ]
+    assert "output" not in payload
+    assert not destination.exists()
+
+
+# ---------------------------------------------------------------------------
+# Compiled-argument provenance
+# ---------------------------------------------------------------------------
+
+
+def test_compile_topology_says_when_an_argument_was_defaulted(tmp_path, capsys):
+    """A defaulted duty is a decision the caller did not make, so it is named."""
+
+    path = _write(tmp_path, _buck_document())
+
+    assert cli_main(["compile-topology", str(path), "--json"]) == 0
+    omitted = json.loads(capsys.readouterr().out)
+
+    assert omitted["duty_defaulted"] is True
+    assert omitted["duration_defaulted"] is True
+    assert omitted["carrier_phase_defaulted"] is True
+    assert omitted["duty"] == pytest.approx(0.5)
+
+    assert (
+        cli_main(
+            [
+                "compile-topology",
+                str(path),
+                "--duty",
+                "0.5",
+                "--duration",
+                "1e-3",
+                "--carrier-phase",
+                "0",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    explicit = json.loads(capsys.readouterr().out)
+
+    assert explicit["duty_defaulted"] is False
+    assert explicit["duration_defaulted"] is False
+    assert explicit["carrier_phase_defaulted"] is False
+    # Only the provenance differs; the circuit is the same.
+    assert explicit["netlist"] == omitted["netlist"]
+
+
+# ---------------------------------------------------------------------------
+# A solver failure is not a request mistake
+# ---------------------------------------------------------------------------
+
+
+def test_a_solver_timeout_is_reported_as_failed_not_as_a_bad_request(
+    tmp_path, capsys, monkeypatch
+):
+    """An agent must not be sent to edit its document because ngspice ran long."""
+
+    path = _write(tmp_path, _buck_document())
+
+    class _TimingOutPlant:
+        def __init__(self, *args, **kwargs):
+            self.time_s = 0.0
+
+        def reset(self, state):
+            return {}
+
+        def advance(self, *args, **kwargs):
+            raise BackendTimeoutError("the solver exceeded its deadline")
+
+    monkeypatch.setattr("pe_sim.cli.CircuitPlant", _TimingOutPlant)
+    monkeypatch.setattr(
+        "pe_sim.cli.resolve_ngspice_executable",
+        lambda value: SimpleNamespace(executable="ngspice"),
+    )
+
+    assert (
+        cli_main(
+            ["simulate-topology", str(path), "--duty", "0.5", "--duration", "1e-4"]
+        )
+        == 1
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["schema"] == "pe-sim.topology-simulation.v1"
+    assert payload["status"] == "FAILED"
+    assert payload["category"] == "backend_timeout"
+    assert "error_code" not in payload

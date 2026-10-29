@@ -784,3 +784,145 @@ def test_a_complementary_compile_matches_the_reviewed_sync_template(phase):
     assert mean_tail(left["i(l1)"]) == pytest.approx(
         mean_tail(right["i(l1)"]), abs=1e-3
     )
+
+
+# ---------------------------------------------------------------------------
+# A negative output rail is a circuit, not a special case
+# ---------------------------------------------------------------------------
+
+
+def _inverting_buck_boost() -> dict:
+    """The classic inverting converter, written the way an agent would.
+
+    Its output node sits at a negative potential with respect to the reference
+    node, so the load and the output capacitor bind their *positive* terminal to
+    the reference net.  The vocabulary used to reject exactly that, which made a
+    legitimate converter inexpressible for no electrical reason: a resistor and a
+    capacitor are symmetric, so which terminal is called positive is a label.
+    """
+
+    return {
+        "schema": "topology-descriptor-v1",
+        "descriptor_version": "1.0",
+        "topology_id": "inverting_buck_boost",
+        "components": [
+            {
+                "component_id": "vin_source",
+                "kind": "voltage_source",
+                "ports": [
+                    {"port_id": "positive", "net_id": "vin", "direction": "output"},
+                    {"port_id": "negative", "net_id": "gnd", "direction": "passive"},
+                ],
+                "parameters": {"voltage_v": VIN},
+            },
+            {
+                "component_id": "carrier",
+                "kind": "pulse_source",
+                "ports": [
+                    {"port_id": "positive", "net_id": "pwm", "direction": "output"},
+                    {"port_id": "negative", "net_id": "gnd", "direction": "passive"},
+                ],
+                "parameters": {"switching_frequency_hz": FSW},
+            },
+            {
+                "component_id": "switch",
+                "kind": "voltage_controlled_switch",
+                "ports": [
+                    {"port_id": "input", "net_id": "vin", "direction": "input"},
+                    {"port_id": "output", "net_id": "sw", "direction": "output"},
+                    {"port_id": "control", "net_id": "pwm", "direction": "control"},
+                ],
+                "parameters": {},
+            },
+            {
+                "component_id": "inductor",
+                "kind": "inductor",
+                "ports": [
+                    {"port_id": "input", "net_id": "sw", "direction": "passive"},
+                    {"port_id": "output", "net_id": "vout", "direction": "passive"},
+                ],
+                "parameters": {"inductance_h": L_H},
+            },
+            {
+                "component_id": "freewheel",
+                "kind": "freewheeling_diode",
+                "ports": [
+                    {"port_id": "anode", "net_id": "gnd", "direction": "passive"},
+                    {"port_id": "cathode", "net_id": "sw", "direction": "passive"},
+                ],
+                "parameters": {},
+            },
+            {
+                "component_id": "output_capacitor",
+                "kind": "capacitor",
+                "ports": [
+                    {"port_id": "positive", "net_id": "gnd", "direction": "passive"},
+                    {"port_id": "negative", "net_id": "vout", "direction": "passive"},
+                ],
+                "parameters": {"capacitance_f": C_F},
+            },
+            {
+                "component_id": "load",
+                "kind": "resistor_load",
+                "ports": [
+                    {"port_id": "positive", "net_id": "gnd", "direction": "passive"},
+                    {"port_id": "negative", "net_id": "vout", "direction": "passive"},
+                ],
+                "parameters": {"resistance_ohm": R_OHM},
+            },
+        ],
+        "nets": [
+            {"net_id": "vin", "kind": "electrical"},
+            {"net_id": "gnd", "kind": "reference"},
+            {"net_id": "pwm", "kind": "control"},
+            {"net_id": "sw", "kind": "electrical"},
+            {"net_id": "vout", "kind": "electrical"},
+        ],
+        "metadata": {"source": {"format": "hand-authored"}},
+    }
+
+
+def test_an_inverting_buck_boost_is_expressible():
+    from pe_sim.topology_validation import (
+        build_descriptor,
+        topology_validation_document,
+    )
+
+    document = _inverting_buck_boost()
+    envelope = topology_validation_document(document)
+
+    assert envelope["ok"] is True, envelope["issues"]
+    assert envelope["issues"] == []
+
+    compiled = compile_topology(build_descriptor(document), duty=0.4, duration_s=1e-3)
+
+    assert _circuit_signature(compiled.netlist) == [
+        ("V", ("vin", "0")),
+        ("V", ("pwm", "0")),
+        ("S", ("vin", "sw", "pwm", "0")),
+        ("L", ("sw", "vout")),
+        ("D", ("0", "sw")),
+        ("C", ("0", "vout")),
+        ("R", ("0", "vout")),
+    ]
+    # The load and the capacitor sit on the reference node, so the reference net
+    # is not a saved signal while the negative rail is.
+    assert compiled.reference_net == "gnd"
+    assert "v(gnd)" not in compiled.saved_signals
+    assert "v(vout)" in compiled.saved_signals
+
+
+def test_the_rail_may_be_negative_but_the_declared_source_may_not():
+    """Widening a port does not widen a value domain; both stay explicit."""
+
+    from pe_sim.topology_validation import topology_validation_document
+
+    document = _inverting_buck_boost()
+    document["components"][0]["parameters"]["voltage_v"] = -VIN
+
+    envelope = topology_validation_document(document)
+
+    assert envelope["ok"] is False
+    assert "invalid_parameter_value" in [
+        issue["code"] for issue in envelope["issues"]
+    ]

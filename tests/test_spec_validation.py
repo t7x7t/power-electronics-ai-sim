@@ -2,17 +2,24 @@
 
 The kernel's historical failure mode was one flat ``ValueError`` string, which
 an agent cannot map back to a field.  These tests hold the new contract to the
-five checks, the non-blocking exploratory warning, and deterministic ordering.
+six checks, the non-blocking exploratory warning, and deterministic ordering.
 """
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 from importlib import resources
 from pathlib import Path
 
 import pytest
 
+from pe_sim.controller_registry import (
+    ControllerRegistration,
+    clear_controllers,
+    register_controller,
+    registered_controllers,
+)
 from pe_sim.plant_registry import (
     PlantRegistration,
     clear_registrations,
@@ -47,6 +54,60 @@ def _document(**overrides) -> dict:
     return document
 
 
+@pytest.fixture(autouse=True)
+def _isolated_controller_registry():
+    """Keep controller registrations out of every test in this module.
+
+    The registry is process-wide module state, and the CLI attaches the shipped
+    controllers whenever it validates a document, so without this a test running
+    after a CLI test would see a populated registry and a different ``checked``
+    list.  Clearing around each test makes the answer depend on the document
+    rather than on test order.
+    """
+
+    clear_controllers()
+    yield
+    clear_controllers()
+
+
+@contextmanager
+def _controller_registry(*registrations: ControllerRegistration):
+    """Run with exactly ``registrations`` installed, then restore the process.
+
+    The controller registry is process-wide module state, so a test that left
+    entries behind would change what ``checked`` reports for every later test in
+    the session.  Saving and restoring gives the same isolation
+    ``clear_registrations`` gives the plant registry, and lets a test assert
+    "the registry is empty" instead of whatever ran before it.
+    """
+
+    saved = dict(registered_controllers())
+    clear_controllers()
+    try:
+        for registration in registrations:
+            register_controller(registration)
+        yield
+    finally:
+        clear_controllers()
+        for registration in saved.values():
+            register_controller(registration)
+
+
+def _probe_registration() -> ControllerRegistration:
+    """A controller that exists only in the registry, as a distribution ships."""
+
+    def factory(config, context):
+        del config, context
+        return object()
+
+    return ControllerRegistration(
+        controller_id="vendor-compensator",
+        factory=factory,
+        config_keys=frozenset({"gain", "output_min", "output_max"}),
+        class_name="object",
+    )
+
+
 def test_the_shipped_template_is_valid():
     issues = collect_issues(_template())
 
@@ -57,7 +118,25 @@ def test_the_shipped_template_is_valid():
     assert envelope["plant_id"] == "buck"
     assert envelope["ok"] is True
     assert envelope["error_count"] == 0
+    # The controller stage runs only when a controller registry is loaded, and
+    # this module deliberately does not load the composition root.  Reporting
+    # it here would present "not examined" as "clean".
+    assert envelope["checked"] == [
+        stage for stage in CHECKED_STAGES if stage != "controller"
+    ]
+
+
+def test_a_loaded_controller_registry_puts_the_stage_in_checked():
+    document = _document(
+        controller_id="vendor-compensator",
+        controller_config={"gain": 2.0},
+    )
+    with _controller_registry(_probe_registration()):
+        envelope = validation_document(document, issues=collect_issues(document))
+
+    assert envelope["ok"] is True
     assert envelope["checked"] == list(CHECKED_STAGES)
+    assert "controller" in CHECKED_STAGES
 
 
 def test_validate_document_returns_the_envelope_for_a_valid_document():
@@ -244,15 +323,87 @@ def test_issue_vocabulary_and_severity_are_closed():
     with pytest.raises(ValueError):
         SpecIssue(code="unknown_plant", path="/plant_id", message="message", severity="fatal")
 
-    assert {
+    assert SPEC_ISSUE_CODES == {
         "invalid_document",
         "schema_violation",
         "unknown_plant",
         "unknown_parameter",
         "invalid_parameter_value",
         "unknown_schedule_key",
+        "unknown_controller",
+        "unknown_controller_config",
         "exploratory_contract_default",
-    } <= SPEC_ISSUE_CODES
+    }
+
+
+# ---------------------------------------------------------------------------
+# The controller stage
+# ---------------------------------------------------------------------------
+
+
+def test_a_misspelled_controller_id_is_reported_at_its_field():
+    """``validate`` must reject what ``run`` would reject, not defer it."""
+
+    with _controller_registry(_probe_registration()):
+        document = _document(controller_id="vendor-compensater")
+        issues = collect_issues(document)
+
+    errors = [issue for issue in issues if issue.severity == "error"]
+    assert [issue.code for issue in errors] == ["unknown_controller"]
+    assert errors[0].path == "/controller_id"
+    assert "vendor-compensator" in errors[0].expected
+    assert errors[0].suggestion == "vendor-compensator"
+
+
+def test_an_undeclared_controller_config_key_points_at_the_key():
+    with _controller_registry(_probe_registration()):
+        document = _document(
+            controller_id="vendor-compensator",
+            controller_config={"gain": 2.0, "output_mx": 0.9},
+        )
+        issues = collect_issues(document)
+
+    errors = [issue for issue in issues if issue.severity == "error"]
+    assert [issue.code for issue in errors] == ["unknown_controller_config"]
+    assert errors[0].path == "/controller_config/output_mx"
+    assert errors[0].suggestion == "output_max"
+
+
+def test_a_declared_controller_config_key_is_accepted():
+    with _controller_registry(_probe_registration()):
+        document = _document(
+            controller_id="vendor-compensator",
+            controller_config={"gain": 2.0, "output_min": 0.0, "output_max": 0.9},
+        )
+        envelope = validate_document(document)
+
+    assert envelope["ok"] is True
+    assert envelope["issues"] == []
+
+
+def test_an_empty_controller_registry_neither_fails_nor_claims_to_check():
+    """No registry means no vocabulary to check against - not a defect."""
+
+    with _controller_registry():
+        document = _document(controller_id="anything-at-all")
+        issues = collect_issues(document)
+        envelope = validation_document(document, issues=issues)
+
+    assert [issue for issue in issues if issue.severity == "error"] == []
+    assert envelope["ok"] is True
+    assert "controller" not in envelope["checked"]
+
+
+def test_a_non_string_controller_id_is_left_to_the_schema():
+    """One defect, one report: the schema already names that field."""
+
+    with _controller_registry(_probe_registration()):
+        document = _document(controller_id=7)
+        issues = collect_issues(document)
+
+    assert [issue.code for issue in issues if issue.severity == "error"] == [
+        "schema_violation"
+    ]
 
 
 def test_schema_path_override_is_used(tmp_path: Path):
@@ -356,7 +507,9 @@ def test_checked_reports_only_the_stages_that_ran():
     assert unresolved["ok"] is False
 
     resolved = validation_document(_template(), issues=collect_issues(_template()))
-    assert resolved["checked"] == list(CHECKED_STAGES)
+    assert resolved["checked"] == [
+        stage for stage in CHECKED_STAGES if stage != "controller"
+    ]
 
     # A schedule exists but its vocabulary does not: the stage is skipped, not
     # silently reported as clean.

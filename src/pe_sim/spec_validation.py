@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 from . import plant_registry
+from .controller_registry import registered_controllers
 from .plant_parameters import PLANT_PARAMETERS, ParameterSpec
 
 
@@ -50,16 +51,26 @@ SPEC_ISSUE_CODES = frozenset(
         "unknown_parameter",
         "invalid_parameter_value",
         "unknown_schedule_key",
+        "unknown_controller",
+        "unknown_controller_config",
         "exploratory_contract_default",
     }
 )
 
 #: The stages ``collect_issues`` visits, in the order it visits them.  The list
 #: is published so a consumer can tell "checked and clean" from "not checked".
+#:
+#: ``controller`` sits between ``plant_config`` and ``input_schedule`` because
+#: that is where the stage reads the document: it resolves ``controller_id`` and
+#: then compares ``controller_config`` with the controller's declaration, and the
+#: experiment schema places ``controller_config`` directly after ``plant_config``
+#: and before ``input_schedule``.  ``plant_id`` and ``plant_config`` stay adjacent
+#: because they are one plant lookup.
 CHECKED_STAGES: tuple[str, ...] = (
     "schema",
     "plant_id",
     "plant_config",
+    "controller",
     "input_schedule",
     "contracts",
 )
@@ -132,8 +143,16 @@ class SpecValidationError(ValueError):
         first = ordered[0]
         location = first.path or "<root>"
         # The one-line summary is what a non-structured caller (a log reader)
-        # sees, so it must name the first location and the total count.
-        super().__init__(f"{len(ordered)} spec issue(s); first at {location}: {first.message}")
+        # sees, so it must name the first location and the total count.  The
+        # expected domain is included for the same reason every issue carries
+        # it: a reader that only has this string must not learn that a name is
+        # wrong without learning what to write instead.
+        detail = first.message
+        if first.expected:
+            detail = f"{detail}; expected {first.expected}"
+        super().__init__(
+            f"{len(ordered)} spec issue(s); first at {location}: {detail}"
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {"issues": [issue.to_dict() for issue in self.issues]}
@@ -593,16 +612,117 @@ def _drop_shadowed_schema_issues(issues: Sequence[SpecIssue]) -> list[SpecIssue]
     return kept
 
 
+def _unknown_controller_issue(declared: str, known: Sequence[str]) -> SpecIssue:
+    """Report a ``controller_id`` the in-process registry cannot resolve.
+
+    The message says "registered", not "declared": a controller shipped by
+    another distribution is simply absent from this process, and this checker -
+    which must not load the composition root - cannot tell that apart from a
+    typo.  Naming the registry keeps the message truthful about what was
+    consulted.
+    """
+
+    return SpecIssue(
+        code="unknown_controller",
+        path="/controller_id",
+        message=f"controller_id {declared!r} is not a registered controller",
+        expected="one of: " + ", ".join(known),
+        suggestion=_closest(declared, known),
+    )
+
+
+def _controller_config_key_issues(
+    controller_id: str, allowed: frozenset[str], controller_config: Any
+) -> list[SpecIssue]:
+    """Report ``controller_config`` keys the resolved controller does not declare.
+
+    ``allowed`` is the registration's ``config_keys`` - the same set
+    ``resolve_controller`` enforces before it builds anything - so a document
+    accepted here cannot be refused later for a key the factory never saw.
+    """
+
+    if not allowed or not isinstance(controller_config, Mapping):
+        return []
+    ordered = sorted(allowed)
+    issues: list[SpecIssue] = []
+    for key in controller_config:
+        if key in allowed:
+            continue
+        issues.append(
+            SpecIssue(
+                code="unknown_controller_config",
+                path=f"/controller_config/{_escape(str(key))}",
+                message=(
+                    f"controller {controller_id!r} does not accept "
+                    f"controller_config field {key!r}"
+                ),
+                expected="one of: " + ", ".join(ordered),
+                suggestion=_closest(key, ordered),
+            )
+        )
+    return issues
+
+
+def _controller_issues(document: Mapping[str, Any]) -> list[SpecIssue]:
+    """Check ``controller_id`` and ``controller_config`` against the registry.
+
+    The registry is read as it stands: ``collect_issues`` must not call the
+    composition root, because a validator that registered controllers would make
+    its own answer depend on import order and would report ``unknown_controller``
+    for a controller that is installed but not loaded.  An empty registry
+    therefore means "no vocabulary to check against": nothing is reported and
+    ``checked`` omits the stage.
+
+    A missing or non-string ``controller_id`` is left to the schema.  It already
+    reports that field, and a second record for one mistake is what
+    ``_drop_shadowed_schema_issues`` exists to prevent.
+
+    Only key names are checked.  A registration declares ``config_keys`` and
+    nothing about value types, so a value of the wrong type still fails at build
+    time; inventing a second type table here would be a private opinion about
+    what a controller accepts.
+    """
+
+    declarations = registered_controllers()
+    if not declarations:
+        return []
+    declared = document.get("controller_id")
+    if not isinstance(declared, str) or not declared:
+        return []
+    registration = declarations.get(declared)
+    if registration is None:
+        return [_unknown_controller_issue(declared, sorted(declarations))]
+    return _controller_config_key_issues(
+        declared, registration.config_keys, document.get("controller_config")
+    )
+
+
+def _controller_stage_ran(document: Mapping[str, Any]) -> bool:
+    """True only when ``controller_id`` resolved against a loaded registry."""
+
+    declarations = registered_controllers()
+    if not declarations:
+        return False
+    declared = document.get("controller_id")
+    return isinstance(declared, str) and bool(declared) and declared in declarations
+
+
 def collect_issues(
     document: Mapping[str, Any], *, schema_path: str | Path | None = None
 ) -> tuple[SpecIssue, ...]:
     """Return every issue found in ``document`` without raising for bad input.
 
-    The five checks are: the shared JSON Schema, plant resolution, unknown
-    ``plant_config`` keys, ``plant_config`` value shapes, and the schedule
-    vocabulary.  A zero-hash contract adds a non-blocking warning.  Only a
-    misconfigured installation (missing ``jsonschema``, unreadable schema)
-    raises.
+    The checks are: the shared JSON Schema, plant resolution, unknown
+    ``plant_config`` keys, ``plant_config`` value shapes, the schedule
+    vocabulary, and - when the process holds a controller registry - controller
+    resolution plus undeclared ``controller_config`` keys.  A zero-hash contract
+    adds a non-blocking warning.  Only a misconfigured installation (missing
+    ``jsonschema``, unreadable schema) raises.
+
+    The controller registry is read, never populated: this function stays
+    side-effect free, so it never imports the composition root.  An empty
+    registry means there is no controller vocabulary to check against, and the
+    document is not failed for that.
     """
 
     if not isinstance(document, Mapping):
@@ -648,6 +768,7 @@ def collect_issues(
             issues.extend(
                 _schedule_key_issues(plant_id, document.get("input_schedule"))
             )
+    issues.extend(_controller_issues(document))
     issues.extend(_contract_warnings(document))
     issues = _drop_shadowed_schema_issues(issues)
     issues.sort(key=_sort_key)
@@ -664,6 +785,11 @@ def _checked_stages(
     examined even when the plant id did not resolve and there was nothing to
     examine against.  "Clean" and "not examined" must not look the same, or
     the envelope's ``ok`` becomes a claim the checker did not earn.
+
+    ``controller`` follows the same rule as ``plant_id``: a misspelled id, an
+    empty registry, or a non-string id means the configuration surface was never
+    compared with a declaration, so the stage is omitted rather than reported as
+    clean.
     """
 
     if not isinstance(document, Mapping):
@@ -677,7 +803,11 @@ def _checked_stages(
         # the plant's vocabulary was available and an empty array cannot
         # violate it.  What must not be reported is the case where no
         # vocabulary could be resolved at all.
-        stages.extend(("plant_id", "plant_config", "input_schedule"))
+        stages.extend(("plant_id", "plant_config"))
+    if _controller_stage_ran(document):
+        stages.append("controller")
+    if resolvable:
+        stages.append("input_schedule")
     stages.append("contracts")
     return tuple(stages)
 
@@ -715,7 +845,8 @@ def validate_document(
     This is the agent's compile-time check: it validates the document, the
     plant's declared parameter surface, the schedule vocabulary, and the
     contract hashes **without starting a solver, creating a run directory, or
-    requiring ngspice**.  A document that passes here is *well formed*, not
+    requiring ngspice**, plus the controller surface whenever a controller
+    registry is loaded.  A document that passes here is *well formed*, not
     numerically or physically validated; that only happens during a run.
     """
 

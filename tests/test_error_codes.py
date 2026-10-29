@@ -200,6 +200,19 @@ def test_rejection_helpers_reject_unknown_codes():
 def test_vocabulary_invariants():
     snake_case = re.compile(r"^[a-z][a-z0-9_]*$")
     assert all(snake_case.match(code) for code in REQUEST_REJECTION_CODES)
+
+    # Exact equality, not a subset: renaming or adding a code is a contract
+    # event, and a client that branches on this set must be forced to notice.
+    assert REQUEST_REJECTION_CODES == frozenset(
+        {
+            "invalid_request",
+            "unknown_plant",
+            "backend_mismatch",
+            "unknown_backend",
+            "formal_comparison_rejected",
+            "run_inspection_rejected",
+        }
+    )
     assert all(snake_case.match(code) for code in KERNEL_FAILURE_CODES)
     assert REQUEST_REJECTION_CODES.isdisjoint(KERNEL_FAILURE_CODES)
     assert {

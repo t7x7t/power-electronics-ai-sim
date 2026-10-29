@@ -88,9 +88,9 @@ unsupported ngspice-buck plant_config fields: ['not_a_key']
 ```
 
 - `parameters` 按字段名排序，来自 `pe_sim.plant_parameters.PLANT_PARAMETERS`。内置
-  声明覆盖 11 个 plant：`fake`、`fake-load`、`buck`、`boost`、`multiphase-buck`、
+  声明覆盖 12 个 plant：`fake`、`fake-load`、`buck`、`boost`、`multiphase-buck`、
   `ngspice-buck`、`ngspice-sync-buck`、`whole-run-buck`、`model-control-buck`、
-  `peak-current-buck`、`whole-run-switching-buck`。
+  `peak-current-buck`、`whole-run-switching-buck`、`circuit-topology`。
 - `parameter_schema` 是同一份声明的 JSON Schema 视图：闭合对象
   （`additionalProperties: false`），数值字段带 `exclusiveMinimum` / `minimum` /
   `maximum` / `default`，带量纲的字段带 `x-unit`（JSON Schema 没有单位词表，这里
@@ -138,7 +138,7 @@ unsupported ngspice-buck plant_config fields: ['not_a_key']
       "severity": "warning"
     }
   ],
-  "checked": ["schema", "plant_id", "plant_config", "input_schedule", "contracts"]
+  "checked": ["schema", "plant_id", "plant_config", "controller", "input_schedule", "contracts"]
 }
 ```
 
@@ -162,8 +162,19 @@ unsupported ngspice-buck plant_config fields: ['not_a_key']
   `pe_sim.schemas` 里的那份），其余阶段不变。
 - `checked` 列出**本次实际生效**的阶段，顺序与 `CHECKED_STAGES` 一致，但会因文档而
   缩短：`plant_id` 无法解析时，`plant_config` 与 `input_schedule` 没有对象可查，`checked`
-  就只有 `["schema", "contracts"]`。消费方可以据此区分"检查过且干净"与"没检查"——
-  只看 `ok` 无法区分这两件事。
+  就只有 `["schema", "controller", "contracts"]`（控制器阶段是否能跑见下一条）。
+  消费方可以据此区分"检查过且干净"与"没检查"——只看 `ok` 无法区分这两件事。
+- **控制器阶段（`controller`）。** `controller_id` 是安全标识符由 schema 管；能解析成
+  注册表里的一条注册时，再比对 `controller_config` 的键是否都在该控制器声明的
+  `config_keys` 里。两个新码：`unknown_controller`（`/controller_id`，带候选与安全
+  建议）与 `unknown_controller_config`（`/controller_config/<key>`）。
+  三个边界必须说清楚：
+  - **只查键名，不查值类型。** 注册声明只有 `config_keys`，没有类型表；再造一份类型
+    声明会让这里变成第二个模型，所以值写错（如 `"kp": "fast"`）仍要到 `run` 才拒。
+  - **注册表为空时该阶段不跑**，`checked` 里没有 `controller`，文档也不会因拼写未知
+    控制器而失败：装了但没加载的控制器与拼错的名字，验证器无法区分。
+  - **`collect_issues` 不加载注册根。** `pe-sim validate` 作为组合根只填入控制器注册
+    （不构建 plant、不启动求解器、不建目录）；库层调用者自己决定装哪些控制器。
 
 `pe-sim run` 在文档存在结构化问题时，输出的是同一个拒绝信封（`status:
 CONFIG_REJECTED`，`error_code: invalid_request`），并额外带两个可选字段：
@@ -318,7 +329,7 @@ CONFIG_REJECTED`，`error_code: invalid_request`），并额外带两个可选�
 | 测试 | 固定的事实 |
 | --- | --- |
 | `tests/test_plant_parameters.py` | 11 个 plant 的声明与工厂默认值/构造器一致；Schema 闭合 |
-| `tests/test_spec_validation.py` | 7 个码封闭、Pointer 形状、去重、插件解析、`checked` 真实性、warning 不影响 `ok` |
+| `tests/test_spec_validation.py` | 9 个码封闭（精确等值）、Pointer 形状、去重、插件解 析、控制器阶段（未知 id / 未声明键 / 空注册表）、`checked` 真实性、warning 不影响 `ok` |
 | `tests/test_agent_spec_surface.py` | `describe`/`validate`/`run` 三面一致；`validate` 不建目录；无需 ngspice |
 
 ## 10. 未做（Step B / Step C 与跨字段约束）

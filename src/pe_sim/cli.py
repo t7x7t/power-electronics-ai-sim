@@ -14,7 +14,7 @@ from .applicability import ApplicabilityPolicy
 from .attestation import attest_run, verify_attestation
 from .cancellation import FileCancelToken
 from .capabilities import capability_report
-from .contracts import BackendProcessError, ExperimentSpec
+from .contracts import ExperimentSpec, SimulationExecutionError
 from .error_codes import REQUEST_REJECTION_CODES, RequestRejected, rejection_document
 from .qualification_rules import QualificationRulePack
 from .run_events import DEMO_RESULT_SCHEMA, RUN_RESULT_SCHEMA, ProgressPolicy
@@ -172,6 +172,12 @@ def _run_validate(args) -> int:
         load_builtin_plants()
         _select_registration(document, args.backend)
     declared = document.get("plant_id") if isinstance(document, Mapping) else None
+    # Controller registrations, not plants: filling this registry builds
+    # nothing, opens no solver and creates no directory, but it is what lets the
+    # validator's controller stage compare the document with a declaration
+    # instead of skipping it.  The plant registry is still attached only when the
+    # caller asserts a backend, because resolving that claim looks one up.
+    load_builtin_controllers()
     payload = validation_document(
         document,
         issues=collect_issues(document, schema_path=args.schema),
@@ -316,14 +322,22 @@ def _run_compile_topology(args) -> int:
         )
         return 2
 
+    # A defaulted argument is a decision the caller did not make.  An imported
+    # netlist does not carry its pulse width, so a 0.3-duty circuit would
+    # otherwise compile silently at 0.5; these flags say what was filled in.
+    duty_defaulted = args.duty is None
+    duration_defaulted = args.duration is None
+    carrier_phase_defaulted = args.carrier_phase is None
     try:
         compiled = compile_topology(
             build_descriptor(document),
-            duty=args.duty,
-            duration_s=args.duration,
+            duty=0.5 if duty_defaulted else args.duty,
+            duration_s=1e-3 if duration_defaulted else args.duration,
             sample_step_s=args.step,
             integrator=args.integrator,
-            carrier_phase_s=args.carrier_phase,
+            carrier_phase_s=(
+                0.0 if carrier_phase_defaulted else args.carrier_phase
+            ),
         )
     except CircuitCompileError as exc:
         _emit_rejection(
@@ -335,7 +349,12 @@ def _run_compile_topology(args) -> int:
         )
         return 2
 
-    summary = compiled.to_dict()
+    summary = {
+        **compiled.to_dict(),
+        "duty_defaulted": duty_defaulted,
+        "duration_defaulted": duration_defaulted,
+        "carrier_phase_defaulted": carrier_phase_defaulted,
+    }
     if args.output is not None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(compiled.netlist, encoding="utf-8")
@@ -370,7 +389,11 @@ def _run_import_spice(args) -> int:
         return 2
 
     payload = spice_import_document(text, topology_id=args.topology_id)
-    if args.output is not None and payload["descriptor"] is not None:
+    # ``ok`` is "the netlist translated" AND "the descriptor validates".  A
+    # topology that translates but does not validate is still a failed import,
+    # and writing it would leave a document a later command could mistake for a
+    # usable one; only a fully successful import produces a file.
+    if args.output is not None and payload["ok"] is True:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(
             json.dumps(
@@ -446,7 +469,7 @@ def _run_simulate_topology(args) -> int:
         )
         return 2
 
-    phase = float(args.carrier_phase)
+    phase = float(args.carrier_phase if args.carrier_phase is not None else 0.0)
     if not math.isfinite(phase) or phase < 0.0:
         _emit_rejection(
             "CONFIG_REJECTED",
@@ -470,7 +493,10 @@ def _run_simulate_topology(args) -> int:
         # period; starting the one-shot window there makes the flag mean exactly
         # what ``compile-topology --carrier-phase`` means.
         plant.time_s = phase
-        observation = plant.advance(args.duty, args.duration)
+        observation = plant.advance(
+            args.duty if args.duty is not None else 0.5,
+            args.duration if args.duration is not None else 1e-3,
+        )
     except CircuitCompileError as exc:
         _emit_rejection(
             "CONFIG_REJECTED",
@@ -488,13 +514,16 @@ def _run_simulate_topology(args) -> int:
             reason="invalid_circuit",
         )
         return 2
-    except BackendProcessError as exc:
+    except SimulationExecutionError as exc:
+        # A solver that timed out or failed to converge is not a request
+        # mistake: telling an agent to change its document would send it to the
+        # wrong file.  ``category`` is the adapter's own classification.
         print(
             json.dumps(
                 {
                     "schema": "pe-sim.topology-simulation.v1",
                     "status": "FAILED",
-                    "category": "backend_process_failure",
+                    "category": exc.category,
                     "error": str(exc),
                 },
                 sort_keys=True,
@@ -514,6 +543,9 @@ def _run_simulate_topology(args) -> int:
         "duty": compiled.duty,
         "duration_s": compiled.duration_s,
         "carrier_phase_s": compiled.carrier_phase_s,
+        "duty_defaulted": args.duty is None,
+        "duration_defaulted": args.duration is None,
+        "carrier_phase_defaulted": args.carrier_phase is None,
         "netlist": {
             "template": compiled.template,
             "digest": compiled.digest,
@@ -908,13 +940,18 @@ def main(argv: list[str] | None = None) -> int:
         help="compile a circuit topology document into a netlist without executing it",
     )
     compile_topology_parser.add_argument("topology", type=Path)
-    compile_topology_parser.add_argument("--duty", type=float, default=0.5)
-    compile_topology_parser.add_argument("--duration", type=float, default=1e-3)
+    compile_topology_parser.add_argument(
+        "--duty",
+        type=float,
+        default=None,
+        help="commanded duty ratio; the answer says when it was defaulted",
+    )
+    compile_topology_parser.add_argument("--duration", type=float, default=None)
     compile_topology_parser.add_argument("--step", type=float, default=None)
     compile_topology_parser.add_argument(
         "--carrier-phase",
         type=float,
-        default=0.0,
+        default=None,
         dest="carrier_phase",
         help=(
             "carrier position at the window start (seconds, modulo the switching "
@@ -943,8 +980,8 @@ def main(argv: list[str] | None = None) -> int:
         help="compile and solve a topology document once at a constant duty",
     )
     simulate_topology_parser.add_argument("topology", type=Path)
-    simulate_topology_parser.add_argument("--duty", type=float, default=0.5)
-    simulate_topology_parser.add_argument("--duration", type=float, default=1e-3)
+    simulate_topology_parser.add_argument("--duty", type=float, default=None)
+    simulate_topology_parser.add_argument("--duration", type=float, default=None)
     simulate_topology_parser.add_argument("--step", type=float, default=None)
     simulate_topology_parser.add_argument(
         "--control-period",
@@ -956,7 +993,7 @@ def main(argv: list[str] | None = None) -> int:
     simulate_topology_parser.add_argument(
         "--carrier-phase",
         type=float,
-        default=0.0,
+        default=None,
         dest="carrier_phase",
         help="carrier position at the window start, modulo the switching period",
     )

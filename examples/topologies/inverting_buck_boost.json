@@ -1,0 +1,84 @@
+{
+  "schema": "topology-descriptor-v1",
+  "descriptor_version": "1.0",
+  "topology_id": "example_inverting_buck_boost",
+  "components": [
+    {
+      "component_id": "vin_source",
+      "kind": "voltage_source",
+      "ports": [
+        {"port_id": "positive", "net_id": "vin", "direction": "output"},
+        {"port_id": "negative", "net_id": "gnd", "direction": "passive"}
+      ],
+      "parameters": {"voltage_v": 12.0}
+    },
+    {
+      "component_id": "carrier",
+      "kind": "pulse_source",
+      "ports": [
+        {"port_id": "positive", "net_id": "pwm", "direction": "output"},
+        {"port_id": "negative", "net_id": "gnd", "direction": "passive"}
+      ],
+      "parameters": {"switching_frequency_hz": 100000.0}
+    },
+    {
+      "component_id": "high_switch",
+      "kind": "voltage_controlled_switch",
+      "ports": [
+        {"port_id": "input", "net_id": "vin", "direction": "input"},
+        {"port_id": "output", "net_id": "sw", "direction": "output"},
+        {"port_id": "control", "net_id": "pwm", "direction": "control"}
+      ],
+      "parameters": {"on_resistance_ohm": 0.001, "off_resistance_ohm": 1000000000.0}
+    },
+    {
+      "component_id": "inductor",
+      "kind": "inductor",
+      "ports": [
+        {"port_id": "input", "net_id": "sw", "direction": "passive"},
+        {"port_id": "output", "net_id": "vout", "direction": "passive"}
+      ],
+      "parameters": {"inductance_h": 0.0001, "initial_current_a": 0.0}
+    },
+    {
+      "component_id": "freewheel",
+      "kind": "freewheeling_diode",
+      "ports": [
+        {"port_id": "anode", "net_id": "gnd", "direction": "passive"},
+        {"port_id": "cathode", "net_id": "sw", "direction": "passive"}
+      ],
+      "parameters": {"saturation_current_a": 1e-12, "emission_coefficient": 0.02}
+    },
+    {
+      "component_id": "output_capacitor",
+      "kind": "capacitor",
+      "ports": [
+        {"port_id": "positive", "net_id": "gnd", "direction": "passive"},
+        {"port_id": "negative", "net_id": "vout", "direction": "passive"}
+      ],
+      "parameters": {"capacitance_f": 0.00047, "initial_voltage_v": 0.0}
+    },
+    {
+      "component_id": "load",
+      "kind": "resistor_load",
+      "ports": [
+        {"port_id": "positive", "net_id": "gnd", "direction": "passive"},
+        {"port_id": "negative", "net_id": "vout", "direction": "passive"}
+      ],
+      "parameters": {"resistance_ohm": 10.0}
+    }
+  ],
+  "nets": [
+    {"net_id": "vin", "kind": "electrical"},
+    {"net_id": "gnd", "kind": "reference"},
+    {"net_id": "pwm", "kind": "control"},
+    {"net_id": "sw", "kind": "electrical"},
+    {"net_id": "vout", "kind": "electrical"}
+  ],
+  "metadata": {
+    "example": {
+      "purpose": "inverting buck-boost: the output rail is negative, so the load and the capacitor bind their positive terminal to the reference net",
+      "compile": {"duty": 0.4, "duration_s": 0.002}
+    }
+  }
+}

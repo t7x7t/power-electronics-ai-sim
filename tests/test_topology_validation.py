@@ -154,7 +154,39 @@ def _sync_document_without_control_declaration() -> dict:
 
 
 def test_issue_codes_are_a_closed_set():
-    assert len(TOPOLOGY_ISSUE_CODES) == 26
+    # Exact equality, not a count: a renamed or added code is a contract event,
+    # and a client that branches on this set must be forced to notice.  A count
+    # stays right when one code is swapped for another.
+    assert TOPOLOGY_ISSUE_CODES == frozenset(
+        {
+            "actuator_missing",
+            "control_net_multiple_drivers",
+            "control_net_undriven",
+            "disconnected_graph",
+            "duplicate_component_id",
+            "duplicate_net_id",
+            "duplicate_port_id",
+            "fingerprint_mismatch",
+            "invalid_document",
+            "invalid_parameter_value",
+            "isolated_net",
+            "missing_parameter",
+            "missing_port",
+            "missing_reference_net",
+            "multiple_control_nets",
+            "multiple_reference_nets",
+            "no_output_load",
+            "not_compilable",
+            "port_net_kind_mismatch",
+            "schema_violation",
+            "unknown_net",
+            "unknown_parameter",
+            "unknown_port",
+            "unsupported_device_kind",
+            "unsupported_net_kind",
+            "voltage_source_loop",
+        }
+    )
     assert all(isinstance(code, str) and code.islower() for code in TOPOLOGY_ISSUE_CODES)
     assert WARNING_ISSUE_CODES <= TOPOLOGY_ISSUE_CODES
     assert WARNING_ISSUE_CODES == frozenset(
