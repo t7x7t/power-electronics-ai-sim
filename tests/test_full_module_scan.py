@@ -38,7 +38,9 @@ import importlib
 import io
 import re
 import sys
+from dataclasses import MISSING, fields, is_dataclass
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 
@@ -559,6 +561,55 @@ def test_the_authoring_layer_never_reaches_a_backend_even_lazily():
             offenders[name] = hits
 
     assert offenders == {}
+
+
+def test_no_dataclass_default_is_one_python_311_would_reject():
+    """A shared mutable proxy default must not come back.
+
+    Python 3.11 decides whether a dataclass field default is *mutable* by
+    asking whether its type is unhashable, and ``mappingproxy`` is unhashable
+    there.  Python 3.10 accepted it (its check only looked for
+    list/dict/set) and 3.12+ accept it (``mappingproxy`` became hashable), so a
+    field declared as ``= MappingProxyType({})`` raised
+    ``ValueError: mutable default`` on exactly one interpreter version: every
+    module importing that class failed on 3.11 and nowhere else.  The project's
+    own test interpreter is 3.13, so no local run could see it; only the CI
+    matrix did.
+
+    The rule is restated here in a version-independent form: a default must not
+    be a ``mappingproxy`` (hashable from 3.12 but not before) and must not be an
+    instance of any otherwise unhashable type.  A field that needs a read-only
+    mapping uses ``field(default_factory=...)`` instead.
+    """
+
+    checked = 0
+    offenders: list[str] = []
+    for module_name in MODULES:
+        module = importlib.import_module(module_name)
+        for attribute in dir(module):
+            candidate = getattr(module, attribute)
+            if not isinstance(candidate, type) or not is_dataclass(candidate):
+                continue
+            # Imported dataclasses are re-seen through every module that
+            # re-exports them; only judge classes this package defines.
+            if not getattr(candidate, "__module__", "").startswith("pe_sim"):
+                continue
+            for field_info in fields(candidate):
+                if field_info.default is MISSING:
+                    continue
+                checked += 1
+                default = field_info.default
+                if isinstance(default, MappingProxyType) or type(default).__hash__ is None:
+                    offenders.append(
+                        f"{module_name}.{candidate.__qualname__}.{field_info.name} "
+                        f"defaults to {type(default).__name__}"
+                    )
+
+    assert checked, "the scan found no dataclass field defaults to inspect"
+    assert offenders == [], (
+        "dataclass field defaults Python 3.11 would reject; use "
+        "field(default_factory=...): " + ", ".join(sorted(offenders))
+    )
 
 
 # ---------------------------------------------------------------------------

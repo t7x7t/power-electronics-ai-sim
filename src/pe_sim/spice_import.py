@@ -308,6 +308,21 @@ class SpiceImportIssue:
         }
 
 
+def _empty_read_only_map() -> Mapping[str, Any]:
+    """A fresh read-only empty mapping for a dataclass field default.
+
+    A bare ``MappingProxyType({})`` cannot be a field default.  Python 3.11
+    rejects any default whose type is unhashable (it uses ``__hash__ is None``
+    as a mutability proxy) and ``mappingproxy`` is unhashable there; 3.10
+    accepts it because that check only looked for list/dict/set, and 3.12+
+    accepts it because ``mappingproxy`` became hashable.  The result was a
+    failure that existed on exactly one interpreter version: importing this
+    module raised ``ValueError: mutable default`` on 3.11 and nowhere else.
+    """
+
+    return MappingProxyType({})
+
+
 @dataclass(frozen=True)
 class ImportedNetlist:
     """A translated netlist: one descriptor document plus what was dropped.
@@ -321,10 +336,10 @@ class ImportedNetlist:
     title: str
     warnings: tuple[SpiceImportIssue, ...] = ()
     ignored_directives: tuple[Mapping[str, Any], ...] = ()
-    net_name_map: Mapping[str, str] = MappingProxyType({})
-    component_name_map: Mapping[str, str] = MappingProxyType({})
-    observed_duty: Mapping[str, float] = MappingProxyType({})
-    element_kinds: Mapping[str, int] = MappingProxyType({})
+    net_name_map: Mapping[str, str] = field(default_factory=_empty_read_only_map)
+    component_name_map: Mapping[str, str] = field(default_factory=_empty_read_only_map)
+    observed_duty: Mapping[str, float] = field(default_factory=_empty_read_only_map)
+    element_kinds: Mapping[str, int] = field(default_factory=_empty_read_only_map)
     netlist_sha256: str = ""
 
 
