@@ -567,7 +567,7 @@ def test_a_phase_count_mismatch_names_the_two_gates_per_leg_problem():
 
     assert error.code == "invalid_control_declaration"
     assert "high side" in str(error)
-    assert "paired high/low gates inside a leg" in str(error.details["expected"])
+    assert "paired_complementary" in str(error.details["expected"])
 
 
 def test_the_tail_plus_the_truncated_pulse_is_the_commanded_width():
@@ -691,9 +691,348 @@ def test_a_load_wired_to_a_control_net_is_refused_without_the_validator():
     assert error.details["port_id"] == "positive"
 
 
+# ---------------------------------------------------------------------------
+# Paired legs: each leg complementary, the legs related to each other
+# ---------------------------------------------------------------------------
+
+
+def _paired_descriptor(
+    legs: int = 2,
+    control: dict | None = None,
+    *,
+    dead_time_s: float = 100e-9,
+    leg_phase_shift_s: float = 0.0,
+):
+    """A ``legs``-leg synchronous buck declared through ``pairs``."""
+
+    from pe_sim.topology import (
+        TopologyComponent,
+        TopologyDescriptor,
+        TopologyNet,
+        TopologyPort,
+    )
+
+    nets = [TopologyNet("vin"), TopologyNet("gnd", kind="reference")]
+    components = []
+
+    def add(component_id, kind, ports, parameters):
+        components.append(
+            TopologyComponent(
+                component_id,
+                kind,
+                tuple(
+                    TopologyPort(port_id, net_id, direction)
+                    for port_id, net_id, direction in ports
+                ),
+                parameters=parameters,
+            )
+        )
+
+    add(
+        "vin_source",
+        "voltage_source",
+        (("positive", "vin", "output"), ("negative", "gnd", "passive")),
+        {"voltage_v": VIN},
+    )
+    pairs = []
+    for index in range(1, legs + 1):
+        high_gate = f"pwm_h{index}"
+        low_gate = f"pwm_l{index}"
+        node = f"sw{index}"
+        nets.append(TopologyNet(high_gate, kind="control"))
+        nets.append(TopologyNet(low_gate, kind="control"))
+        nets.append(TopologyNet(node))
+        add(
+            f"carrier_h{index}",
+            "pulse_source",
+            (("positive", high_gate, "output"), ("negative", "gnd", "passive")),
+            {"switching_frequency_hz": FSW},
+        )
+        add(
+            f"carrier_l{index}",
+            "pulse_source",
+            (("positive", low_gate, "output"), ("negative", "gnd", "passive")),
+            {"switching_frequency_hz": FSW},
+        )
+        add(
+            f"high_{index}",
+            "voltage_controlled_switch",
+            (
+                ("input", "vin", "input"),
+                ("output", node, "output"),
+                ("control", high_gate, "control"),
+            ),
+            {},
+        )
+        add(
+            f"low_{index}",
+            "voltage_controlled_switch",
+            (
+                ("input", node, "input"),
+                ("output", "gnd", "output"),
+                ("control", low_gate, "control"),
+            ),
+            {},
+        )
+        add(
+            f"inductor_{index}",
+            "inductor",
+            (("input", node, "passive"), ("output", "vout", "passive")),
+            {"inductance_h": 220e-6},
+        )
+        pairs.append([f"high_{index}", f"low_{index}"])
+    nets.append(TopologyNet("vout"))
+    add(
+        "output_capacitor",
+        "capacitor",
+        (("positive", "vout", "passive"), ("negative", "gnd", "passive")),
+        {"capacitance_f": C_F},
+    )
+    add(
+        "load",
+        "resistor_load",
+        (("positive", "vout", "passive"), ("negative", "gnd", "passive")),
+        {"resistance_ohm": R_OHM},
+    )
+
+    if control is None:
+        control = {
+            "mode": "paired_complementary",
+            "pairs": pairs,
+            "dead_time_s": dead_time_s,
+        }
+        if leg_phase_shift_s:
+            control["leg_phase_shift_s"] = leg_phase_shift_s
+    return TopologyDescriptor(
+        "paired_legs", tuple(components), tuple(nets), metadata={"control": control}
+    )
+
+
+def test_a_paired_declaration_renders_one_leg_per_pair():
+    period = 1.0 / FSW
+    compiled = _compile(_paired_descriptor(2, leg_phase_shift_s=period / 2.0))
+
+    assert compiled.control_mode == "paired_complementary"
+    assert compiled.phases == 2
+    rises = dict(compiled.gate_first_rise_s)
+    assert rises["pwm_h1"] == pytest.approx(0.0, abs=1e-15)
+    assert rises["pwm_h2"] == pytest.approx(period / 2.0)
+    # The second leg's low side is on at the window start: its on-window is the
+    # first leg's low window delayed by half a period, which wraps.
+    assert rises["pwm_l2"] == pytest.approx(0.0, abs=1e-15)
+    assert rises["pwm_l1"] == pytest.approx(period / 2.0)
+    for node, fields in _gate_pulses(compiled.netlist):
+        assert fields[2] == pytest.approx(rises[node], abs=1e-12), node
+
+
+def test_every_paired_leg_keeps_the_declared_dead_time():
+    period = 1.0 / FSW
+    dead = 100e-9
+    compiled = _compile(_paired_descriptor(2, dead_time_s=dead))
+
+    gates = {node: fields for node, fields in _gate_pulses(compiled.netlist)}
+    assert gates["pwm_h1"][5] == pytest.approx(DUTY * period - dead)
+    assert gates["pwm_h2"][5] == pytest.approx(DUTY * period - dead)
+    assert gates["pwm_l1"][2] == pytest.approx(DUTY * period)
+    assert gates["pwm_l2"][2] == pytest.approx(DUTY * period)
+
+
+def test_twelve_paired_legs_still_spread_by_the_declared_shift():
+    period = 1.0 / FSW
+    compiled = _compile(
+        _paired_descriptor(3, leg_phase_shift_s=period / 3.0), duty=0.4
+    )
+
+    rises = dict(compiled.gate_first_rise_s)
+    assert compiled.phases == 3
+    for index, expected in ((1, 0.0), (2, period / 3.0), (3, 2.0 * period / 3.0)):
+        assert rises[f"pwm_h{index}"] == pytest.approx(expected, abs=1e-12)
+
+
+def test_a_switch_left_out_of_the_pairs_is_refused():
+    descriptor = _paired_descriptor(2)
+    metadata = dict(descriptor.metadata)
+    metadata["control"] = {
+        "mode": "paired_complementary",
+        "pairs": [["high_1", "low_1"]],
+        "dead_time_s": 100e-9,
+    }
+
+    error = _error(_with_metadata(descriptor, metadata))
+
+    assert error.code == "invalid_control_declaration"
+    assert error.details["components"] == ["high_2", "low_2"]
+
+
+def test_a_switch_named_in_two_pairs_is_refused():
+    error = _error(
+        _paired_descriptor(
+            2,
+            {
+                "mode": "paired_complementary",
+                "pairs": [["high_1", "low_1"], ["high_1", "low_2"]],
+                "dead_time_s": 100e-9,
+            },
+        )
+    )
+
+    assert error.code == "invalid_control_declaration"
+    assert error.details["component_id"] == "high_1"
+
+
+def test_pairs_is_required_for_the_paired_mode():
+    error = _error(
+        _paired_descriptor(
+            2, {"mode": "paired_complementary", "dead_time_s": 100e-9}
+        )
+    )
+
+    assert error.code == "invalid_control_declaration"
+    assert "pairs" in str(error)
+
+
+def test_a_leg_whose_two_switches_both_reach_the_reference_is_refused():
+    """A leg is one high side and one low side, and the graph says which is which."""
+
+    descriptor = _paired_descriptor(1)
+    # Move the high side's input to the reference net so both switches of the
+    # leg conduct to ground.
+    components = tuple(
+        type(item)(
+            item.component_id,
+            item.kind,
+            tuple(
+                type(port)(
+                    port.port_id,
+                    "gnd" if (item.component_id == "high_1" and port.port_id == "input") else port.net_id,
+                    port.direction,
+                    port.label,
+                )
+                for port in item.ports
+            ),
+            parameters=dict(item.parameters),
+        )
+        if item.component_id == "high_1"
+        else item
+        for item in descriptor.components
+    )
+    rebuilt = type(descriptor)(
+        descriptor.topology_id, components, descriptor.nets, metadata=descriptor.metadata
+    )
+
+    error = _error(rebuilt)
+
+    assert error.code == "ambiguous_complementary_control"
+    assert error.details["pair"] == ["high_1", "low_1"]
+    assert len(error.details["low_side"]) == 2
+
+
+def test_a_leg_phase_shift_of_a_whole_period_is_refused():
+    period = 1.0 / FSW
+    error = _error(_paired_descriptor(2, leg_phase_shift_s=period))
+
+    assert error.code == "invalid_control_declaration"
+    assert error.details["leg_phase_shift_s"] == pytest.approx(period)
+
+
+def test_paired_legs_must_share_one_frequency():
+    descriptor = _paired_descriptor(2)
+    components = tuple(
+        type(item)(
+            item.component_id,
+            item.kind,
+            item.ports,
+            parameters={"switching_frequency_hz": FSW * 2.0},
+        )
+        if item.component_id == "carrier_l2"
+        else item
+        for item in descriptor.components
+    )
+    rebuilt = type(descriptor)(
+        descriptor.topology_id, components, descriptor.nets, metadata=descriptor.metadata
+    )
+
+    assert _error(rebuilt).code == "invalid_control_declaration"
+
+
+def test_a_paired_leg_without_a_carrier_is_refused():
+    descriptor = _paired_descriptor(2)
+    components = tuple(
+        item for item in descriptor.components if item.component_id != "carrier_l2"
+    )
+    rebuilt = type(descriptor)(
+        descriptor.topology_id, components, descriptor.nets, metadata=descriptor.metadata
+    )
+
+    assert _error(rebuilt).code == "no_carrier"
+
+
+def test_two_legs_sharing_one_control_net_are_refused():
+    """A shared gate net would overwrite the first leg's window without a word."""
+
+    descriptor = _paired_descriptor(2)
+    components = tuple(
+        type(item)(
+            item.component_id,
+            item.kind,
+            tuple(
+                type(port)(
+                    port.port_id,
+                    "pwm_l1"
+                    if (item.component_id == "high_2" and port.port_id == "control")
+                    else port.net_id,
+                    port.direction,
+                    port.label,
+                )
+                for port in item.ports
+            ),
+            parameters=dict(item.parameters),
+        )
+        if item.component_id == "high_2"
+        else item
+        for item in descriptor.components
+    )
+    rebuilt = type(descriptor)(
+        descriptor.topology_id, components, descriptor.nets, metadata=descriptor.metadata
+    )
+
+    error = _error(rebuilt)
+
+    assert error.code == "ambiguous_complementary_control"
+    assert error.details["gate_nets"] == ["pwm_l1"]
+
+
+def test_a_paired_carrier_dead_time_that_disagrees_is_refused():
+    """The declaration is the only authority, in every mode that renders a leg."""
+
+    descriptor = _paired_descriptor(2)
+    components = tuple(
+        item
+        if not item.component_id.startswith("carrier_")
+        else type(item)(
+            item.component_id,
+            item.kind,
+            item.ports,
+            parameters={
+                "switching_frequency_hz": FSW,
+                "dead_time_s": 2e-7,
+            },
+        )
+        for item in descriptor.components
+    )
+    rebuilt = type(descriptor)(
+        descriptor.topology_id, components, descriptor.nets, metadata=descriptor.metadata
+    )
+
+    error = _error(rebuilt)
+
+    assert error.code == "invalid_control_declaration"
+    assert error.details["carrier_dead_time_s"] == pytest.approx(2e-7)
+    assert error.details["declaration_dead_time_s"] == pytest.approx(1e-7)
+
+
 def test_a_floating_gate_drive_compares_against_its_own_reference():
     """The switch must use the carrier's negative node, not node 0."""
-
     descriptor = _buck_descriptor()
 
     def rebind(component, port_id, net_id):

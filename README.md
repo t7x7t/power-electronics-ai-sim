@@ -168,13 +168,16 @@ reach at most `limited` evidence. See
 and [docs/65_circuit_execution_v1.md](docs/65_circuit_execution_v1.md); the
 netlist importer is described in
 [docs/66_spice_netlist_import_v1.md](docs/66_spice_netlist_import_v1.md).
-Three complete descriptors live in
+Five complete descriptors live in
 [examples/topologies](examples/topologies) as reference designs: an
 asynchronous buck, a synchronous buck that declares its complementary gate
 relation, an inverting buck-boost whose negative rail is expressed by
-binding the load and the capacitor to the reference node, and a three-phase
-interleaved buck whose one duty drives three evenly spread gates. They are
-data, not plants, and a test validates and compiles each one.
+binding the load and the capacitor to the reference node, a three-phase
+interleaved buck whose one duty drives three evenly spread gates, and a
+two-leg synchronous buck whose legs are each complementary, hold 100 ns of
+dead time, sit half a switching period apart, and carry one freewheeling
+diode per leg. They are data, not plants, and a test validates and compiles
+each one.
 `circuit-topology` is also a registered Plant, so `pe-sim run` accepts an
 experiment document whose `plant_config.topology` is the descriptor and closes
 the loop with the kernel controller.

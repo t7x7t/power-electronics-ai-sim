@@ -290,6 +290,7 @@ CODE_VOCABULARIES = {
         "not_compilable",
         "port_net_kind_mismatch",
         "schema_violation",
+        "switch_threshold_above_carrier_amplitude",
         "unknown_net",
         "unknown_parameter",
         "unknown_port",
@@ -307,6 +308,7 @@ CODE_VOCABULARIES = {
         "multiple_control_nets",
         "no_output_load",
         "not_compilable",
+        "switch_threshold_above_carrier_amplitude",
     },
 }
 

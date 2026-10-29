@@ -199,6 +199,71 @@ def test_an_interleaved_declaration_that_fits_is_a_stated_relation():
     assert issues == []
 
 
+def test_a_whole_number_written_as_a_float_still_fits():
+    """``2.0`` is a whole number of phases and the compiler accepts it.
+
+    A document the compiler renders must not be reported as a declaration that
+    does not fit: the warning would be telling the author to change something
+    that is already right.
+    """
+
+    document = copy.deepcopy(
+        _shipped_descriptors()["ngspice_sync_buck"].to_dict()
+    )
+    document.pop("fingerprint", None)
+    document["metadata"]["control"] = {
+        "mode": "single_duty_interleaved",
+        "phases": 2.0,
+    }
+
+    issues = [
+        issue for issue in collect_topology_issues(document)
+        if issue.code == "multiple_control_nets"
+    ]
+
+    assert issues == []
+
+
+def test_a_fractional_phase_count_does_not_fit():
+    document = copy.deepcopy(
+        _shipped_descriptors()["ngspice_sync_buck"].to_dict()
+    )
+    document.pop("fingerprint", None)
+    document["metadata"]["control"] = {
+        "mode": "single_duty_interleaved",
+        "phases": 1.5,
+    }
+
+    issues = [
+        issue for issue in collect_topology_issues(document)
+        if issue.code == "multiple_control_nets"
+    ]
+
+    assert len(issues) == 1
+
+
+def test_the_gate_level_warning_points_at_a_key_the_document_has():
+    """``threshold_v`` may be omitted, so the pointer must not invent it."""
+
+    document = copy.deepcopy(_shipped_descriptors()["ngspice_buck"].to_dict())
+    document.pop("fingerprint", None)
+    carrier = next(
+        item for item in document["components"] if item["kind"] == "pulse_source"
+    )
+    carrier["parameters"]["amplitude_v"] = 0.3
+
+    issues = [
+        issue for issue in collect_topology_issues(document)
+        if issue.code == "switch_threshold_above_carrier_amplitude"
+    ]
+
+    assert len(issues) == 1
+    # The switch declares no threshold_v, so the default 0.5 V is in force and
+    # the only key the author can edit is the carrier's amplitude.
+    assert issues[0].path.endswith("/parameters")
+    assert not issues[0].path.endswith("/threshold_v")
+
+
 # ---------------------------------------------------------------------------
 # The closed vocabulary
 # ---------------------------------------------------------------------------
@@ -230,6 +295,7 @@ def test_issue_codes_are_a_closed_set():
             "not_compilable",
             "port_net_kind_mismatch",
             "schema_violation",
+            "switch_threshold_above_carrier_amplitude",
             "unknown_net",
             "unknown_parameter",
             "unknown_port",
@@ -241,7 +307,13 @@ def test_issue_codes_are_a_closed_set():
     assert all(isinstance(code, str) and code.islower() for code in TOPOLOGY_ISSUE_CODES)
     assert WARNING_ISSUE_CODES <= TOPOLOGY_ISSUE_CODES
     assert WARNING_ISSUE_CODES == frozenset(
-        {"actuator_missing", "multiple_control_nets", "no_output_load", "not_compilable"}
+        {
+            "actuator_missing",
+            "multiple_control_nets",
+            "no_output_load",
+            "not_compilable",
+            "switch_threshold_above_carrier_amplitude",
+        }
     )
 
 
@@ -283,6 +355,11 @@ def test_every_warning_code_is_actually_emitted_as_a_warning():
             lambda d: d["components"].remove(_component(d, "load"))
         ),
         "not_compilable": _shipped_descriptors()["buck"].to_dict(),
+        "switch_threshold_above_carrier_amplitude": _mutate(
+            lambda d: _component(d, "switch")["parameters"].update(
+                {"threshold_v": 1.5}
+            )
+        ),
     }
 
     for code, document in probes.items():

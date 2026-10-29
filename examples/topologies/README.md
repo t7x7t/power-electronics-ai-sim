@@ -10,6 +10,7 @@ converter to this directory adds no plant, no solve path and no evidence claim.
 | `sync_buck.json` | Two gates derived from one duty through `metadata.control`, with dead time. |
 | `inverting_buck_boost.json` | A negative output rail: the load and the output capacitor bind their positive terminal to the reference net. |
 | `interleaved_buck.json` | Three gates derived from one duty and spread evenly across one switching period. |
+| `two_leg_sync_buck.json` | Two legs, each complementary inside itself, half a period apart. |
 
 Each file is a complete `topology-descriptor-v1` document with no `fingerprint`
 (it is being authored, not recorded). `metadata.example.compile` carries the

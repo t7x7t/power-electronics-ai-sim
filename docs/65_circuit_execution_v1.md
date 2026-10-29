@@ -149,10 +149,12 @@ circuit-topology` 仍然能回答“这个 plant_config 能写什么”。
 
 ## 8. 未做
 
-- **成对互补分组。** 编译器理解的声明是 `single_duty_complementary`（一对互补
-  栅极，含死区）与 `single_duty_interleaved`（N 个等间隔相位共享一个 duty）。
-  "两条桥臂各自互补"（半桥双桥臂、全桥单 duty 双极性调制）需要把声明推广到成对
-  分组；三电平需要另一套渲染。其余边界见 `docs/69`。
+- **每条腿各自的占空比与任意栅极时序表。** 编译器理解的声明是
+  `single_duty_complementary`（一对互补栅极，含死区）、
+  `single_duty_interleaved`（N 个等间隔相位共享一个 duty）与
+  `paired_complementary`（N 条腿各自互补、腿间按 `k · leg_phase_shift_s` 错相，
+  共享一个 duty，见 `docs/64` §5.8）。一个标量指令无法给每条腿**不同**的 duty；
+  三电平需要另一套渲染。其余边界见 `docs/69`。
 - 子电路、`.include`（SPICE 子集的**正向**导入已交付，见 `docs/66`）。
 
 ## 9. 证据

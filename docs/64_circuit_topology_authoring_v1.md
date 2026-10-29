@@ -121,7 +121,7 @@ Step B 的目标是把描述符从"展示用途的单向导出"变成"可校验�
 **警告**，`ok` 仍为 `true`。把这两件事混成一个错误，会让项目自己发布的平均化参考
 描述符被判为非法。
 
-### 4.2 封闭的 26 个码
+### 4.2 封闭的 27 个码
 
 错误（`severity = "error"`）：
 
@@ -154,9 +154,21 @@ Step B 的目标是把描述符从"展示用途的单向导出"变成"可校验�
 | `actuator_missing` | 没有任何执行器 |
 | `multiple_control_nets` | 多于一个控制网，且描述符没有声明它们之间的关系 |
 | `no_output_load` | 没有负载，也就没有可观测输出 |
+| `switch_threshold_above_carrier_amplitude` | 开关的 `threshold_v + hysteresis_v` 不低于驱动其控制网的载波 `amplitude_v`，这个开关永远不会导通 |
 
-`WARNING_ISSUE_CODES` 是这四个码的封闭集合，测试钉住它，因此一个码不可能悄悄
+`WARNING_ISSUE_CODES` 是这五个码的封闭集合，测试钉住它，因此一个码不可能悄悄
 改变严重级别。
+
+`switch_threshold_above_carrier_amplitude` 比较的是两个**声明值**：开关的
+`threshold_v`（默认 0.5 V）加 `hysteresis_v`（默认 0），与驱动该控制网的
+`pulse_source.amplitude_v`（默认 1.0 V）。只有前者不低于后者时才报，`message`
+同时给出两个元件 id 与实际电压，`path` 指向文档里真实存在的那个键（写了
+`threshold_v` 就指向它，没写就指向 `parameters`）。
+
+它是**警告**而不是错误，因为"这个栅极保持关断"是一个合法命令（占空比为 0 时所有
+栅极都关断），校验器无法区分"我故意让它关断"与"我把幅度写小了"。它也不检查求解
+出的波形：`parameter_overrides` 可以在渲染时改掉这两个数字，而校验器只读描述符。
+但它挡住的是一类最坏的错——开关从不导通，波形是一条看起来完全合理的平线。
 
 ### 4.3 一条缺陷只报一次
 
@@ -249,8 +261,10 @@ B1 pwm 0 V = V(pwm_pulse) + V(pwm_tail)
 
 其中 `multiple_actuators` 有一条重要的物理理由必须写在文档里：**同一个控制网驱动
 两个开关，会把互补器件渲染成同时导通。** 没有声明关系的两个控制网也属于这一类。
-声明的互补关系见 §5.6；声明不合法时拒绝码是 `invalid_control_declaration`，声明了
-互补但开关无法按“是否接到参考网”分成一高一低时是 `ambiguous_complementary_control`。
+声明的互补关系见 §5.6，交错见 §5.7，成对分组见 §5.8；声明不合法时拒绝码是
+`invalid_control_declaration`，声明了互补但开关无法按“是否接到参考网”分成一高一低
+时是 `ambiguous_complementary_control`。**成对分组没有新增拒绝码**：它复用
+`invalid_control_declaration`、`ambiguous_complementary_control` 与 `no_carrier`。
 
 ### 5.5 与已评审模板的等价性
 
@@ -309,6 +323,10 @@ delta     vout=4.077e-05  iL=1.190e-05
 浮地/高边栅极驱动是合法电路；把它的栅极电压拿去和地比较，会让每一条元件卡看起来
 都合法而控制关系是错的。
 
+本模式描述的是**恰好一条腿**。两条或更多条腿各自互补、共享同一个 duty 时，用
+§5.8 的 `paired_complementary`；`single_duty_complementary` 在开关数不为 2 时以
+`ambiguous_complementary_control` 拒绝，`details.actuators` 给出实际数量。
+
 ### 5.7 交错控制声明
 
 多相 DC-DC 的每个桥臂都有自己的栅极，但内核仍然只命令一个占空比。描述符用
@@ -327,8 +345,8 @@ delta     vout=4.077e-05  iL=1.190e-05
   "声明三相却只接了两个载波"是拒绝，不是静默按两相编译；
 - **每个相位就是一个栅极信号。** 一条腿上的高边/低边是两个栅极，但它们不是两个
   相位：本模式没有"哪个栅极与哪个互补"的词。若一条腿有两个栅极（同步整流的每相
-  都是这样），`phases` 与栅极数的冲突会以 `invalid_control_declaration` 拒绝，
-  `expected` 会直接说明"每腿成对栅极尚不能表达"。**不要**为了让数字对齐而写成
+  都是这样），`phases` 与栅极数的冲突会以 `invalid_control_declaration` 拒绝；
+  这类电路应当用 §5.8 的 `paired_complementary`。**不要**为了让数字对齐而写成
   `phases: 4`：那会编译出四个同时导通的栅极，其中同一腿的高边与低边在高占空比下
   直通——校验与编译都会成功；
 - 每个栅极一律得到 `[0, D·Tsw)` 的导通窗口——**分的是相位，不是占空比**；
@@ -361,6 +379,76 @@ v(vout) 均值:      5.9247 V       （D·Vin = 6.0 V，差值来自二极管正
 
 相位差 3.333 µs = Tsw/3，三个栅极确实被等分；`vout` 落在 D·Vin 附近说明这不是
 "三个栅极各自为政"的电路。
+
+### 5.8 成对互补控制声明
+
+多腿电路（两相同步 Buck、半桥双桥臂）的每个开关都有自己的栅极，但内核仍然只命令
+一个占空比。图里没有"哪两个开关属于同一条腿"的事实——共享节点的两个低边开关不是
+一条腿，同一条腿的两个开关也不一定相邻——所以配对只能由声明给出：
+
+```json
+"metadata": {
+  "control": {
+    "mode": "paired_complementary",
+    "pairs": [["high_1", "low_1"], ["high_2", "low_2"]],
+    "dead_time_s": 1e-07,
+    "leg_phase_shift_s": 5e-06
+  }
+}
+```
+
+规则：
+
+- 该模式只接受四个键：`mode`、`pairs`、`dead_time_s`、`leg_phase_shift_s`；其它
+  键是 `invalid_control_declaration`，而不是被忽略；
+- `pairs` 必填，每个二元组是一条腿，**数组顺序就是腿序号**；`dead_time_s` 与
+  `leg_phase_shift_s` 可选，默认都是 0；
+- 每条腿内部沿用 §5.6 的时序：高边 `[0, D·Tsw − td)`，低边 `[D·Tsw, Tsw − td)`；
+  第 k 条腿（从 0 计）整体延迟 `k · leg_phase_shift_s`；
+- 两个参数都必须是有限非负数；`dead_time_s >= Tsw/2` 与
+  `leg_phase_shift_s >= Tsw` 是 `invalid_control_declaration`；
+- 二元组内部的**书写顺序只是标签**。编译器仍然用"导电通路是否接到参考网"决定哪
+  一个是低边：两个开关都接到参考网、或都不接，是
+  `ambiguous_complementary_control`（`details.pair`、`details.low_side`），不是按
+  顺序猜一个；
+- 描述符里的每个 `voltage_controlled_switch` 都必须恰好出现在一个二元组里；漏掉
+  一个开关是 `invalid_control_declaration`（`details.components`），把一个非开关
+  元件写进二元组也是；同一个开关出现两次同样拒绝；
+- 一条腿的两个开关共用一个栅极网、两条腿复用同一个栅极网：都是
+  `ambiguous_complementary_control`；某个栅极网上没有载波：`no_carrier`；某个
+  载波驱动的网不是任何一条腿的栅极网：也是 `ambiguous_complementary_control`
+  （`details.net`、`details.gate_nets`）；
+- 所有腿的载波必须声明同一个开关频率，否则 `invalid_control_declaration`；
+- 载波上若另写了 `dead_time_s` 且与声明不一致，同 §5.6 一样拒绝：声明是唯一权威。
+
+**`CompiledCircuit.phases` 的含义。** 这个字段回答"一个 duty 驱动了几个开关相位"：
+`single_duty_interleaved` 是相位数，`paired_complementary` 是**腿数**，单栅极与
+单腿互补都是 1。`compile-topology` 的摘要与 `simulate-topology` 的 `netlist` 块
+照常带 `phases` 与 `gate_first_rise_s`，因此"第二条腿是否真的晚了半个周期"可以
+直接核对。
+
+校验器只检查声明的**形状**（`pairs` 是非空的二元组列表、控制网数量等于 2×腿数）；
+配对成员是不是开关、是否一高一低、频率是否一致，由编译器在渲染时拒绝。声明与图
+不符时，`multiple_control_nets` 警告不会被一条不成立的声明压住。
+
+`examples/topologies/two_leg_sync_buck.json` 是两腿、td = 100 ns、
+`leg_phase_shift_s = Tsw/2`，并且每条腿带一个 `freewheeling_diode`。二极管是显式
+器件，因为已评审的同步模板**不建模体二极管**（`docs/65` §6）；没有它，死区里的
+电感电流会被截断而不是续流。
+
+2026-10-30 实测（D = 0.5，Vin = 12 V，100 kHz，200 µs 窗口，预充初值）：
+
+```text
+栅极时间加权占空比:             0.4905   （(D·Tsw − td)/Tsw = 0.49）
+同腿两栅极同时为高的样本数:     0
+第二条腿高边相对第一条的上升沿: 5.000 µs
+v(vout) 均值:                   5.83 V   （D·Vin = 6.0 V）
+max |v(sw1)|:                   12.0 V
+```
+
+这些数字回答的是"声明的时序是否被渲染成声明的时序"：每条腿的占空比扣掉了死区、
+同腿两个栅极没有同时为高、第二条腿恰好晚半个开关周期、开关节点没有越过 12 V 输入
+轨。它们**不**说明电路被评审、收敛到某个稳态、或与硬件一致——见 §7。
 
 ## 6. CLI 表面
 
@@ -397,12 +485,13 @@ v(vout) 均值:      5.9247 V       （D·Vin = 6.0 V，差值来自二极管正
   下都不可能是 `comparable`。
 - **一次只有八个器件、三种网种类**，没有互感、变压器、受控源、非线性器件、
   子电路、`.include`。
-- **两种控制声明。** `single_duty_complementary`（§5.6）覆盖同步 Buck 的双栅极
-  情形；`single_duty_interleaved`（§5.7）覆盖 N 个等间隔相位的多相 DC-DC。
-  模型侧控制 Buck 与峰值电流 Buck 的两个开关共用同一个栅极网（控制发生在模型
-  内部），它们不是互补电路，编译器仍然拒绝。**同一 duty 下两条桥臂各自互补**
-  （半桥/全桥的双桥臂调制）仍需要把声明推广到成对分组，本次**未做**；三相逆变
-  器需要三个独立相位指令，受“一个标量指令”限制，见 `docs/69`。
+- **三种控制声明。** `single_duty_complementary`（§5.6）覆盖同步 Buck 的双栅极
+  情形；`single_duty_interleaved`（§5.7）覆盖 N 个等间隔相位的多相 DC-DC；
+  `paired_complementary`（§5.8）覆盖多条腿各自互补、腿间按声明错相的电路
+  （两相同步 Buck 是随仓库交付的样例；全桥单 duty 双极性调制是同一声明形状，但
+  本仓库没有该样例）。模型侧控制 Buck 与峰值电流 Buck 的两个开关共用同一个栅极网
+  （控制发生在模型内部），它们不是互补电路，编译器仍然拒绝。**每条腿各自的
+  占空比**与任意栅极时序表仍受"一个标量指令"限制，见 `docs/69`。
 - **`dead_time_s` 的唯一权威来源是 `metadata.control`。** `pulse_source` 上的同名字段
   被记录但不渲染，避免两处声明打架。
 - 不做 SPICE 子集导入的**反向**保证：`docs/66` 能把网表翻译成描述符，但编译
@@ -417,12 +506,13 @@ v(vout) 均值:      5.9247 V       （D·Vin = 6.0 V，差值来自二极管正
 
 仍未做：
 
-- 成对互补分组（半桥双桥臂、全桥单 duty 双极性调制）。
-- 独立多桥臂控制：`ActionRequest` 只携带一个标量占空比，见 `docs/69`。
+- 每条腿各自的占空比与任意栅极时序表：`ActionRequest` 只携带一个标量占空比；
+  `paired_complementary` 的所有腿共享这一个 duty，腿间只允许按
+  `k · leg_phase_shift_s` 错相，见 `docs/69`。
 
-互补控制的声明与渲染已在 §5.6 完成，交错控制在 §5.7 完成（两者都只落在编写层，
-不碰后端）；执行适配器在 `pe_sim.backends` 里新增模块并只做**运行时**求解路径
-声明，因此 `reviewed_identities.json` 未变。
+互补控制的声明与渲染已在 §5.6 完成，交错控制在 §5.7 完成，成对分组在 §5.8 完成
+（三者都只落在编写层，不碰后端）；执行适配器在 `pe_sim.backends` 里新增模块并只做
+**运行时**求解路径声明，因此 `reviewed_identities.json` 未变。
 
 SPICE 网表子集导入（原 Step C）已交付，见 `docs/66`。它只做前端：产出的仍然是
 本文件的描述符，因此不构成第二条执行路径。
@@ -431,8 +521,9 @@ SPICE 网表子集导入（原 Step C）已交付，见 `docs/66`。它只做前
 
 | 测试 | 固定的事实 |
 | --- | --- |
-| `tests/test_topology_validation.py` | 26 码封闭、6 份内置描述符零错误、单缺陷单报告、建议安全门、`checked` 真实性、`build_descriptor` 与 `from_dict` 一致、标识符规则与 `topology._ID_RE` 一致、校验器与编译器认可同一组控制模式 |
-| `tests/test_circuit_compile.py` | 16 码封闭、结构与已评审 Buck 逐端子一致、摘要稳定与可复算、相位与尾脉冲（真实 ngspice 三个相位均一致）、互补声明（真实 ngspice 三个相位与已评审同步模板一致）、浮地栅极参考、全部拒绝路径、无 backend 导入 |
+| `tests/test_topology_validation.py` | 27 码封闭、5 个警告码封闭且逐码以 `warning` 发出、6 份内置描述符零错误、单缺陷单报告、建议安全门、`checked` 真实性、`build_descriptor` 与 `from_dict` 一致、标识符规则与 `topology._ID_RE` 一致、校验器与编译器认可同一组控制模式 |
+| `tests/test_circuit_compile.py` | 16 码封闭、结构与已评审 Buck 逐端子一致、摘要稳定与可复算、相位与尾脉冲（真实 ngspice 三个相位均一致）、互补声明（真实 ngspice 三个相位与已评审同步模板一致）、成对分组（每腿一条死区、腿间按 `k · shift` 展开、跨腿复用栅极网拒绝、多腿仍是腿数）、浮地栅极参考、全部拒绝路径、无 backend 导入 |
+| `tests/test_topology_examples.py` | 每份示例零错误、在其 `metadata.example.compile` 的运行点可编译；真实 ngspice 下 `interleaved_buck.json` 三相均分、`two_leg_sync_buck.json` 同腿不同时为高且两腿相差半周期 |
 | `tests/test_agent_topology_surface.py` | 三个 CLI 命令的信封、退出码、不建目录、空注册表可用 |
 
 ## 10. 相关文档

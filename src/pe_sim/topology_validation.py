@@ -78,6 +78,7 @@ TOPOLOGY_ISSUE_CODES = frozenset(
         "not_compilable",
         "port_net_kind_mismatch",
         "schema_violation",
+        "switch_threshold_above_carrier_amplitude",
         "unknown_net",
         "unknown_parameter",
         "unknown_port",
@@ -98,6 +99,7 @@ WARNING_ISSUE_CODES = frozenset(
         "multiple_control_nets",
         "no_output_load",
         "not_compilable",
+        "switch_threshold_above_carrier_amplitude",
     }
 )
 
@@ -111,7 +113,7 @@ ACTUATOR_KINDS = frozenset({"voltage_controlled_switch", "averaged_switch"})
 #: sets are equal, so the validator cannot bless a mode the compiler refuses
 #: (or warn about one it understands).
 DECLARED_CONTROL_MODES = frozenset(
-    {"single_duty_complementary", "single_duty_interleaved"}
+    {"single_duty_complementary", "single_duty_interleaved", "paired_complementary"}
 )
 
 #: The component kind whose presence makes a circuit's output observable.  A
@@ -330,6 +332,7 @@ class _ParsedComponent:
     component_id: str
     device: DeviceSpec | None
     ports: dict[str, str] = field(default_factory=dict)
+    parameters: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -623,7 +626,16 @@ def _check_components(
         if device is not None:
             _check_component_parameters(result, index, component_id, item.get("parameters", {}), device)
 
-        parsed.append(_ParsedComponent(index, component_id, device, ports))
+        raw_parameters = item.get("parameters")
+        parsed.append(
+            _ParsedComponent(
+                index,
+                component_id,
+                device,
+                ports,
+                dict(raw_parameters) if isinstance(raw_parameters, Mapping) else {},
+            )
+        )
     return parsed
 
 
@@ -1089,9 +1101,31 @@ def _control_declaration_state(
         return None, mode if isinstance(mode, str) else None
     if mode == "single_duty_interleaved":
         phases = declaration.get("phases")
-        if isinstance(phases, bool) or not isinstance(phases, int):
+        # The compiler accepts an integral float (``2.0`` is a whole number of
+        # phases), so the validator must accept it too.  Otherwise a document
+        # the compiler renders would be reported as a declaration that does not
+        # fit, and the warning would be telling the author to fix something that
+        # is already right.
+        if isinstance(phases, bool) or not isinstance(phases, (int, float)):
             return None, mode
-        if phases < 2 or phases != len(control_nets):
+        if isinstance(phases, float) and not phases.is_integer():
+            return None, mode
+        if int(phases) < 2 or int(phases) != len(control_nets):
+            return None, mode
+    elif mode == "paired_complementary":
+        pairs = declaration.get("pairs")
+        if (
+            not isinstance(pairs, (list, tuple))
+            or not pairs
+            or not all(
+                isinstance(entry, (list, tuple))
+                and len(entry) == 2
+                and all(isinstance(name, str) for name in entry)
+                for entry in pairs
+            )
+        ):
+            return None, mode
+        if len(control_nets) != 2 * len(pairs):
             return None, mode
     return mode, mode
 
@@ -1202,6 +1236,8 @@ def _check_control(
                 )
             )
 
+    _check_gate_levels(result, parsed)
+
 
 def _drives(component: _ParsedComponent, net_id: str) -> bool:
     assert component.device is not None
@@ -1210,6 +1246,90 @@ def _drives(component: _ParsedComponent, net_id: str) -> bool:
         if spec is not None and spec.direction == "output" and bound == net_id:
             return True
     return False
+
+
+def _number(parameters: Mapping[str, Any], name: str, default: float) -> float:
+    value = parameters.get(name)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return default
+    number = float(value)
+    return number if math.isfinite(number) else default
+
+
+def _check_gate_levels(result: _Result, parsed: Sequence[_ParsedComponent]) -> None:
+    """Warn when a switch can never turn on with the carrier that drives it.
+
+    The carrier's high level and the switch's threshold are declared in two
+    different components, so nothing in the graph compares them.  A carrier at
+    0.3 V driving a switch with ``threshold_v = 0.5`` validates, compiles and
+    solves; the waveform is a flat line at the output and every number looks
+    plausible.  That is the worst kind of wrong answer, so it is reported here
+    while the author is still editing.
+
+    It is a warning rather than an error because a gate that stays off is a
+    legitimate *command* (a duty of zero), and this check cannot tell "I meant
+    this switch never to conduct" from "I mistyped the amplitude".
+    """
+
+    carriers = [
+        component
+        for component in parsed
+        if component.device is not None and component.device.kind == "pulse_source"
+    ]
+    for component in parsed:
+        if component.device is None:
+            continue
+        if component.device.kind != "voltage_controlled_switch":
+            continue
+        control_net = component.ports.get("control")
+        if control_net is None:
+            continue
+        driver = next(
+            (carrier for carrier in carriers if _drives(carrier, control_net)), None
+        )
+        if driver is None:
+            continue  # ``control_net_undriven`` already reports this
+        threshold = _number(component.parameters, "threshold_v", 0.5)
+        hysteresis = _number(component.parameters, "hysteresis_v", 0.0)
+        amplitude = _number(driver.parameters, "amplitude_v", 1.0)
+        if threshold + hysteresis < amplitude:
+            continue
+        result.issues.append(
+            TopologyIssue(
+                code="switch_threshold_above_carrier_amplitude",
+                # ``threshold_v`` has a default and may be absent, so the pointer
+                # names the key the document actually has: the same convention
+                # ``missing_parameter`` uses.
+                path=_pointer(
+                    "components",
+                    component.index,
+                    "parameters",
+                    *(
+                        ("threshold_v",)
+                        if "threshold_v" in component.parameters
+                        else ()
+                    ),
+                ),
+                message=(
+                    f"switch {component.component_id!r} needs "
+                    f"{threshold + hysteresis:.6g} V to turn on"
+                    + (
+                        f" including {hysteresis:.6g} V of hysteresis"
+                        if hysteresis
+                        else ""
+                    )
+                    + f", but carrier {driver.component_id!r} on net "
+                    f"{control_net!r} only reaches {amplitude:.6g} V; the switch "
+                    "can never conduct and the run will report a plausible flat "
+                    "output"
+                ),
+                expected=(
+                    "threshold_v below the driving carrier's amplitude_v (the "
+                    "carrier defaults to 1.0 V, the switch threshold to 0.5 V)"
+                ),
+                severity="warning",
+            )
+        )
 
 
 def _check_sources(result: _Result, parsed: Sequence[_ParsedComponent]) -> None:

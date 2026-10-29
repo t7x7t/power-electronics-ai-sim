@@ -20,10 +20,12 @@ Three properties are deliberate:
   ratio.  A descriptor may declare how several gate signals derive from it.
   Without a declaration the compiler requires exactly one actuator and exactly
   one carrier; with ``metadata.control.mode = "single_duty_complementary"`` it
-  renders a high-side and a low-side gate from the same duty; with
-  ``"single_duty_interleaved"`` it renders ``phases`` gates whose carriers are
-  spread evenly across one switching period.  Either way the pulse width is
-  derived from the commanded duty, never read out of the descriptor.
+  renders a high-side and a low-side gate from the same duty, with
+  ``"single_duty_interleaved"`` it renders ``phases`` gates spread evenly across
+  one switching period, and with ``"paired_complementary"`` it renders several
+  legs that are each complementary and separated by a declared shift.  Either
+  way the pulse width is derived from the commanded duty, never read out of the
+  descriptor.
 
 The compiler does not execute anything and imports no backend: the text it
 returns is handed to whatever process adapter the caller trusts.  A compiled
@@ -93,10 +95,18 @@ SUPPORTED_INTEGRATORS = frozenset({"trap", "gear", "euler"})
 #: the multiphase counterpart: the same command produces N pulses that are
 #: spread evenly across one period, so the input current ripples at N times the
 #: per-phase switching frequency without any phase having a different duty.
+#:
+#: ``paired_complementary`` renders N *legs*, each with a high-side and a
+#: low-side gate that are complementary to each other, all driven by the one
+#: duty.  It is the composed relation: a bridge is a set of legs, and no
+#: structural rule in the graph says which switch belongs to which leg — only
+#: the declaration does.  Legs may be shifted relative to each other, which is
+#: how a synchronous multiphase converter is written.
 CONTROL_MODE_COMPLEMENTARY = "single_duty_complementary"
 CONTROL_MODE_INTERLEAVED = "single_duty_interleaved"
+CONTROL_MODE_PAIRED = "paired_complementary"
 SUPPORTED_CONTROL_MODES = frozenset(
-    {CONTROL_MODE_COMPLEMENTARY, CONTROL_MODE_INTERLEAVED}
+    {CONTROL_MODE_COMPLEMENTARY, CONTROL_MODE_INTERLEAVED, CONTROL_MODE_PAIRED}
 )
 
 #: Declaration keys each mode admits.  A key outside its mode's set is refused
@@ -107,6 +117,9 @@ _CONTROL_KEYS: Mapping[str, frozenset[str]] = MappingProxyType(
     {
         CONTROL_MODE_COMPLEMENTARY: frozenset({"mode", "dead_time_s"}),
         CONTROL_MODE_INTERLEAVED: frozenset({"mode", "phases", "gate_order"}),
+        CONTROL_MODE_PAIRED: frozenset(
+            {"mode", "pairs", "dead_time_s", "leg_phase_shift_s"}
+        ),
     }
 )
 
@@ -157,7 +170,8 @@ class CompiledCircuit:
     carrier_tail_s: float = 0.0
     #: ``single_duty`` for one commanded gate, ``single_duty_complementary`` for
     #: the declared high-side/low-side pair, ``single_duty_interleaved`` for a
-    #: declared set of phase-shifted gates.
+    #: declared set of phase-shifted gates, ``paired_complementary`` for a
+    #: declared set of legs that are each complementary.
     control_mode: str = "single_duty"
     #: The remaining on-time rendered as a finite tail, per control net.  Empty
     #: when no gate was already on at the window start.
@@ -423,6 +437,13 @@ def _control_declaration(
         )
     if mode == CONTROL_MODE_COMPLEMENTARY:
         return _ControlDeclaration(mode, dead_time_s=_dead_time(declaration))
+    if mode == CONTROL_MODE_PAIRED:
+        return _ControlDeclaration(
+            mode,
+            dead_time_s=_dead_time(declaration),
+            pairs=_pairs(declaration),
+            leg_phase_shift_s=_leg_phase_shift(declaration),
+        )
     return _ControlDeclaration(
         mode,
         phases=_phase_count(declaration),
@@ -434,15 +455,95 @@ def _control_declaration(
 class _ControlDeclaration:
     """One parsed ``metadata.control`` record.
 
-    ``dead_time_s`` belongs to the complementary relation and ``phases`` /
-    ``gate_order`` to the interleaved one; the mode decides which fields carry
-    meaning, and the other fields keep their "not declared" values.
+    The mode decides which fields carry meaning; the other fields keep their
+    "not declared" values.  ``dead_time_s`` belongs to the complementary and
+    paired relations, ``pairs`` and ``leg_phase_shift_s`` to the paired one,
+    and ``phases`` / ``gate_order`` to the interleaved one.
     """
 
     mode: str
     dead_time_s: float = 0.0
     phases: int | None = None
     gate_order: tuple[str, ...] | None = None
+    pairs: tuple[tuple[str, str], ...] | None = None
+    leg_phase_shift_s: float = 0.0
+
+
+def _pairs(declaration: Mapping[str, Any]) -> tuple[tuple[str, str], ...]:
+    """Read the declared complementary pairs.
+
+    The pairing is the one fact the graph cannot supply.  Two switches sharing a
+    node are not necessarily a leg (two low-side switches sharing ground are
+    not), and two switches on opposite rails are not necessarily a pair.  So the
+    author names the legs, and the compiler never guesses one.
+    """
+
+    raw = declaration.get("pairs")
+    if raw is None:
+        raise CircuitCompileError(
+            "invalid_control_declaration",
+            "paired_complementary requires 'pairs', the list of switch pairs that "
+            "form each leg",
+            expected='a list such as [["high_1", "low_1"], ["high_2", "low_2"]]',
+        )
+    if not isinstance(raw, (list, tuple)) or not raw:
+        raise CircuitCompileError(
+            "invalid_control_declaration",
+            "metadata.control.pairs must be a non-empty array of two-element arrays",
+            expected='a list such as [["high_1", "low_1"]]',
+        )
+    pairs: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for index, entry in enumerate(raw):
+        if (
+            not isinstance(entry, (list, tuple))
+            or len(entry) != 2
+            or not all(isinstance(name, str) for name in entry)
+        ):
+            raise CircuitCompileError(
+                "invalid_control_declaration",
+                f"metadata.control.pairs[{index}] must be two component ids",
+                index=index,
+                expected='a two-element list such as ["high_1", "low_1"]',
+            )
+        high, low = str(entry[0]), str(entry[1])
+        if high == low:
+            raise CircuitCompileError(
+                "invalid_control_declaration",
+                f"metadata.control.pairs[{index}] names {high!r} twice; a leg is "
+                "two different switches",
+                index=index,
+                expected='two different component ids',
+            )
+        for name in (high, low):
+            if name in seen:
+                raise CircuitCompileError(
+                    "invalid_control_declaration",
+                    f"component {name!r} appears in more than one pair; a switch "
+                    "belongs to exactly one leg",
+                    component_id=name,
+                    expected="every switch named exactly once",
+                )
+            seen.add(name)
+        pairs.append((high, low))
+    return tuple(pairs)
+
+
+def _leg_phase_shift(declaration: Mapping[str, Any]) -> float:
+    raw = declaration.get("leg_phase_shift_s", 0.0)
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        raise CircuitCompileError(
+            "invalid_control_declaration",
+            "metadata.control.leg_phase_shift_s must be a number when supplied",
+        )
+    shift = float(raw)
+    if not math.isfinite(shift) or shift < 0.0:
+        raise CircuitCompileError(
+            "invalid_control_declaration",
+            "metadata.control.leg_phase_shift_s must be finite and non-negative",
+            leg_phase_shift_s=raw,
+        )
+    return shift
 
 
 def _dead_time(declaration: Mapping[str, Any]) -> float:
@@ -556,6 +657,201 @@ def _complementary_switches(
     return high[0], low[0]
 
 
+def _paired_gates(
+    *,
+    declaration: _ControlDeclaration,
+    actuators: Sequence[Any],
+    carrier_by_net: Mapping[str, Any],
+    duty_value: float,
+    reference_net: str,
+) -> tuple[dict[str, tuple[float, float]], float, dict[str, float]]:
+    """Derive one gate window per gate of every declared leg.
+
+    Returns ``(gate_windows, switching_period, delay_by_net)``.
+
+    The pairing is the fact the graph cannot supply.  Two switches that share a
+    node are not necessarily a leg (two low-side switches both touching ground
+    are not one), and two switches on the same leg are not necessarily adjacent
+    in the component list.  So the author names the pairs, and within a pair the
+    compiler still decides which switch is the low side from the one structural
+    fact it trusts: which conducting path reaches the reference net.
+
+    Leg ``k`` is delayed by ``k * leg_phase_shift_s``, so a shift of ``Tsw/2``
+    makes a two-leg synchronous converter interleaved while every leg stays
+    complementary inside itself.
+    """
+
+    pairs = declaration.pairs
+    assert pairs is not None
+    by_id = {component.component_id: component for component in actuators}
+    named = {name for pair in pairs for name in pair}
+    unpaired = sorted(set(by_id) - named)
+    if unpaired:
+        raise CircuitCompileError(
+            "invalid_control_declaration",
+            f"{len(unpaired)} switch(es) are not named in metadata.control.pairs: "
+            f"{unpaired}; a switch the declaration does not place in a leg has no "
+            "gate to drive",
+            components=unpaired,
+            expected="every switch of the descriptor appears in exactly one pair",
+        )
+    unknown = sorted(named - set(by_id))
+    if unknown:
+        raise CircuitCompileError(
+            "invalid_control_declaration",
+            f"metadata.control.pairs names {unknown}, which are not switches of "
+            "this descriptor",
+            components=unknown,
+            actuators=sorted(by_id),
+        )
+
+    gate_windows: dict[str, tuple[float, float]] = {}
+    leg_frequency: list[float] = []
+    leg_nets: list[tuple[str, str]] = []
+    # Two legs that share a gate net would render two switches switching
+    # together, and the second leg's window would overwrite the first one's.
+    # The set is filled in this loop because ``gate_windows`` is only populated
+    # after every leg has been classified; checking that dict here would read an
+    # empty mapping and never fire.
+    claimed_gate_nets: set[str] = set()
+    for pair_index, (first, second) in enumerate(pairs):
+        members = [by_id[first], by_id[second]]
+        low = [
+            component
+            for component in members
+            if reference_net
+            in {_bound_net(component, "input"), _bound_net(component, "output")}
+        ]
+        if len(low) != 1:
+            raise CircuitCompileError(
+                "ambiguous_complementary_control",
+                f"leg {pair_index} ({first!r}, {second!r}) has {len(low)} switches "
+                "whose conducting path reaches the reference net; a leg is exactly "
+                "one high side and one low side",
+                pair=[first, second],
+                low_side=[component.component_id for component in low],
+                expected=(
+                    "one switch of the pair tied to the reference net; a leg whose "
+                    "two switches are both floating or both grounded is not a "
+                    "half bridge"
+                ),
+            )
+        high = [
+            component
+            for component in members
+            if component.component_id != low[0].component_id
+        ]
+        high_net = _bound_net(high[0], "control")
+        low_net = _bound_net(low[0], "control")
+        if high_net == low_net:
+            raise CircuitCompileError(
+                "ambiguous_complementary_control",
+                f"the two switches of leg {pair_index} share control net "
+                f"{high_net!r}, so they switch together instead of complementarily",
+                control_net=high_net,
+                pair=[first, second],
+            )
+        re_used = sorted({high_net, low_net} & claimed_gate_nets)
+        if re_used:
+            raise CircuitCompileError(
+                "ambiguous_complementary_control",
+                f"leg {pair_index} reuses control net(s) {re_used} of an earlier "
+                "leg; two legs on one gate net switch together, and the second "
+                "leg's window would overwrite the first one's",
+                pair=[first, second],
+                gate_nets=re_used,
+                expected="each leg gets its own two control nets",
+            )
+        claimed_gate_nets.update({high_net, low_net})
+        for net in (high_net, low_net):
+            carrier = carrier_by_net.get(net)
+            if carrier is None:
+                raise CircuitCompileError(
+                    "no_carrier",
+                    f"leg {pair_index} drives {net!r}, which has no carrier",
+                    net=net,
+                    expected="one pulse_source per gate net, its 'positive' port on it",
+                )
+            frequency = _parameter(carrier, "switching_frequency_hz", required=True)
+            assert frequency is not None
+            leg_frequency.append(frequency)
+        leg_nets.append((high_net, low_net))
+
+    reference_frequency = leg_frequency[0]
+    for frequency in leg_frequency:
+        if abs(frequency - reference_frequency) > 1e-12 * max(
+            1.0, abs(reference_frequency)
+        ):
+            raise CircuitCompileError(
+                "invalid_control_declaration",
+                "every leg of a paired set must declare the same switching "
+                f"frequency; found {sorted(set(leg_frequency))}",
+                frequencies=sorted(set(leg_frequency)),
+                expected="one switching_frequency_hz on every carrier",
+            )
+    switching_period = 1.0 / reference_frequency
+    dead_time = declaration.dead_time_s
+    if dead_time >= switching_period / 2.0:
+        raise CircuitCompileError(
+            "invalid_control_declaration",
+            "metadata.control.dead_time_s must be smaller than half the "
+            "switching period",
+            dead_time_s=dead_time,
+            switching_period_s=switching_period,
+            expected=(
+                f"dead_time_s below {switching_period / 2.0:.6g} s, or a lower "
+                "switching_frequency_hz"
+            ),
+        )
+    shift = declaration.leg_phase_shift_s
+    if shift >= switching_period:
+        raise CircuitCompileError(
+            "invalid_control_declaration",
+            "metadata.control.leg_phase_shift_s must be smaller than one "
+            "switching period; a whole period would put a leg back in phase and "
+            "make the shift meaningless",
+            leg_phase_shift_s=shift,
+            switching_period_s=switching_period,
+            expected=f"a shift below {switching_period:.6g} s",
+        )
+    # The declaration is the single authority for the dead time, exactly as in
+    # the single-leg mode: a carrier's own ``dead_time_s`` is recorded, never
+    # rendered, so a *disagreeing* value would be a second authority the author
+    # believes is in force.
+    for high_net, low_net in leg_nets:
+        for net in (high_net, low_net):
+            declared_on_carrier = _parameter(carrier_by_net[net], "dead_time_s")
+            if declared_on_carrier is None:
+                continue
+            if abs(declared_on_carrier - dead_time) > 1e-12:
+                raise CircuitCompileError(
+                    "invalid_control_declaration",
+                    f"carrier on {net!r} declares dead_time_s="
+                    f"{declared_on_carrier!r} but metadata.control declares "
+                    f"{dead_time!r}; the declaration is the only authority the "
+                    "compiler renders, so two different values cannot both hold",
+                    net=net,
+                    carrier_dead_time_s=declared_on_carrier,
+                    declaration_dead_time_s=dead_time,
+                    expected=(
+                        "either delete dead_time_s from the carrier, or make the "
+                        "two values equal, or delete it from metadata.control"
+                    ),
+                )
+
+    # The cycle is the same one the single-leg complementary mode renders: high
+    # side on [0, D*Tsw - dead_time], low side on [D*Tsw, Tsw - dead_time], and
+    # both dead-time intervals have both gates low.
+    high_width = max(0.0, duty_value * switching_period - dead_time)
+    delays: dict[str, float] = {}
+    for pair_index, (high_net, low_net) in enumerate(leg_nets):
+        gate_windows[high_net] = (0.0, high_width)
+        gate_windows[low_net] = (high_width + dead_time, switching_period - dead_time)
+        delays[high_net] = pair_index * shift
+        delays[low_net] = pair_index * shift
+    return gate_windows, switching_period, delays
+
+
 def _interleaved_gates(
     *,
     declaration: _ControlDeclaration,
@@ -602,8 +898,9 @@ def _interleaved_gates(
             gate_nets=sorted(gate_nets),
             expected=(
                 "one control net per phase with 'phases' equal to their count, "
-                "and one switch per control net; paired high/low gates inside a "
-                "leg are not expressible yet (docs/69)"
+                "and one switch per control net; a leg whose two gates are "
+                "complementary to each other uses 'paired_complementary' "
+                "(docs/64 section 5.8)"
             ),
         )
     order = declaration.gate_order
@@ -725,6 +1022,25 @@ def _render_gate(
         ],
         tail_s,
     )
+
+
+def _phase_total(
+    control_mode: str, declaration: "_ControlDeclaration | None", gate_windows: Mapping[str, Any]
+) -> int:
+    """How many switching phases the one commanded duty drove.
+
+    A single gate and a complementary pair are both one phase: they are one leg
+    whose gates derive from each other.  Interleaved phases and paired legs are
+    genuinely several, and the count is what a reader needs to tell a one-leg
+    circuit from a bridge.
+    """
+
+    if control_mode == CONTROL_MODE_INTERLEAVED:
+        return len(gate_windows)
+    if control_mode == CONTROL_MODE_PAIRED and declaration is not None:
+        assert declaration.pairs is not None
+        return len(declaration.pairs)
+    return 1
 
 
 def _render_options(
@@ -1075,8 +1391,8 @@ def compile_topology(
                 expected=(
                     "exactly two switches for a complementary pair; N evenly "
                     "spaced single-switch phases use 'single_duty_interleaved'; "
-                    "paired legs of several legs have no declaration yet "
-                    "(docs/69)"
+                    "several legs that are each complementary use "
+                    "'paired_complementary' (docs/64 section 5.8)"
                 ),
             )
         high_side, low_side = _complementary_switches(actuators, reference_net)
@@ -1166,6 +1482,15 @@ def compile_topology(
             actuators=actuators,
             carrier_by_net=carrier_by_net,
             duty_value=duty_value,
+        )
+        control_mode = declaration.mode
+    elif declaration.mode == CONTROL_MODE_PAIRED:
+        gate_windows, switching_period, delays = _paired_gates(
+            declaration=declaration,
+            actuators=actuators,
+            carrier_by_net=carrier_by_net,
+            duty_value=duty_value,
+            reference_net=reference_net,
         )
         control_mode = declaration.mode
     else:  # pragma: no cover - guarded by ``_control_declaration``
@@ -1407,11 +1732,7 @@ def compile_topology(
         control_mode=control_mode,
         carrier_tails_s=tuple(sorted(carrier_tails.items())),
         gate_first_rise_s=tuple(sorted(gate_first_rise_s.items())),
-        phases=(
-            len(gate_windows)
-            if control_mode == CONTROL_MODE_INTERLEAVED
-            else 1
-        ),
+        phases=_phase_total(control_mode, declaration, gate_windows),
         element_names=tuple(element_names.items()),
         output_net=output_net,
     )
@@ -1430,6 +1751,7 @@ __all__ = [
     "CIRCUIT_NETLIST_TEMPLATE_VERSION",
     "CONTROL_MODE_COMPLEMENTARY",
     "CONTROL_MODE_INTERLEAVED",
+    "CONTROL_MODE_PAIRED",
     "DEFAULT_CIRCUIT_OPTIONS",
     "SUPPORTED_CONTROL_MODES",
     "SUPPORTED_INTEGRATORS",

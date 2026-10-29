@@ -98,15 +98,20 @@ agent 反复试错，或者更糟——用一个近似品蒙混过关，而近�
 - **不支持**：一相一个占空比、三个桥臂三个指令、任意的栅极时序表。
 - **现在会发生什么**：`ActionRequest` 携带**一个**无量纲的 `normalized` 标量。
   描述符可以在 `metadata.control` 里声明"这一个指令如何派生成多个栅极"，可选
-  关系是 `single_duty_complementary`（一对互补，含死区）与
-  `single_duty_interleaved`（N 个等间隔相位，同一占空比）。其它关系一律拒绝：
-  未声明时多开关报 `multiple_actuators`，声明与图形不符时报
+  关系是 `single_duty_complementary`（一对互补，含死区）、
+  `single_duty_interleaved`（N 个等间隔相位，同一占空比）与
+  `paired_complementary`（N 条腿各自互补、腿间按声明错相，同一占空比）。其它
+  关系一律拒绝：未声明时多开关报 `multiple_actuators`，声明与图形不符时报
   `invalid_control_declaration`。
 - **替代表达**：
-  - 多相 DC-DC → `single_duty_interleaved`，**相位**不同、**占空比**相同；
+  - 多相 DC-DC（每相一个栅极）→ `single_duty_interleaved`，**相位**不同、
+    **占空比**相同；
   - 同步 Buck → `single_duty_complementary`；
-  - 三相逆变器 / 单相全桥双极性调制 → **没有**，因为它们的两个/三个桥臂需要
-    **各自不同**的占空比（或一个带符号的调制波）。
+  - 多条各自互补的腿、腿间错相（两相同步 Buck）→ `paired_complementary`
+    （`leg_phase_shift_s = Tsw/2`）。全桥单 duty 双极性调制是同一声明形状，但
+    本仓库没有该样例；
+  - 三相逆变器 / 每条腿要**各自不同**的占空比 → **没有**，因为一个标量指令
+    无法给出三个不同的 duty（或一个带符号的调制波）。
 - **最小改动**：把 `ActionRequest` 的单一标量换成"标量数组 + 一份指令与栅极的
   映射声明"。这是一次**内核契约变更**，会波及 `contracts.py`、`runtime.py`、
   每个 plant 与控制器，以及所有已评审身份，因此它必须是一次独立、被评审的
@@ -151,33 +156,47 @@ agent 反复试错，或者更糟——用一个近似品蒙混过关，而近�
 - **最小改动**：新增一种能驱动 `control` 网的直流电平元件，或在
   `metadata.control` 里声明"该网关断"。
 
-### 4.5 多桥臂：成对互补分组
+### 4.5 多桥臂：每条腿各自的占空比
 
-- **不支持**：一条腿上的高边/低边各自互补、而多条腿之间共享一个 duty
-  （两相同步 Buck、半桥双桥臂、全桥单 duty 双极性调制）。
-- **现在会发生什么**：`single_duty_complementary` 要求**恰好两个开关**
-  （`ambiguous_complementary_control`，`details.actuators` 给出实际数量，
-  `expected` 说明"多条腿的成对分组尚无声明"）；`single_duty_interleaved` 的
-  `phases` 数的是**栅极信号**，所以"每腿两个栅极"会以
-  `invalid_control_declaration` 拒绝。
-- **替代表达**：**没有**。**特别注意**：把四开关电路写成
-  `{"mode": "single_duty_interleaved", "phases": 4}` 会**校验通过、编译成功**，
-  四个栅极得到等间隔相位；同一腿的高边与低边在高占空比下同时导通。编译器只渲染
-  你声明的关系，它不知道哪两个开关属于同一条腿。
-- **最小改动**：`metadata.control` 增加一个成对分组键（例如
-  `{"mode": "paired_complementary", "pairs": [["s1","s2"], ["s3","s4"]], "dead_time_s": ...}`），
-  把 `_complementary_switches` 的分类从"是否接参考网"升级为"按声明的配对"，并把
-  每个开关对映射到声明中的组序号。
+- **不支持**：一条腿一个占空比、三桥臂三个指令、任意的栅极时序表。
+- **现在会发生什么**：`ActionRequest` 仍只携带**一个**无量纲的 `normalized`
+  标量。多条腿各自互补、腿间错相**已经可以表达**（`docs/64` §5.8）：
+
+  ```json
+  {"mode": "paired_complementary", "pairs": [["s1","s2"], ["s3","s4"]],
+   "dead_time_s": 1e-07, "leg_phase_shift_s": 5e-06}
+  ```
+
+  仍不支持的是给每条腿**不同**的占空比。把四开关电路写成
+  `single_duty_complementary` 会以 `ambiguous_complementary_control` 拒绝
+  （`details.actuators` 是 4）；写成
+  `{"mode": "single_duty_interleaved", "phases": 4}` 则**校验通过、编译成功**，
+  四个栅极得到等间隔的同一个占空比，同一腿的高边与低边在高占空比下同时导通。
+  编译器只渲染你声明的关系，它不知道哪两个开关属于同一条腿——除非你用 `pairs`
+  说出来。
+- **替代表达**：所有腿共享一个 duty、腿间只差相位 → `paired_complementary`。它
+  **不等于**每腿独立调节：三相逆变器的三个调制波仍无法表达。
+- **最小改动**：把 `ActionRequest` 的单一标量换成"标量数组 + 一份指令与栅极的
+  映射声明"，见 §4.1。这是内核契约变更。
 
 ### 4.6 开关阈值与载波幅度的交叉检查
 
-- **不支持**：编译器不检查 `voltage_controlled_switch.threshold_v` 是否低于驱动它
-  的 `pulse_source.amplitude_v`。
-- **现在会发生什么**：把 `amplitude_v` 写成 0.3 或 `threshold_v` 写成 1.5，描述符
-  **校验通过、编译通过**，而开关永不开通——波形看起来完全"合理"（输出为零）。
-- **替代表达**：自己保证 `threshold_v < amplitude_v`。执行 `simulate-topology` 后
-  看 `metrics.carriers[].observed_duty`：它接近 0 而命令占空比不是 0，就是这个错误。
-- **最小改动**：校验器在控制网阶段比较两者的声明值，低于阈值时发一条 warning。
+- **已做（警告，不是错误）**：`validate-topology` 现在比较开关声明的
+  `threshold_v + hysteresis_v`（默认 0.5 V 与 0）与驱动其控制网的
+  `pulse_source.amplitude_v`（默认 1.0 V）。前者不低于后者时报告
+  `switch_threshold_above_carrier_amplitude`（`severity = "warning"`），`ok`
+  仍为 `true`，编译器照常渲染。
+- **仍不做**：不检查求解出的栅极波形。`parameter_overrides` 可以在渲染时改掉
+  `amplitude_v` 或 `threshold_v`，而校验器只读描述符。所以这条警告只代表
+  "按这份文档声明的两个数字，这个开关不会导通"。
+- **为什么是警告**：一个栅极保持关断是合法命令（占空比为 0 时所有栅极都关断），
+  校验器无法区分"我故意让它关断"与"我把幅度写小了"。
+- **现在会发生什么**：把 `amplitude_v` 写成 0.3 或 `threshold_v` 写成 1.5，文档
+  得到一条警告；若忽略它，编译与执行都会成功，波形是一条看起来"合理"的平线。
+  执行 `simulate-topology` 后看 `metrics.carriers[].observed_duty`：它接近 0 而
+  命令占空比不是 0，就是这个错误。
+- **替代表达**：不需要替代——把 `threshold_v` 降到 `amplitude_v` 以下，或把
+  `amplitude_v` 提高。
 
 ## 5. 分析与求解
 ### 5.1 周期稳态（PSS）与频响扫频
