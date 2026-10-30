@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PE Sim 证据阅读器</title>
+  <link rel="stylesheet" href="assets/pico.min.css">
+  <link rel="stylesheet" href="assets/theme.css">
+</head>
+<body class="app-shell">
+  <header class="app-bar">
+    <span class="brand">PE Sim 证据阅读器</span>
+    <span class="ctx" id="app-bar-status">正在连接…</span>
+  </header>
+  <div class="app-body">
+    <aside class="rail">
+      <h2 class="rail-title">运行清单</h2>
+      <div id="fleet-groups"></div>
+    </aside>
+    <main class="content" id="detail">
+      <div id="error-region" class="error-state" hidden></div>
+      <div id="live-region" class="live-region" hidden></div>
+      <h2 id="run-title">未选择运行</h2>
+      <!-- 面板由 panels.json 决定；mountPanels() 在运行时创建各面板区块。 -->
+      <div id="panel-rack"></div>
+    </main>
+  </div>
+  <script src="demo.js" defer></script>
+</body>
+</html>

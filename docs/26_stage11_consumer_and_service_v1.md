@@ -151,8 +151,12 @@ run package, or loads arbitrary plugins. Every request is scoped to the
 configured `runs` root. A run is served only when its `manifest.json` and
 `.run-state.json` identify a published run, its artifact index matches the
 directory, and both Manifest and package SHA-256 digests recompute correctly.
-Only reviewed `buck` and `boost` `ideal_averaged_reference` identities are
-currently exportable.
+A reviewed run is exportable only when its registered plant declares
+`export_eligible` and a `topology_exporter` and the recorded plant class
+matches the registration; no topology name list is consulted. The shipped
+registrations currently declare nine such exporters: `buck`, `boost`,
+`multiphase-buck`, `ngspice-buck`, `ngspice-sync-buck`, `whole-run-buck`,
+`model-control-buck`, `peak-current-buck`, and `whole-run-switching-buck`.
 
 ### 3.3 Versioned routes
 
@@ -228,15 +232,19 @@ python -m pytest -q tests/test_visualization_service.py
 python -m pe_sim.cli visualization-serve --help
 ```
 
-The workbench remains a separate fixture consumer. It can later replace its
-fixture loader with these three contract routes without coupling panels to
-Runner or Plant internals.
+The browser workbench that previously shipped under `workbench/` is withdrawn,
+and this repository currently has no first-party workbench. Nothing here plans
+or schedules its return. If such a surface is ever restored, it is a new,
+separately scoped consumer that requires its own scope and acceptance review
+under `docs/24` §7; it would read these three contract routes rather than
+couple panels to Runner or Plant internals.
 
 ## 4. Minimal external consumer
 
-The browser workbench that previously shipped under `workbench/` is
-temporarily withdrawn. The three contracts, the headless exporter, the local
-read-only service, and the external consumer example remain. The example is
+The browser workbench that previously shipped under `workbench/` was withdrawn
+on 2026-10-23; nothing here plans or schedules its return. The three
+contracts, the headless exporter, the local read-only service, and the external
+consumer example remain. The example is
 intentionally independent from `src/pe_sim/`:
 
 - `index.html` is a dependency-free browser display plugin.  It loads either

@@ -1,0 +1,281 @@
+/* Project-owned theme for the visualization demo. Loads after pico.min.css. */
+
+:root {
+  --app-gap: var(--pico-spacing, 0.85rem);
+  --app-radius: calc(var(--pico-border-radius, 4px) * 1.5);
+  --app-hairline: 1px solid var(--pico-muted-border-color);
+  --chart-line: #0172ad;
+  --chart-grid: #e7eaf0;
+  --chart-axis: #aab4bd;
+  --chart-band: rgba(1, 114, 173, 0.08);
+  --chip-ok-bg: #e8f4ec;
+  --chip-ok-fg: var(--pico-ins-color);
+  --chip-ok-bd: #bcdcc8;
+  --chip-warn-bg: #fdf1dc;
+  --chip-warn-fg: #8a5a00;
+  --chip-warn-bd: #e6d0a6;
+  --chip-bad-bg: #fbe9e9;
+  --chip-bad-fg: var(--pico-del-color);
+  --chip-bad-bd: #e2b6b6;
+  --chip-neutral-bg: #eef1f3;
+  --chip-neutral-fg: var(--pico-muted-color);
+  --chip-neutral-bd: #d5dce2;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --chart-line: #01aaff;
+    --chart-grid: #202632;
+    --chart-axis: #4a5361;
+    --chart-band: rgba(1, 170, 255, 0.12);
+    --chip-ok-bg: rgba(98, 175, 154, 0.15);
+    --chip-ok-bd: rgba(98, 175, 154, 0.4);
+    --chip-warn-bg: rgba(253, 231, 192, 0.14);
+    --chip-warn-fg: #f4c97a;
+    --chip-warn-bd: rgba(253, 231, 192, 0.35);
+    --chip-bad-bg: rgba(206, 126, 123, 0.16);
+    --chip-bad-bd: rgba(206, 126, 123, 0.4);
+    --chip-neutral-bg: rgba(123, 132, 149, 0.18);
+    --chip-neutral-fg: #b9c1cd;
+    --chip-neutral-bd: rgba(123, 132, 149, 0.4);
+  }
+}
+
+.app-shell {
+  min-height: 100vh;
+}
+
+.app-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 1rem;
+  padding: 0.65rem 1.1rem;
+  background: var(--pico-card-background-color);
+  border-bottom: var(--app-hairline);
+}
+
+.brand {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 650;
+}
+
+.ctx {
+  color: var(--pico-muted-color);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.app-body {
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) 1fr;
+  align-items: start;
+  min-height: calc(100vh - 3.2rem);
+}
+
+.rail {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  max-height: 100vh;
+  overflow: auto;
+  padding: 0.9rem;
+  border-right: var(--app-hairline);
+}
+
+.rail-title {
+  margin: 0 0 0.5rem;
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--pico-color);
+}
+
+.rail-group {
+  display: grid;
+  gap: 0.3rem;
+  margin-bottom: 0.9rem;
+}
+
+.rail-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.6em;
+  padding: 0 0.35em;
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 8px;
+  color: var(--pico-muted-color);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.run-link {
+  display: block;
+  width: 100%;
+  padding: 0.45rem 0.55rem;
+  border: 0;
+  border-left: 2px solid transparent;
+  border-radius: var(--app-radius);
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  line-height: 1.35;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.run-link:hover { background: rgba(127, 127, 127, 0.1); }
+
+.run-link[aria-current="true"] {
+  border-left: 2px solid var(--pico-primary);
+  background: rgba(1, 114, 173, 0.08);
+  background: color-mix(in srgb, var(--pico-primary) 14%, transparent);
+}
+
+.content {
+  min-width: 0;
+  padding: 1.1rem 1.25rem 3rem;
+}
+
+.panel {
+  margin-bottom: var(--app-gap);
+  border: var(--app-hairline);
+  border-radius: var(--app-radius);
+  background: var(--pico-card-background-color);
+  overflow: hidden;
+}
+
+.panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.4rem 1rem;
+  padding: 0.6rem 0.9rem;
+  border-bottom: var(--app-hairline);
+}
+
+.panel-title,
+.panel-head h2,
+.panel-head h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--pico-color);
+}
+
+.panel-body {
+  padding: 0.75rem 0.9rem;
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: 168px 1fr;
+  gap: 0.35rem 0.9rem;
+  margin: 0;
+}
+
+.kv dt {
+  color: var(--pico-muted-color);
+  font-size: 0.8rem;
+}
+
+.kv dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.chip-ok { background: var(--chip-ok-bg); border-color: var(--chip-ok-bd); color: var(--chip-ok-fg); }
+
+.chip-warn { background: var(--chip-warn-bg); border-color: var(--chip-warn-bd); color: var(--chip-warn-fg); }
+
+.chip-bad { background: var(--chip-bad-bg); border-color: var(--chip-bad-bd); color: var(--chip-bad-fg); }
+
+.chip-neutral { background: var(--chip-neutral-bg); border-color: var(--chip-neutral-bd); color: var(--chip-neutral-fg); }
+
+.chip-icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-right: 4px;
+  vertical-align: -2px;
+}
+
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.mono {
+  font-family: var(--pico-font-family-monospace);
+}
+
+.wave {
+  margin: 0 0 0.85rem;
+}
+
+.wave-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.3rem 1rem;
+  margin-bottom: 0.25rem;
+  color: var(--pico-muted-color);
+  font-size: 0.8rem;
+}
+
+.empty-state {
+  margin: 0.4rem 0;
+  color: var(--pico-muted-color);
+  font-style: italic;
+}
+
+.error-state {
+  margin: 0.4rem 0;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--chip-bad-bd);
+  border-radius: var(--app-radius);
+  background: var(--chip-bad-bg);
+  color: var(--chip-bad-fg);
+}
+
+.two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--app-gap);
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+@media (max-width: 1000px) {
+  .app-body {
+    grid-template-columns: 1fr;
+  }
+
+  .rail {
+    position: static;
+    max-height: none;
+    border-right: 0;
+    border-bottom: var(--app-hairline);
+  }
+
+  .two-col {
+    grid-template-columns: 1fr;
+  }
+}

@@ -238,30 +238,45 @@ not ship or support:
 - a connected browser or desktop workbench backed by Runner/Plant state;
 - REST/SSE/WebSocket delivery, live Runner updates, or report rendering;
 - a general remote visualization API or live Runner UI integration;
-- generic dynamic UI/plugin loading, a plugin marketplace, or arbitrary third
-  party code execution;
+- a plugin marketplace or arbitrary third party code execution;
 - topology editing, netlist authoring, an icon catalog, automatic layout, or
   direct AI changes to circuit semantics.
+
+A local, read-only visualization host is **allowed** (decision D2, 2026-10-30,
+recorded in `docs/70` section 12.6 and specified by
+`docs/71_human_visualization_requirements_v1.md`).  It is a consumer, not a
+capability: it may load operator-supplied display modules from a local
+directory, but those modules receive no Runner, Plant, Controller, mutation or
+authority beyond what any external consumer already has; the host fetches on
+their behalf, issues GET only, and nothing writes `runs/`.  Loading display
+code under those limits is therefore neither "generic dynamic UI/plugin
+loading" nor "arbitrary third party code execution".
 
 The repository previously included `workbench/`, a small read-only
 TypeScript/Vite fixture consumer.  That browser surface was withdrawn on
 2026-10-23 because its rendered content was not usable.  The renderer-neutral
 contracts, the headless exporter, and the loopback read-only service remain;
-they are data interfaces, not a UI claim.  A future browser or desktop
-workbench still requires its own scope and acceptance review.
+they are data interfaces, not a UI claim.  Any browser or desktop workbench
+beyond the local read-only host described above still requires its own scope
+and acceptance review.
 
 `pe_sim.workbench_export` is a separate, constrained offline fixture exporter.
 It verifies the recorded publication state, artifact index, Manifest digest,
-and package digest before projecting a reviewed project-owned L1 Buck or Boost
-run into the three contracts outside `runs/<run_id>`. It does not start a
-server, read a live Runner, edit a package, accept an arbitrary topology, or
-turn exploratory evidence into formal comparison evidence.
+and package digest before projecting a reviewed project-owned run into the
+three contracts outside `runs/<run_id>`.  The export decision is a registration
+decision, not a topology name list: a registered plant may be projected when
+its registration declares `export_eligible` and a `topology_exporter` and the
+recorded plant class matches the registration; the shipped registrations
+currently declare nine such exporters.  It does not start a server, read a live
+Runner, edit a package, accept an arbitrary topology, or turn exploratory
+evidence into formal comparison evidence.
 
 `pe_sim.cli visualization-serve` is a separately scoped local v1 read-only
 adapter documented in `docs/26_stage11_consumer_and_service_v1.md` (§3). It
-serves only verified, `PUBLISHED` reviewed Buck/Boost reference packages
-through the same three contracts. It does not expose a Runner, provide writes,
-execute a simulation, or expand this phase into a connected workbench.
+serves only verified, `PUBLISHED` packages whose registered plant declares an
+export-eligible `topology_exporter`; no topology name list is consulted. It
+does not expose a Runner, provide writes, execute a simulation, or expand this
+phase into a connected workbench.
 
 ## 8. Minimum-core acceptance gate
 
@@ -292,14 +307,18 @@ git diff --check
 ```
 
 This gate has been satisfied by the local contract and integration tests. The
-fixture workbench is a separately scoped consumer of these contracts and is
-accepted only for local display demonstration; it remains outside the
-simulation authority.
+fixture workbench it was once demonstrated with is withdrawn (see §7), so this
+repository currently has no first-party workbench consumer. Any future browser
+or desktop workbench is a new, separately scoped consumer that still needs its
+own scope and acceptance review and remains outside the simulation authority.
 
 ## 9. Local service boundary
 
 The local read-only HTTP adapter is defined separately in
 `docs/26_stage11_consumer_and_service_v1.md` (§3). It is intentionally smaller
-than a general web API and serves only already-published Buck/Boost reference
-runs. A future frontend may replace its fixture loader with those three
-contract routes without coupling panels to Runner or Plant internals.
+than a general web API and serves only already-published reference runs whose
+registered plant declares an export-eligible `topology_exporter`. The fixture
+workbench this paragraph once described is withdrawn (§7); a future frontend is
+a new, separately scoped consumer that still needs its own scope and acceptance
+review, and would read those three contract routes rather than couple panels to
+Runner or Plant internals.

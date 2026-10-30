@@ -334,6 +334,7 @@ release record → 人工 approve → tag → verify `--require-tag`。没有人
   `src/pe_sim/multiphase_plants.py`
 - 公共面：`src/pe_sim/public_api.py`、`tests/fixtures/public_api.json`
 - 发布：`scripts/release_check.ps1`、`scripts/release_record.py`、`docs/29`、`docs/53`
+- 可视化交接：`docs/70_visualization_handover_v1.md`（需求、边界、数据面、验收）
 - 交接基线测试：`tests/test_model_control_adapters.py`、`tests/test_sync_buck_plant.py`、
   `tests/test_multiphase_plant.py`、`tests/test_capability_cli.py`、`tests/test_coverage_matrix.py`
 

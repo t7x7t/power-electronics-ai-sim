@@ -1,0 +1,12 @@
+{
+  "marker": "demo-panels-v1",
+  "_comment": "受控面板清单：面板数量、顺序、标题与依赖平面全部由本文件决定，宿主 demo.js 不再硬编码。加自定义面板＝追加一条 {\"id\":\"my-panel\",\"title\":\"标题\",\"needs\":[\"trace\"],\"entry\":\"panels/my-panel.js\"}；entry 必须是本目录内的 .js 相对路径，默认导出 (context) => 字符串或 DOM 节点，context = {id,title,needs,results}，results[need] 形如 {status:'fulfilled'|'rejected',value,reason}。面板只许渲染：禁止 fetch( / http(s):// / method: / POST / PUT / DELETE 与任何写盘 API。本文件缺失或损坏时宿主回退到内置六格。marker 刻意不带 pe-sim. 前缀：它不是内核信封，登记在 docs/68 之外。",
+  "panels": [
+    { "id": "provenance", "title": "来源与身份", "needs": ["trace"] },
+    { "id": "topology", "title": "拓扑", "needs": ["topology"] },
+    { "id": "trace", "title": "波形", "needs": ["trace"] },
+    { "id": "outputs", "title": "结构化输出", "needs": ["outputs"] },
+    { "id": "parameters", "title": "参数视图", "needs": ["parameters"] },
+    { "id": "review", "title": "审阅", "needs": ["review"] }
+  ]
+}
